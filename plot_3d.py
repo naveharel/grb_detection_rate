@@ -1,5 +1,10 @@
+import os
+import sys
+
 import numpy as np
+import plotly
 import plotly.graph_objects as go
+import dash
 from dash import Dash, dcc, html, Input, Output
 
 from grb_detect.constants import DAY_S, DEG2_TO_SR
@@ -9,6 +14,16 @@ from grb_detect.plot3d_core import (
     discrete_regime_colorscale,
     make_rate_model,
     maximize_log_surface_iterative,
+)
+
+# Render sets this environment variable automatically
+RENDER_COMMIT = os.environ.get("RENDER_GIT_COMMIT", "local")
+RUNTIME_INFO = (
+    f"commit={RENDER_COMMIT} | "
+    f"python={sys.version.split()[0]} | "
+    f"dash={dash.__version__} | "
+    f"plotly={plotly.__version__} | "
+    f"numpy={np.__version__}"
 )
 
 
@@ -22,7 +37,6 @@ def boundary_lines_from_regimes(X, Y, Z, regime_id):
 
     xs, ys, zs = [], [], []
 
-    # boundaries along y direction (adjacent rows)
     diff_y = (rid[1:, :] != rid[:-1, :]) & valid[1:, :] & valid[:-1, :]
     ii, jj = np.where(diff_y)
     for i, j in zip(ii, jj):
@@ -30,7 +44,6 @@ def boundary_lines_from_regimes(X, Y, Z, regime_id):
         ys.extend([Y[i, j], Y[i + 1, j], None])
         zs.extend([Z[i, j], Z[i + 1, j], None])
 
-    # boundaries along x direction (adjacent columns)
     diff_x = (rid[:, 1:] != rid[:, :-1]) & valid[:, 1:] & valid[:, :-1]
     ii, jj = np.where(diff_x)
     for i, j in zip(ii, jj):
@@ -222,7 +235,6 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
     optical_on = "on" in (optical_vals or [])
     color_on = "on" in (color_vals or [])
 
-    # Use slider value only when optical survey is enabled.
     t_night_s = float(tnight_hours) * 3600.0 if optical_on else T_NIGHT_DEFAULT_S
 
     model_day = make_rate_model(
@@ -234,9 +246,7 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
 
     model_night = None
     if optical_on:
-        # Effective live fraction within a night, scaled only by t_night / 24 hr.
         f_live_night = float(f_live) * (t_night_s / DAY_S)
-
         model_night = make_rate_model(
             A_log=float(A_log),
             f_live=f_live_night,
@@ -255,7 +265,6 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
         ny=340 if color_on else 260,
     )
 
-    # Surface optimum (consistent with the optical-survey mapping if enabled)
     N_exp_max = model_day.instrument.omega_survey_max_sr / model_day.instrument.omega_exp_sr
     N_opt, t_cad_opt_s, log10R_opt = maximize_log_surface_iterative(
         model_day,
@@ -271,7 +280,6 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
     R_opt = 10 ** log10R_opt if np.isfinite(log10R_opt) else np.nan
     t_cad_opt_hr = t_cad_opt_s / 3600.0 if np.isfinite(t_cad_opt_s) else np.nan
 
-    # ZTF strategy (fixed point)
     N_ztf = 27500.0 / 47.0
     t_cad_ztf_s = 2.0 * DAY_S
     x_ztf = np.log10(N_ztf)
@@ -298,7 +306,6 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
 
     if color_on and (regime_id is not None):
         cs, colors = discrete_regime_colorscale()
-
         fig.add_trace(
             go.Surface(
                 x=X,
@@ -397,6 +404,7 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
     omega_exp_sr = float(omega_exp_deg2) * DEG2_TO_SR
 
     status_children = [
+        html.Div(RUNTIME_INFO),
         html.Div(
             f"i = {int(i_det)} | "
             f"A_log = {float(A_log):.2f} | "
@@ -405,7 +413,7 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
             f"t_overhead = {float(t_overhead_s):.1f} s | "
             f"optical survey = {optical_on} | "
             f"color regimes = {color_on}"
-        )
+        ),
     ]
 
     if optical_on:
