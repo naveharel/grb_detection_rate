@@ -1,28 +1,24 @@
-"""Analytic detection-rate surface (Desmos prototype) in Python.
+"""Analytic detection-rate surface in Python.
 
-This module implements the same piecewise rate model that you encoded in Desmos,
-with the goal of:
+This module implements the piecewise rate model used for survey-strategy
+optimisation. The implementation is vectorised and organised so that future
+generalizations (wind-like media, additional PLSs, finite-exposure averaging,
+etc.) can be introduced with minimal disruption.
 
-1) reproducing the 3D surface R_det(N_exp, t_cad) and its regime boundaries,
-2) keeping the code modular so that later generalizations (wind-like external
-   media, additional PLSs, finite-exposure averaging, etc.) can be introduced
-   without rewriting everything.
-
-Current scope (matches the Desmos plot):
+Current scope:
 - ISM external medium (constant density)
 - Euclidean rate treatment with distance scale D_euc and intrinsic rate R_int
-- PLS G off-axis scalings (through the `PLSModel` interface; default PLSG)
+- PLS G off-axis scalings via the PLSModel interface (default: PLSG)
 - Limiting flux model F_lim ∝ t_exp^{-alpha}
 
-Notational mapping relative to Desmos:
-- p: electron index
-- E_kiso_erg, n0_cm3, theta_j_rad (j), gamma0 (G0)
-- i_det: the required number of detections (renamed from k in Tier 1)
-- N_exp and t_cad_s correspond to 10^x and 10^y in the Desmos graph
+Conventions:
+- i_det: the required number of detections within a cadence cycle
+- N_exp and t_cad_s correspond to the strategy degrees of freedom
 
-The outputs are:
-- log10 R_det (yr^-1) by default, to mirror Desmos.
+Outputs are returned as log10 R_det [yr^-1] by default to match common plotting
+conventions for large dynamic range surfaces.
 """
+
 
 from __future__ import annotations
 
@@ -65,8 +61,8 @@ def _safe_log10(x: np.ndarray) -> np.ndarray:
     return out
 
 
-class DesmosRateModel:
-    """Implements the Desmos piecewise rate surface."""
+class DetectionRateModel:
+    """Implements the   piecewise rate surface."""
 
     def __init__(
         self,
@@ -147,7 +143,7 @@ class DesmosRateModel:
     def q_Euc(self, F_lim: np.ndarray) -> np.ndarray:
         """q_Euc(F_lim): maximal q at which D_max(q) reaches D_euc.
 
-        This matches the Desmos piecewise definition, but is implemented in a
+        This matches the   piecewise definition, but is implemented in a
         PLS-aware manner via (a_II, a_III).
         """
 
@@ -179,7 +175,7 @@ class DesmosRateModel:
     def q_i(self, i_det: int, t_cad_s: np.ndarray) -> np.ndarray:
         """q_i(t_cad): angle for which t_p(q_i) = i * t_cad.
 
-        Matches the Desmos definition.
+        Matches the   definition.
         """
 
         i_det = int(i_det)
@@ -229,14 +225,14 @@ class DesmosRateModel:
 
     # ---------- Piecewise rate surface ----------
     def region_masks(
-        self,
-        i_det: int,
-        N_exp: np.ndarray,
-        t_cad_s: np.ndarray,
-        *,
-        include_unphysical: bool = False,
+            self,
+            i_det: int,
+            N_exp: np.ndarray,
+            t_cad_s: np.ndarray,
+            *,
+            include_unphysical: bool = False,
     ) -> Dict[str, np.ndarray]:
-        """Return boolean masks for the seven Desmos regions.
+        """Return boolean masks for the seven   regions.
 
         This version is robust on regime boundaries: any point in A0 is assigned
         to exactly one region even when equalities occur (within a tolerance).
@@ -249,10 +245,10 @@ class DesmosRateModel:
         eps = 1e-12
 
         A0 = (
-            (N_exp >= 1.0 - eps)
-            & (N_exp <= Nmax + eps)
-            & np.isfinite(t_exp)
-            & (t_exp > 0.0)
+                (N_exp >= 1.0 - eps)
+                & (N_exp <= Nmax + eps)
+                & np.isfinite(t_exp)
+                & (t_exp > 0.0)
         )
 
         F_lim = self.F_lim_Jy(self.t_exp_s(N_exp, t_cad_s))
@@ -340,7 +336,7 @@ class DesmosRateModel:
     ) -> np.ndarray | Tuple[np.ndarray, Dict[str, np.ndarray]]:
         """Compute log10 R_det for the given strategy grid.
 
-        This mirrors the Desmos definition:
+        This mirrors the   definition:
 
             R_T(x,y) = {A1: R1, A2: R2, ..., A7: R7}
 
@@ -435,11 +431,11 @@ class DesmosRateModel:
         logR = self.rate_log10(i_det, N_exp, t_cad_s)
         return 10.0 ** logR
 
-    # ---------- Analytic optimal strategy (from Desmos) ----------
+    # ---------- Analytic optimal strategy (from  ) ----------
     def analytic_optimum(self, i_det: int) -> Dict[str, float]:
-        """Analytic optimum from the Desmos derivation.
+        """Analytic optimum from the   derivation.
 
-        This reproduces the Desmos definitions:
+        This reproduces the   definitions:
         - N_exp,opt = Omega_srv,max / Omega_exp
         - t_cad,opt: piecewise formula supplied by the user
         - t_exp,opt from the exposure-time relation
@@ -468,7 +464,7 @@ class DesmosRateModel:
         t_ref = self.instrument.t_exp_ref_s
         f_live = self.instrument.f_live
 
-        # Candidate expressions (as in the Desmos code)
+        # Candidate expressions (as in the   code)
         exprA = (
             (t_dec / i_det) ** (2.0 * p)
             * (Gamma0 * theta_j) ** (4.0 * (p + 3.0) / 3.0)

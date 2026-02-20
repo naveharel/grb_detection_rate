@@ -1,36 +1,28 @@
 """Power-Law Segment (PLS) models.
 
-The Bachelor's project (Tier 1) focuses the detailed detection-rate
-calculation on PLS G (nu_m < nu < nu_c) as the typical optical case.
-Nevertheless, the Master's thesis is intended to incorporate PLS D, G, H.
+The analytic detection-rate calculation is organised around the PLS of the
+synchrotron spectrum relevant for the observing band. The Bachelor's project
+uses PLS G (nu_m < nu < nu_c) as a typical optical case, and the thesis work
+extends this to additional segments (for example PLS H).
 
 This module provides a small abstraction layer:
-
-- Each PLS model must provide the on-axis flux normalization F_dec (flux at
-  t_dec, at D_euc), consistent with the analytic expressions.
-- Each PLS model must provide the exponents controlling how the off-axis
-  peak flux scales with viewing-angle parameter q~ in phase II and phase III.
-
-For PLS G, the needed relations are explicitly given in Tier 1 and in the
-Desmos prototype.
+- Each PLS model supplies the on-axis flux normalization F_dec (flux at t_dec, at D_euc).
+- Each PLS model supplies the exponents controlling how the off-axis peak flux
+  scales with the viewing-angle parameter q̃ in phase II and phase III.
 
 Notation:
 - q := theta_obs / theta_j
-- q_tilde := q - 1 (so q_tilde=0 is on-axis)
+- q_tilde := q - 1 (so q_tilde = 0 is on-axis)
 
-The off-axis peak flux ratio f_p(q_tilde) is taken as a power-law of q_tilde
-in phase II and III, with exponents encoded by (a_II, a_III):
-
+Off-axis peak flux ratio f_p(q_tilde) is modeled as power-laws:
 Phase II:  F_p / F_dec ~ (q_tilde / q_tilde_dec)^(-2 a_II)
 Phase III: F_p / F_dec ~ q_tilde_dec^(-2) (q_tilde / q_tilde_dec)^(-2 a_III)
 
 For PLS G:
-- a_II = p-1
+- a_II = p - 1
 - a_III = p
-
-This structure is designed so that adding PLS H later only requires changing
-(a_II, a_III) and F_dec.
 """
+
 
 from __future__ import annotations
 
@@ -93,7 +85,7 @@ class PLSG:
         and explicitly takes z -> 0 in the flux normalization. Therefore, the
         redshift factor (1+z)^(...) is set to 1 by default.
 
-        The expression matches the Desmos implementation:
+        The expression matches the analytic normalization used in the project code:
 
         F_dec = 0.461/1000 * (p-0.04) * exp(2.53 p)
                 * (eps_e * (p-2)/(p-1))^(p-1)

@@ -1,28 +1,28 @@
 """Survey/instrument modeling.
 
-The Desmos prototype introduces the key "strategy" degrees of freedom:
+This module defines the mapping between the survey strategy variables
+(N_exp, t_cad) and instrumental quantities (t_exp, F_lim, sky coverage).
 
+Definitions
+-----------
 - N_exp: number of exposures per cadence cycle (proxy for sky area covered).
-  The covered solid angle is Omega_srv = N_exp * Omega_exp, with the hard cap
+  Covered solid angle: Omega_srv = N_exp * Omega_exp, with hard cap
   Omega_srv <= Omega_srv,max.
 
-- t_cad: cadence, i.e. time between consecutive visits to the same field.
+- t_cad: cadence, time between consecutive visits to the same field.
 
-Given a live fraction f_live and an overhead per exposure t_overhead, the
-exposure time per pointing is:
+Given live fraction f_live and overhead per exposure t_overhead, the exposure time
+per visit is:
 
     t_exp = f_live * t_cad / N_exp - t_overhead.
 
-The limiting flux is then modeled as a power law of t_exp:
+The limiting flux is modeled as:
 
     F_lim(t_exp) = F_ref * (t_exp / t_ref)^(-alpha)
 
 with alpha = 1/2 for background-limited observations.
-
-This module keeps these relations isolated so they can later be generalized
-(e.g. include finite-exposure time averaging explicitly, or different noise
-regimes).
 """
+
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def exposure_time_s(strategy: SurveyStrategy, instrument: SurveyInstrumentParams
 
 
 def limiting_flux_Jy(t_exp_s: float, instrument: SurveyInstrumentParams) -> float:
-    """Power-law limiting flux model used in the Desmos prototype.
+    """Power-law limiting flux model used in the analytic survey model.
 
     F_lim(t_exp) = F_ref * (t_exp/t_ref)^(-alpha)
 
@@ -94,9 +94,9 @@ def N_exp_max(instrument: SurveyInstrumentParams) -> float:
 
 
 def is_strategy_physical(strategy: SurveyStrategy, instrument: SurveyInstrumentParams) -> bool:
-    """Basic physical constraints used in the Desmos plot.
+    """Basic physical constraints used in the interactive surface.
 
-    Constraints implemented (matching the Desmos A0(x,y)):
+    Constraints implemented (matching the surface mask A0(N_exp, t_cad)):
     - 1 <= N_exp <= Omega_srv,max / Omega_exp
     - t_exp > 0
     """

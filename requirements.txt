@@ -1,5 +1,4 @@
-dash
-plotly
-numpy
-gunicorn
-matplotlib
+dash==2.18.2
+plotly==5.24.1
+numpy==2.1.3
+gunicorn==22.0.0

@@ -1,20 +1,20 @@
-"""ISM (constant density) afterglow scalings used in Tier 1.
+"""ISM (constant density) afterglow scalings.
 
-This module implements the set of derived quantities that enter the analytic
-rate formulas and the Desmos prototype.
+This module implements derived scales that enter the analytic rate expressions.
 
-We keep the notation consistent with the Bachelor's project:
+Notation follows the Bachelor's project:
 - t_dec: deceleration time
 - t_j: jet break time
 - q_dec: boundary between on-axis and off-axis onset (q_dec-1 = (Gamma_0 theta_j)^{-1})
 - q_j = 2: viewing-angle parameter at which theta_obs = 2 theta_j
 - q_nr: viewing-angle parameter at which the flow becomes Newtonian (approx)
 
-The Tier-1 approach adopts:
-- a top-hat jet,
+Assumptions:
+- top-hat jet,
 - Blandford–McKee ISM dynamics up to t_j,
-- Euclidean approximation for rates and (optionally) for flux/time normalisation.
+- Euclidean approximation for the rate calculation (optional also for flux/time normalisation).
 """
+
 
 from __future__ import annotations
 

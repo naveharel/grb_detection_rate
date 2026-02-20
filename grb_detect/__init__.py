@@ -1,26 +1,33 @@
 """GRB afterglow detection-rate modelling.
 
-This package is a refactor/re-implementation of the analytic framework
-introduced in the Bachelor's project (Tier 1) and extended in the Desmos
-prototype for survey-strategy optimisation.
+This package implements an analytic framework (based on the Bachelor's project)
+for computing the detection-rate surface R_det(N_exp, t_cad) under simplified
+assumptions (ISM external medium, Euclidean rate treatment, chosen PLS model).
 
-The public API is intentionally small at this stage; most users will want:
-
-- :class:`grb_detect.detection_rate.DesmosRateModel`
-
-which reproduces the Desmos detection-rate surface R_det(N_exp, t_cad).
+Most users will interact with:
+- DetectionRateModel: evaluates the piecewise log-rate surface
+- plot3d_core: numerical helpers used by the interactive Dash app
 """
 
-from .params import AfterglowPhysicalParams, MicrophysicsParams, SurveyInstrumentParams, SurveyStrategy
+from .params import (
+    AfterglowPhysicalParams,
+    MicrophysicsParams,
+    SurveyDesignParams,
+    SurveyInstrumentParams,
+    SurveyStrategy,
+    SurveyTelescopeParams,
+)
 from .pls import PLSG, PLSH
-from .detection_rate import DesmosRateModel
+from .detection_rate import DetectionRateModel
 
 __all__ = [
     "AfterglowPhysicalParams",
     "MicrophysicsParams",
+    "SurveyTelescopeParams",
+    "SurveyDesignParams",
     "SurveyInstrumentParams",
     "SurveyStrategy",
     "PLSG",
     "PLSH",
-    "DesmosRateModel",
+    "DetectionRateModel",
 ]
