@@ -1,3 +1,4 @@
+# plot_3d.py
 import os
 import sys
 
@@ -9,7 +10,7 @@ from dash import Dash, dcc, html, Input, Output
 
 from grb_detect.constants import DAY_S, DEG2_TO_SR
 from grb_detect.params import SurveyDesignParams
-from grb_detect.plot3d_core import (
+from grb_detect.plot_3d_core import (
     compute_surface,
     discrete_regime_colorscale,
     make_rate_model,
@@ -254,7 +255,8 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
             omega_exp_deg2=float(omega_exp_deg2),
         )
 
-    X, Y, Z_plot, Z_raw, regime_id = compute_surface(
+    # X, Y are linear coordinates returned as (N_exp, t_cad_s)
+    X, Y_s, Z_plot, Z_raw, regime_id = compute_surface(
         model_day,
         model_night,
         int(i_det),
@@ -265,6 +267,12 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
         ny=340 if color_on else 260,
     )
 
+    # Convert plotted cadence axis to hours (but keep all model evaluations in seconds)
+    Y_h = Y_s / 3600.0
+
+    # Convert log10(R_det) to linear R_det for a log z-axis
+    R_plot = np.where(np.isfinite(Z_plot), 10 ** Z_plot, np.nan)
+
     N_exp_max = model_day.instrument.omega_survey_max_sr / model_day.instrument.omega_exp_sr
     N_opt, t_cad_opt_s, log10R_opt = maximize_log_surface_iterative(
         model_day,
@@ -272,35 +280,36 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
         int(i_det),
         x_min=0.0,
         x_max=np.log10(N_exp_max),
-        y_min=-8.0,
-        y_max=8.0,
+        y_min=0.0,  # 1 s
+        y_max=8.0,  # 1e8 s
         optical_survey=optical_on,
         t_night_s=t_night_s,
     )
     R_opt = 10 ** log10R_opt if np.isfinite(log10R_opt) else np.nan
     t_cad_opt_hr = t_cad_opt_s / 3600.0 if np.isfinite(t_cad_opt_s) else np.nan
 
+    # ZTF reference point
     N_ztf = 27500.0 / 47.0
     t_cad_ztf_s = 2.0 * DAY_S
-    x_ztf = np.log10(N_ztf)
-    y_ztf = np.log10(t_cad_ztf_s)
-    z_ztf = float(
+    t_cad_ztf_hr = t_cad_ztf_s / 3600.0
+    log10_ztf = float(
         model_day.rate_log10(
             i_det=int(i_det),
             N_exp=np.array([N_ztf]),
             t_cad_s=np.array([t_cad_ztf_s]),
         )[0]
     )
+    R_ztf = (10 ** log10_ztf) if np.isfinite(log10_ztf) else np.nan
 
-    z_candidates = []
-    if np.any(np.isfinite(Z_plot)):
-        z_candidates.append(float(np.nanmax(Z_plot)))
-    if np.isfinite(log10R_opt):
-        z_candidates.append(float(log10R_opt))
-    if np.isfinite(z_ztf):
-        z_candidates.append(float(z_ztf))
-    zmax = max(z_candidates) if z_candidates else -1.0
-    zmax_plot = zmax + 0.06
+    # For log z-axis, Plotly expects zaxis.range in log10 units
+    R_candidates = []
+    if np.any(np.isfinite(R_plot)):
+        R_candidates.append(float(np.nanmax(R_plot)))
+    if np.isfinite(R_opt):
+        R_candidates.append(float(R_opt))
+    if np.isfinite(R_ztf):
+        R_candidates.append(float(R_ztf))
+    Rmax = max(R_candidates) if R_candidates else 1.0
 
     fig = go.Figure()
 
@@ -309,8 +318,8 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
         fig.add_trace(
             go.Surface(
                 x=X,
-                y=Y,
-                z=Z_plot,
+                y=Y_h,
+                z=R_plot,
                 surfacecolor=regime_id,
                 cmin=1,
                 cmax=7,
@@ -323,7 +332,7 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
             )
         )
 
-        bl = boundary_lines_from_regimes(X, Y, Z_plot, regime_id)
+        bl = boundary_lines_from_regimes(X, Y_h, R_plot, regime_id)
         if bl is not None:
             fig.add_trace(bl)
 
@@ -341,36 +350,42 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
                 )
             )
     else:
+        # Plot linear R_det on z, but color by log10(R_det)
+        zmax_color = float(np.nanmax(Z_plot)) if np.any(np.isfinite(Z_plot)) else 0.0
         fig.add_trace(
             go.Surface(
                 x=X,
-                y=Y,
-                z=Z_plot,
+                y=Y_h,
+                z=R_plot,
+                surfacecolor=Z_plot,
+                cmin=-1.0,
+                cmax=zmax_color,
                 showscale=True,
                 colorscale="Plasma",
                 connectgaps=False,
-                name="log10 R_det",
+                name="R_det",
+                colorbar=dict(title="log10 R_det"),
             )
         )
 
-    if np.isfinite(N_opt) and np.isfinite(t_cad_opt_s) and np.isfinite(log10R_opt):
+    if np.isfinite(N_opt) and np.isfinite(t_cad_opt_hr) and np.isfinite(R_opt):
         fig.add_trace(
             go.Scatter3d(
-                x=[np.log10(N_opt)],
-                y=[np.log10(t_cad_opt_s)],
-                z=[log10R_opt],
+                x=[N_opt],
+                y=[t_cad_opt_hr],
+                z=[R_opt],
                 mode="markers",
                 marker=dict(size=7, color="black"),
                 name="Grid maximum",
             )
         )
 
-    if np.isfinite(z_ztf):
+    if np.isfinite(R_ztf):
         fig.add_trace(
             go.Scatter3d(
-                x=[x_ztf],
-                y=[y_ztf],
-                z=[z_ztf],
+                x=[N_ztf],
+                y=[t_cad_ztf_hr],
+                z=[R_ztf],
                 mode="markers",
                 marker=dict(size=7, color="green"),
                 name="ZTF (2 d cadence)",
@@ -380,10 +395,14 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
     fig.update_layout(
         uirevision="keep-view-v1",
         scene=dict(
-            xaxis_title="log10 N_exp",
-            yaxis_title="log10 t_cad [s]",
-            zaxis_title="log10 R_det [yr^-1]",
-            zaxis=dict(range=[-1, float(zmax_plot)]),
+            xaxis=dict(title="N_exp", type="log"),
+            yaxis=dict(title="t_cad [h]", type="log"),
+            zaxis=dict(
+                title="R_det [yr^-1]",
+                type="log",
+                range=[-1.0, np.log10(Rmax) + 0.05],
+            ),
+            aspectmode="cube",
         ),
         scene_camera=dict(
             eye=dict(x=-1.25, y=-1.25, z=0.95),
@@ -439,8 +458,8 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
             [
                 html.B("ZTF strategy: "),
                 f"N_exp = {N_ztf:.3g}, ",
-                f"t_cad = {t_cad_ztf_s / 3600.0:.3g} h = {t_cad_ztf_s:.3g} s, ",
-                f"R_det = {(10 ** z_ztf):.3g} yr⁻¹",
+                f"t_cad = {t_cad_ztf_hr:.3g} h = {t_cad_ztf_s:.3g} s, ",
+                f"R_det = {R_ztf:.3g} yr⁻¹",
             ]
         ),
     ]

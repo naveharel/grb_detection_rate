@@ -1,3 +1,4 @@
+# grb_detect/plot_3d_core.py
 """Numerical core for the interactive 3D detection-rate surface.
 
 This module contains no Dash code. It provides the computational helpers used by
@@ -6,9 +7,6 @@ the interactive app:
 - map cadence to an effective cadence for optical surveys
 - evaluate the log-rate surface and (optionally) regime identifiers
 - grid-refinement maximisation of the surface
-
-The functions are written to preserve the established behaviour of the app while
-keeping the heavy numerical work importable and testable.
 """
 
 from __future__ import annotations
@@ -57,13 +55,6 @@ def optical_survey_tcad_seconds(
       - For t_night <= t_cad < 1 day: cadences are ineffective and mapped to 1 day.
       - For t_cad < t_night: t_eff = t_cad (continuous), but must satisfy i_det * t_cad < t_night.
         Values that violate this are invalid.
-
-    Returns
-    -------
-    t_eff_s:
-        Effective cadence (seconds).
-    valid_mask:
-        Boolean mask indicating which input cadences are allowed.
     """
     t = np.asarray(t_cad_s, dtype=float)
     t_eff = np.array(t, copy=True)
@@ -118,11 +109,16 @@ def compute_surface(
     nx: int = 220,
     ny: int = 260,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
-    """Compute the log-rate surface on a (log N_exp, log t_cad) grid."""
+    """Compute the log-rate surface on a (log N_exp, log t_cad) grid.
 
+    Returns X, Y as LINEAR coordinates (N_exp and t_cad in seconds) so Plotly can
+    use true log axes while preserving the surface shape.
+    """
     N_exp_max = model_day.instrument.omega_survey_max_sr / model_day.instrument.omega_exp_sr
     x_min, x_max = 0.0, np.log10(N_exp_max)
-    y_min, y_max = -8.0, 8.0
+
+    # Requested: t_cad from 1 s to 1e8 s
+    y_min, y_max = 0.0, 8.0
 
     logN = np.linspace(x_min, x_max, nx)
     logtcad = np.linspace(y_min, y_max, ny)
@@ -179,7 +175,10 @@ def compute_surface(
         else:
             fill_regimes(model_day, np.ones_like(Z_raw, dtype=bool))
 
-    return X_log, Y_log, Z_plot, Z_raw, regime_id
+    # Return linear coordinates for true log axes
+    X_lin = N_exp
+    Y_lin = t_cad_s
+    return X_lin, Y_lin, Z_plot, Z_raw, regime_id
 
 
 def maximize_log_surface_iterative(
