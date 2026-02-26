@@ -9,15 +9,15 @@ import dash
 from dash import Dash, dcc, html, Input, Output
 
 from grb_detect.constants import DAY_S, DEG2_TO_SR
-from grb_detect.params import SurveyDesignParams
+from grb_detect.params import SurveyDesignParams, SurveyStrategy
 from grb_detect.plot_3d_core import (
     compute_surface,
     discrete_regime_colorscale,
     make_rate_model,
     maximize_log_surface_iterative,
 )
+from grb_detect.survey import exposure_time_s
 
-# Render sets this environment variable automatically
 RENDER_COMMIT = os.environ.get("RENDER_GIT_COMMIT", "local")
 RUNTIME_INFO = (
     f"commit={RENDER_COMMIT} | "
@@ -27,9 +27,24 @@ RUNTIME_INFO = (
     f"numpy={np.__version__}"
 )
 
+# Keep discrete-line appearance consistent across modes
+DISCRETE_LINE_WIDTH = 5
+DISCRETE_MARKER_SIZE = 4
+
+# Hover template matching Plotly's surface-style readout: x, y, z only
+XYZ_HOVER = "x: %{x:.6g}<br>y: %{y:.6g}<br>z: %{z:.6g}<extra></extra>"
+
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    """Convert '#RRGGBB' to 'rgba(r,g,b,a)'."""
+    h = hex_color.lstrip("#")
+    if len(h) != 6:
+        return f"rgba(0,0,0,{alpha})"
+    r = int(h[0:2], 16)
+    g = int(h[2:4], 16)
+    b = int(h[4:6], 16)
+    return f"rgba({r},{g},{b},{alpha})"
 
 def boundary_lines_from_regimes(X, Y, Z, regime_id):
-    """Boundary overlay as polylines between adjacent grid cells of different regime_id."""
     if regime_id is None:
         return None
 
@@ -67,8 +82,142 @@ def boundary_lines_from_regimes(X, Y, Z, regime_id):
     )
 
 
+def _add_discrete_day_lines(
+    fig: go.Figure,
+    *,
+    model_day,
+    i_det: int,
+    N_cols: np.ndarray,
+    t_cad_max_s: float,
+    zmin_plot_log10: float = -1.0,
+    color_mode: str = "height",  # "height" or "regime"
+    height_cmin: float = -1.0,
+    height_cmax: float = 1.0,
+    height_colorscale: str = "Plasma",
+    regime_colors: list[str] | None = None,  # len=7, A1..A7
+) -> None:
+    N_cols = np.asarray(N_cols, dtype=float)
+    if not np.any(np.isfinite(N_cols)):
+        return
+
+    max_days = int(np.floor(float(t_cad_max_s) / float(DAY_S)))
+    if max_days < 1:
+        return
+
+    # Integer day sampling: all small n, then log-sample larger n
+    n_small = min(30, max_days)
+    n_vals_small = np.arange(1, n_small + 1, dtype=int)
+
+    n_vals_large = np.array([], dtype=int)
+    if max_days > n_small:
+        n_target = 40
+        n_vals_large = np.unique(
+            np.rint(np.logspace(np.log10(n_small + 1), np.log10(max_days), n_target)).astype(int)
+        )
+        n_vals_large = n_vals_large[(n_vals_large >= n_small + 1) & (n_vals_large <= max_days)]
+
+    n_vals = np.unique(np.concatenate([n_vals_small, n_vals_large]))
+    if n_vals.size == 0:
+        return
+
+    N_line = N_cols[None, :]  # (1, nN)
+
+    # Hover label style: force neutral gray background (not trace color)
+    hoverlabel_style = dict(
+        bgcolor="rgba(230,230,230,0.92)",
+        bordercolor="rgba(160,160,160,1.0)",
+        font=dict(color="black"),
+    )
+
+    def _regime_id_for_points(t_s: float) -> np.ndarray:
+        t_arr = np.full_like(N_line, float(t_s), dtype=float)
+        masks = model_day.region_masks(int(i_det), N_line, t_arr, include_unphysical=False)
+
+        rid = np.full(N_cols.shape, np.nan, dtype=float)
+        for k, key in enumerate(["A1", "A2", "A3", "A4", "A5", "A6", "A7"], start=1):
+            mk = np.asarray(masks[key]).reshape(1, -1).ravel()
+            rid[mk] = float(k)
+        return rid
+
+    for n in n_vals:
+        t_s = float(n) * float(DAY_S)
+
+        log10R = model_day.rate_log10(
+            i_det=int(i_det),
+            N_exp=N_line,
+            t_cad_s=np.array([[t_s]], dtype=float),
+        )
+        log10R = np.asarray(log10R).reshape(1, -1).ravel()
+
+        good = np.isfinite(N_cols) & np.isfinite(log10R) & (log10R >= float(zmin_plot_log10))
+        if np.count_nonzero(good) < 2:
+            continue
+
+        x = N_cols[good]
+        y = np.full_like(x, t_s / 3600.0, dtype=float)  # hours
+        z = (10 ** log10R[good]).astype(float)
+
+        if color_mode == "regime" and regime_colors is not None and len(regime_colors) == 7:
+            rid_all = _regime_id_for_points(t_s)
+            rid = rid_all[good]
+
+            start = 0
+            while start < rid.size:
+                if not np.isfinite(rid[start]):
+                    start += 1
+                    continue
+
+                k = int(rid[start])
+                end = start + 1
+                while end < rid.size and np.isfinite(rid[end]) and int(rid[end]) == k:
+                    end += 1
+
+                if end - start >= 2:
+                    # Use same alpha in regime mode to avoid perceived width change
+                    col = _hex_to_rgba(regime_colors[k - 1], alpha=0.85)
+
+                    fig.add_trace(
+                        go.Scatter3d(
+                            x=x[start:end],
+                            y=y[start:end],
+                            z=z[start:end],
+                            mode="lines+markers",
+                            line=dict(color=col, width=DISCRETE_LINE_WIDTH),
+                            marker=dict(size=DISCRETE_MARKER_SIZE, opacity=0.001),
+                            showlegend=False,
+                            hovertemplate=XYZ_HOVER,
+                            hoverlabel=hoverlabel_style,
+                        )
+                    )
+
+                start = end
+
+        else:
+            # Height coloring: keep the connector line *same opacity* as regime mode
+            fig.add_trace(
+                go.Scatter3d(
+                    x=x,
+                    y=y,
+                    z=z,
+                    mode="lines+markers",
+                    line=dict(color="rgba(0,0,0,0.85)", width=DISCRETE_LINE_WIDTH),
+                    marker=dict(
+                        size=DISCRETE_MARKER_SIZE,
+                        color=log10R[good],
+                        colorscale=height_colorscale,
+                        cmin=float(height_cmin),
+                        cmax=float(height_cmax),
+                        opacity=1.0,
+                        showscale=False,
+                    ),
+                    showlegend=False,
+                    hovertemplate=XYZ_HOVER,
+                    hoverlabel=hoverlabel_style,
+                )
+            )
+
 app = Dash(__name__)
-server = app.server  # for WSGI servers (gunicorn)
+server = app.server
 
 survey_defaults = SurveyDesignParams()
 T_NIGHT_DEFAULT_S = survey_defaults.t_night_s
@@ -83,22 +232,10 @@ app.layout = html.Div(
         "overflow": "visible",
     },
     children=[
-        html.H2(
-            "GRB Detection Rate Surface",
-            style={"margin": "0", "paddingTop": "10px", "paddingBottom": "6px"},
-        ),
-        dcc.Graph(
-            id="surface",
-            style={"height": "780px", "marginTop": "0px", "paddingTop": "0px"},
-        ),
+        html.H2("GRB Detection Rate Surface", style={"margin": "0", "paddingTop": "10px", "paddingBottom": "6px"}),
+        dcc.Graph(id="surface", style={"height": "780px", "marginTop": "0px", "paddingTop": "0px"}),
         html.Div(
-            style={
-                "display": "flex",
-                "gap": "28px",
-                "alignItems": "center",
-                "marginTop": "6px",
-                "marginBottom": "10px",
-            },
+            style={"display": "flex", "gap": "28px", "alignItems": "center", "marginTop": "6px", "marginBottom": "10px"},
             children=[
                 dcc.Checklist(
                     id="optical_checkbox",
@@ -117,12 +254,7 @@ app.layout = html.Div(
             ],
         ),
         html.Div(
-            style={
-                "display": "grid",
-                "gridTemplateColumns": "repeat(3, minmax(320px, 1fr))",
-                "gap": "12px 18px",
-                "alignItems": "center",
-            },
+            style={"display": "grid", "gridTemplateColumns": "repeat(3, minmax(320px, 1fr))", "gap": "12px 18px"},
             children=[
                 html.Div(
                     [
@@ -211,10 +343,7 @@ app.layout = html.Div(
 )
 
 
-@app.callback(
-    Output("tnight_container", "style"),
-    Input("optical_checkbox", "value"),
-)
+@app.callback(Output("tnight_container", "style"), Input("optical_checkbox", "value"))
 def toggle_tnight_slider(optical_vals):
     optical_on = "on" in (optical_vals or [])
     return {"display": "block"} if optical_on else {"display": "none"}
@@ -255,7 +384,6 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
             omega_exp_deg2=float(omega_exp_deg2),
         )
 
-    # X, Y are linear coordinates returned as (N_exp, t_cad_s)
     X, Y_s, Z_plot, Z_raw, regime_id = compute_surface(
         model_day,
         model_night,
@@ -267,10 +395,7 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
         ny=340 if color_on else 260,
     )
 
-    # Convert plotted cadence axis to hours (but keep all model evaluations in seconds)
     Y_h = Y_s / 3600.0
-
-    # Convert log10(R_det) to linear R_det for a log z-axis
     R_plot = np.where(np.isfinite(Z_plot), 10 ** Z_plot, np.nan)
 
     N_exp_max = model_day.instrument.omega_survey_max_sr / model_day.instrument.omega_exp_sr
@@ -280,15 +405,26 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
         int(i_det),
         x_min=0.0,
         x_max=np.log10(N_exp_max),
-        y_min=0.0,  # 1 s
-        y_max=8.0,  # 1e8 s
+        y_min=0.0,
+        y_max=8.0,
         optical_survey=optical_on,
         t_night_s=t_night_s,
     )
     R_opt = 10 ** log10R_opt if np.isfinite(log10R_opt) else np.nan
     t_cad_opt_hr = t_cad_opt_s / 3600.0 if np.isfinite(t_cad_opt_s) else np.nan
 
-    # ZTF reference point
+    t_exp_opt_s = np.nan
+    if np.isfinite(N_opt) and np.isfinite(t_cad_opt_s):
+        try:
+            t_exp_opt_s = float(
+                exposure_time_s(
+                    SurveyStrategy(N_exp=float(N_opt), t_cad_s=float(t_cad_opt_s)),
+                    model_day.instrument,
+                )
+            )
+        except Exception:
+            t_exp_opt_s = np.nan
+
     N_ztf = 27500.0 / 47.0
     t_cad_ztf_s = 2.0 * DAY_S
     t_cad_ztf_hr = t_cad_ztf_s / 3600.0
@@ -301,7 +437,17 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
     )
     R_ztf = (10 ** log10_ztf) if np.isfinite(log10_ztf) else np.nan
 
-    # For log z-axis, Plotly expects zaxis.range in log10 units
+    t_exp_ztf_s = np.nan
+    try:
+        t_exp_ztf_s = float(
+            exposure_time_s(
+                SurveyStrategy(N_exp=float(N_ztf), t_cad_s=float(t_cad_ztf_s)),
+                model_day.instrument,
+            )
+        )
+    except Exception:
+        t_exp_ztf_s = np.nan
+
     R_candidates = []
     if np.any(np.isfinite(R_plot)):
         R_candidates.append(float(np.nanmax(R_plot)))
@@ -313,14 +459,62 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
 
     fig = go.Figure()
 
+    # Surface selection:
+    # - optical_on: plot only sub-day surface as continuous (discrete part is drawn as lines)
+    # - non-optical: plot full surface (no cadence restrictions)
+    if optical_on:
+        y_rows = np.asarray(Y_s[:, 0], dtype=float)
+        keep_rows = np.where(y_rows < float(DAY_S))[0]
+    else:
+        keep_rows = np.arange(Y_s.shape[0], dtype=int)
+
+    Xs = X[keep_rows, :]
+    Ys = Y_h[keep_rows, :]
+    Rs = R_plot[keep_rows, :]
+
+    # Discrete day curves only for optical surveys
+    if optical_on:
+        N_cols = np.asarray(X[0, :], dtype=float)
+        t_cad_max_s = float(np.nanmax(Y_s[:, 0])) if np.any(np.isfinite(Y_s[:, 0])) else 0.0
+
+        if color_on and (regime_id is not None):
+            _, regime_cols = discrete_regime_colorscale()
+            _add_discrete_day_lines(
+                fig,
+                model_day=model_day,
+                i_det=int(i_det),
+                N_cols=N_cols,
+                t_cad_max_s=t_cad_max_s,
+                zmin_plot_log10=-1.0,
+                color_mode="regime",
+                regime_colors=regime_cols,
+            )
+        else:
+            zmax_color = float(np.nanmax(Z_plot)) if np.any(np.isfinite(Z_plot)) else 0.0
+            _add_discrete_day_lines(
+                fig,
+                model_day=model_day,
+                i_det=int(i_det),
+                N_cols=N_cols,
+                t_cad_max_s=t_cad_max_s,
+                zmin_plot_log10=-1.0,
+                color_mode="height",
+                height_cmin=-1.0,
+                height_cmax=zmax_color,
+                height_colorscale="Plasma",
+            )
+
+    # Surface trace
     if color_on and (regime_id is not None):
         cs, colors = discrete_regime_colorscale()
+        Cs = regime_id[keep_rows, :]
+
         fig.add_trace(
             go.Surface(
-                x=X,
-                y=Y_h,
-                z=R_plot,
-                surfacecolor=regime_id,
+                x=Xs,
+                y=Ys,
+                z=Rs,
+                surfacecolor=Cs,
                 cmin=1,
                 cmax=7,
                 colorscale=cs,
@@ -328,11 +522,12 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
                 connectgaps=False,
                 lighting=dict(ambient=0.75, diffuse=0.75, specular=0.08, roughness=0.95),
                 lightposition=dict(x=100, y=200, z=0),
-                name="Regimes",
+                name="",
+                showlegend=False,
             )
         )
 
-        bl = boundary_lines_from_regimes(X, Y_h, R_plot, regime_id)
+        bl = boundary_lines_from_regimes(Xs, Ys, Rs, Cs)
         if bl is not None:
             fig.add_trace(bl)
 
@@ -350,24 +545,26 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
                 )
             )
     else:
-        # Plot linear R_det on z, but color by log10(R_det)
         zmax_color = float(np.nanmax(Z_plot)) if np.any(np.isfinite(Z_plot)) else 0.0
+        Zs = Z_plot[keep_rows, :]
+
         fig.add_trace(
             go.Surface(
-                x=X,
-                y=Y_h,
-                z=R_plot,
-                surfacecolor=Z_plot,
+                x=Xs,
+                y=Ys,
+                z=Rs,
+                surfacecolor=Zs,
                 cmin=-1.0,
                 cmax=zmax_color,
                 showscale=True,
                 colorscale="Plasma",
                 connectgaps=False,
-                name="R_det",
+                name="",
                 colorbar=dict(title="log10 R_det"),
             )
         )
 
+    # Markers
     if np.isfinite(N_opt) and np.isfinite(t_cad_opt_hr) and np.isfinite(R_opt):
         fig.add_trace(
             go.Scatter3d(
@@ -377,6 +574,14 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
                 mode="markers",
                 marker=dict(size=7, color="black"),
                 name="Grid maximum",
+                hovertemplate=(
+                    "Grid optimum"
+                    + "<br>N_exp=%{x:.4g}"
+                    + "<br>t_cad=%{y:.4g} h"
+                    + (f"<br>t_exp={t_exp_opt_s:.4g} s" if np.isfinite(t_exp_opt_s) else "<br>t_exp=nan")
+                    + "<br>R_det=%{z:.4g} yr⁻¹"
+                    + "<extra></extra>"
+                ),
             )
         )
 
@@ -389,6 +594,14 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
                 mode="markers",
                 marker=dict(size=7, color="green"),
                 name="ZTF (2 d cadence)",
+                hovertemplate=(
+                    "ZTF strategy"
+                    + "<br>N_exp=%{x:.4g}"
+                    + "<br>t_cad=%{y:.4g} h"
+                    + (f"<br>t_exp={t_exp_ztf_s:.4g} s" if np.isfinite(t_exp_ztf_s) else "<br>t_exp=nan")
+                    + "<br>R_det=%{z:.4g} yr⁻¹"
+                    + "<extra></extra>"
+                ),
             )
         )
 
@@ -397,27 +610,12 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
         scene=dict(
             xaxis=dict(title="N_exp", type="log"),
             yaxis=dict(title="t_cad [h]", type="log"),
-            zaxis=dict(
-                title="R_det [yr^-1]",
-                type="log",
-                range=[-1.0, np.log10(Rmax) + 0.05],
-            ),
+            zaxis=dict(title="R_det [yr^-1]", type="log", range=[-1.0, np.log10(Rmax) + 0.05]),
             aspectmode="cube",
         ),
-        scene_camera=dict(
-            eye=dict(x=-1.25, y=-1.25, z=0.95),
-            up=dict(x=0, y=0, z=1),
-        ),
+        scene_camera=dict(eye=dict(x=-1.25, y=-1.25, z=0.95), up=dict(x=0, y=0, z=1)),
         margin=dict(l=0, r=0, b=0, t=5),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="left",
-            x=0.02,
-        )
-        if color_on
-        else dict(),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.02) if color_on else dict(),
     )
 
     omega_exp_sr = float(omega_exp_deg2) * DEG2_TO_SR
@@ -450,6 +648,7 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
                 html.B("Grid optimum: "),
                 f"N_exp = {N_opt:.3g}, ",
                 f"t_cad = {t_cad_opt_hr:.3g} h = {t_cad_opt_s:.3g} s, ",
+                f"t_exp = {t_exp_opt_s:.3g} s, ",
                 f"R_det = {R_opt:.3g} yr⁻¹",
             ]
         ),
@@ -459,6 +658,7 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
                 html.B("ZTF strategy: "),
                 f"N_exp = {N_ztf:.3g}, ",
                 f"t_cad = {t_cad_ztf_hr:.3g} h = {t_cad_ztf_s:.3g} s, ",
+                f"t_exp = {t_exp_ztf_s:.3g} s, ",
                 f"R_det = {R_ztf:.3g} yr⁻¹",
             ]
         ),
