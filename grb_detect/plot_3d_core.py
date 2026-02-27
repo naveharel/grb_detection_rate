@@ -17,6 +17,13 @@ from .constants import DAY_S, DEG2_TO_SR
 from .detection_rate import DetectionRateModel
 from .params import AfterglowPhysicalParams, SurveyDesignParams, SurveyInstrumentParams, SurveyTelescopeParams
 
+# Minimum log10 R_det shown on the surface (rates below this are clipped)
+ZMIN_DISPLAY_LOG10: float = -1.0
+
+# Fraction of optical cadence grid rows allocated to continuous / gap bands
+_OPTICAL_GRID_FRAC_CONT: float = 0.45
+_OPTICAL_GRID_FRAC_GAP: float = 0.10
+
 
 def make_rate_model(
     *,
@@ -90,7 +97,10 @@ def optical_survey_tcad_seconds(
     if np.any(cont):
         valid[cont] &= (float(i_det) * t_eff[cont] < float(t_night_s))
 
-    # Gap region: (t_night/i_det) <= t < 1 day is invalid
+    # Gap region: (t_night/i_det) <= t < 1 day is invalid for i_det >= 2.
+    # Note: for i_det = 1, this gap should not apply (cadences up to 1 day are valid
+    # since a single detection fits in any sub-day window). Fix this when i_det = 1
+    # support is added.
     gap = valid & (t_eff >= t_cont_max) & (t_eff < float(DAY_S))
     if np.any(gap):
         valid[gap] = False
@@ -124,8 +134,8 @@ def _build_optical_tcad_grid(
     t_cont_max = float(t_night_s) / float(i_det)
 
     # Allocate rows: prioritize continuous part + day-multiples part, keep a small "gap" band
-    n_gap = max(10, int(0.10 * ny))
-    n_cont = max(40, int(0.45 * ny))
+    n_gap = max(10, int(_OPTICAL_GRID_FRAC_GAP * ny))
+    n_cont = max(40, int(_OPTICAL_GRID_FRAC_CONT * ny))
     n_disc = max(40, ny - n_cont - n_gap)
 
     # Continuous part (cap at t_cont_max, and ensure strictly below it)
@@ -173,14 +183,17 @@ def _build_optical_tcad_grid(
 
 def discrete_regime_colorscale() -> tuple[list[list[float | str]], list[str]]:
     """Discrete (step) Plotly colorscale for regime_id in {1..7}."""
+    # Warm (orange/red) = flux-limited (A1–A3, q_Euc > q_i — going deeper helps)
+    # Cool (teal/blue)  = cadence-limited (A4–A6, q_i > q_Euc — faster cadence helps)
+    # Neutral slate     = doubly limited (A7)
     colors = [
-        "#6A3D9A",  # A1 purple
-        "#1F78B4",  # A2 blue
-        "#33A02C",  # A3 green
-        "#FF7F00",  # A4 orange
-        "#E31A1C",  # A5 red
-        "#A6CEE3",  # A6 light blue
-        "#B15928",  # A7 brown
+        "#FF1744",  # A1 flux-limited · decel. (Material red accent)
+        "#FF9100",  # A2 flux-limited · post-jet (Material deep orange accent)
+        "#FFD740",  # A3 flux-limited · pre-jet (Material amber accent)
+        "#1DE9B6",  # A4 cadence-limited · decel. (Material teal accent)
+        "#00E5FF",  # A5 cadence-limited · post-jet (Material cyan accent)
+        "#2979FF",  # A6 cadence-limited · pre-jet (Material blue accent)
+        "#9E9E9E",  # A7 doubly limited (neutral gray)
     ]
     cs: list[list[float | str]] = []
     for k, c in enumerate(colors, start=1):
@@ -253,7 +266,7 @@ def compute_surface(
         Z_raw = model_day.rate_log10(i_det=i_det, N_exp=N_exp, t_cad_s=t_cad_eff)
 
     # Display mask for the plotted surface only
-    Z_plot = np.where(np.isfinite(Z_raw) & (Z_raw >= -1.0), Z_raw, np.nan)
+    Z_plot = np.where(np.isfinite(Z_raw) & (Z_raw >= ZMIN_DISPLAY_LOG10), Z_raw, np.nan)
 
     regime_id: np.ndarray | None = None
     if color_regimes:
@@ -272,7 +285,7 @@ def compute_surface(
             regime_id[(masks["A7"] & sel)] = 7
 
         if optical_survey:
-            is_subday = t_cad_eff < float(DAY_S)
+            # is_subday already computed above in the optical_survey block
             fill_regimes(model_day, ~is_subday)
             if model_night is None:
                 raise RuntimeError("model_night is required when optical_survey=True")

@@ -1,0 +1,320 @@
+/* ── GRB Detection Rate App — Design System ─────────────────────────────── */
+
+/* ── CSS custom properties ───────────────────────────────────────────────── */
+:root,
+html[data-theme="dark"] {
+    /* Surfaces */
+    --bg:           #0a0d14;
+    --panel:        #111827;
+    --surface:      #1a2332;
+    --border:       #1f2d3d;
+
+    /* Text */
+    --text:         #e2e8f0;
+    --text-dim:     #94a3b8;
+    --text-muted:   #4b5a6e;
+
+    /* Accent (indigo) */
+    --accent:       #818cf8;
+    --accent-glow:  rgba(129, 140, 248, 0.18);
+
+    /* Controls */
+    --btn-bg:       #1e293b;
+    --btn-hover:    #2d3748;
+    --input-bg:     #1a2332;
+    --input-border: #2d3748;
+
+    /* Slider */
+    --rail:         #1f2d3d;
+    --track:        #818cf8;
+    --handle:       #e2e8f0;
+    --dot:          #1f2d3d;
+    --dot-active:   #818cf8;
+    --mark-text:    #7a93ab;
+}
+
+html[data-theme="light"] {
+    --bg:           #f0f4f8;
+    --panel:        #ffffff;
+    --surface:      #f8fafc;
+    --border:       #dde3ea;
+
+    --text:         #0f172a;
+    --text-dim:     #475569;
+    --text-muted:   #94a3b8;
+
+    --accent:       #6366f1;
+    --accent-glow:  rgba(99, 102, 241, 0.12);
+
+    --btn-bg:       #e8edf3;
+    --btn-hover:    #d5dce6;
+    --input-bg:     #ffffff;
+    --input-border: #cbd5e1;
+
+    --rail:         #dde3ea;
+    --track:        #6366f1;
+    --handle:       #6366f1;
+    --dot:          #dde3ea;
+    --dot-active:   #6366f1;
+    --mark-text:    #94a3b8;
+}
+
+/* ── Reset ───────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+.header-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 16px;
+    height: 48px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    z-index: 10;
+}
+
+.header-bar h2 {
+    flex: 1;
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    color: var(--text);
+}
+
+/* ── Icon buttons ────────────────────────────────────────────────────────── */
+.icon-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 12px;
+    background: var(--btn-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 0.15s, border-color 0.15s;
+}
+
+.icon-btn:hover {
+    background: var(--btn-hover);
+    border-color: var(--text-muted);
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+.sidebar {
+    width: 0;
+    min-width: 0;
+    overflow: hidden;
+    transition: width 0.25s ease, min-width 0.25s ease;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.sidebar.open {
+    width: 280px;
+    min-width: 280px;
+}
+
+.sidebar-inner {
+    width: 280px;
+    padding: 10px 14px 24px;
+    overflow-y: auto;
+    height: 100%;
+}
+
+/* ── Section headings ────────────────────────────────────────────────────── */
+.slider-group-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin: 18px 0 10px 0;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--border);
+}
+
+.slider-group-title:first-child {
+    margin-top: 6px;
+}
+
+/* ── Parameter block (label row + slider) ────────────────────────────────── */
+.slider-wrap {
+    margin-bottom: 16px;
+}
+
+/* Label + number-input row */
+.param-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 3px;
+}
+
+.slider-label {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--text-dim);
+    font-family: "SFMono-Regular", "Fira Mono", Consolas, monospace;
+}
+
+/* Editable number input */
+.param-input {
+    width: 68px;
+    padding: 2px 7px;
+    background: var(--input-bg);
+    color: var(--text);
+    border: 1px solid var(--input-border);
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: "SFMono-Regular", "Fira Mono", Consolas, monospace;
+    text-align: right;
+    outline: none;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    /* Hide browser spin arrows */
+    -moz-appearance: textfield;
+}
+
+.param-input::-webkit-outer-spin-button,
+.param-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.param-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+/* ── rc-slider overrides ─────────────────────────────────────────────────── */
+.rc-slider {
+    padding: 5px 0 !important;
+}
+
+.rc-slider-rail {
+    background-color: var(--rail) !important;
+    height: 4px !important;
+    border-radius: 2px !important;
+}
+
+.rc-slider-track {
+    background-color: var(--track) !important;
+    height: 4px !important;
+    border-radius: 2px !important;
+}
+
+.rc-slider-handle {
+    width: 14px !important;
+    height: 14px !important;
+    margin-top: -5px !important;
+    background-color: var(--handle) !important;
+    border: 2px solid var(--accent) !important;
+    box-shadow: none !important;
+    opacity: 1 !important;
+    transition: box-shadow 0.15s !important;
+}
+
+html[data-theme="dark"] .rc-slider-handle {
+    background-color: #e2e8f0 !important;
+}
+
+html[data-theme="light"] .rc-slider-handle {
+    background-color: var(--accent) !important;
+}
+
+.rc-slider-handle:hover {
+    box-shadow: 0 0 0 4px var(--accent-glow) !important;
+}
+
+.rc-slider-handle-dragging,
+.rc-slider-handle-dragging.rc-slider-handle-dragging {
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 5px var(--accent-glow) !important;
+}
+
+.rc-slider-mark-text {
+    color: var(--mark-text) !important;
+    font-size: 11px !important;
+    font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.rc-slider-mark-text-active {
+    color: var(--text-dim) !important;
+}
+
+.rc-slider-dot {
+    background-color: var(--dot) !important;
+    border-color: var(--border) !important;
+    bottom: -2px !important;
+}
+
+.rc-slider-dot-active {
+    border-color: var(--dot-active) !important;
+}
+
+/* ── Checkbox / checklist styling ────────────────────────────────────────── */
+.dash-checklist label {
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
+    accent-color: var(--accent);
+    border-radius: 3px;
+}
+
+/* ── Toolbar row (below header, above plot) ──────────────────────────────── */
+.toolbar-row {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 5px 14px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+/* ── Status bar ──────────────────────────────────────────────────────────── */
+.status-bar {
+    padding: 5px 14px;
+    font-size: 12.5px;
+    color: var(--text-dim);
+    background: var(--panel);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+    font-family: "SFMono-Regular", "Fira Mono", Consolas, monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.status-bar b {
+    color: var(--text);
+    font-weight: 600;
+}

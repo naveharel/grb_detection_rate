@@ -6,7 +6,7 @@ import numpy as np
 import plotly
 import plotly.graph_objects as go
 import dash
-from dash import Dash, dcc, html, Input, Output
+from dash import Dash, dcc, html, Input, Output, State
 
 from grb_detect.constants import DAY_S, DEG2_TO_SR
 from grb_detect.params import SurveyDesignParams, SurveyStrategy
@@ -26,10 +26,22 @@ RUNTIME_INFO = (
     f"plotly={plotly.__version__} | "
     f"numpy={np.__version__}"
 )
+DEBUG_MODE: bool = os.environ.get("GRB_DEBUG", "0").lower() in ("1", "true", "yes")
 
-# Keep discrete-line appearance consistent across modes
-DISCRETE_LINE_WIDTH = 5
-DISCRETE_MARKER_SIZE = 4
+# ZTF survey parameters (reference strategy)
+ZTF_OMEGA_EXP_DEG2: float = 47.0   # ZTF field of view [deg²]
+
+# Grid dimensions for the rate surface
+NX_REGIME, NY_REGIME = 280, 340   # higher resolution for regime coloring
+NX_DEFAULT, NY_DEFAULT = 220, 260  # default resolution
+
+# Log10 of the minimum displayed detection rate
+ZMIN_DISPLAY_LOG10: float = -1.0
+
+# Day-line appearance: regime mode uses wider, more opaque lines; height mode uses thin thread + small markers
+_DL_WIDTH_REGIME = 2.5
+_DL_WIDTH_HEIGHT = 1.0
+_DL_MARKER_HEIGHT = 3  # small markers coloured by rate value in height mode
 
 # Hover template matching Plotly's surface-style readout: x, y, z only
 XYZ_HOVER = "x: %{x:.6g}<br>y: %{y:.6g}<br>z: %{z:.6g}<extra></extra>"
@@ -122,13 +134,6 @@ def _add_discrete_day_lines(
 
     N_line = N_cols[None, :]  # (1, nN)
 
-    # Hover label style: force neutral gray background (not trace color)
-    hoverlabel_style = dict(
-        bgcolor="rgba(230,230,230,0.92)",
-        bordercolor="rgba(160,160,160,1.0)",
-        font=dict(color="black"),
-    )
-
     def _regime_id_for_points(t_s: float) -> np.ndarray:
         t_arr = np.full_like(N_line, float(t_s), dtype=float)
         masks = model_day.region_masks(int(i_det), N_line, t_arr, include_unphysical=False)
@@ -173,8 +178,7 @@ def _add_discrete_day_lines(
                     end += 1
 
                 if end - start >= 2:
-                    # Use same alpha in regime mode to avoid perceived width change
-                    col = _hex_to_rgba(regime_colors[k - 1], alpha=0.85)
+                    col = _hex_to_rgba(regime_colors[k - 1], alpha=0.80)
 
                     fig.add_trace(
                         go.Scatter3d(
@@ -182,27 +186,26 @@ def _add_discrete_day_lines(
                             y=y[start:end],
                             z=z[start:end],
                             mode="lines+markers",
-                            line=dict(color=col, width=DISCRETE_LINE_WIDTH),
-                            marker=dict(size=DISCRETE_MARKER_SIZE, opacity=0.001),
+                            line=dict(color=col, width=_DL_WIDTH_REGIME),
+                            marker=dict(size=0, opacity=0.001),
                             showlegend=False,
                             hovertemplate=XYZ_HOVER,
-                            hoverlabel=hoverlabel_style,
                         )
                     )
 
                 start = end
 
         else:
-            # Height coloring: keep the connector line *same opacity* as regime mode
+            # Height coloring: thin transparent connector + small rate-coloured markers
             fig.add_trace(
                 go.Scatter3d(
                     x=x,
                     y=y,
                     z=z,
                     mode="lines+markers",
-                    line=dict(color="rgba(0,0,0,0.85)", width=DISCRETE_LINE_WIDTH),
+                    line=dict(color="rgba(255,255,255,0.12)", width=_DL_WIDTH_HEIGHT),
                     marker=dict(
-                        size=DISCRETE_MARKER_SIZE,
+                        size=_DL_MARKER_HEIGHT,
                         color=log10R[good],
                         colorscale=height_colorscale,
                         cmin=float(height_cmin),
@@ -212,7 +215,6 @@ def _add_discrete_day_lines(
                     ),
                     showlegend=False,
                     hovertemplate=XYZ_HOVER,
-                    hoverlabel=hoverlabel_style,
                 )
             )
 
@@ -221,132 +223,212 @@ server = app.server
 
 survey_defaults = SurveyDesignParams()
 T_NIGHT_DEFAULT_S = survey_defaults.t_night_s
+OMEGA_SRV_DEFAULT_DEG2 = 27500.0
+
+def _param_block(label, slider_id, input_id, slider_min, slider_max, slider_step,
+                 slider_val, marks, input_min=None, input_max=None, input_step=None):
+    """Return a labeled slider block with an editable number input."""
+    return html.Div(className="slider-wrap", children=[
+        html.Div(className="param-row", children=[
+            html.Label(label, className="slider-label"),
+            dcc.Input(
+                id=input_id, type="number", value=slider_val,
+                min=input_min if input_min is not None else slider_min,
+                max=input_max if input_max is not None else slider_max,
+                step=input_step if input_step is not None else slider_step,
+                className="param-input", debounce=False,
+            ),
+        ]),
+        dcc.Slider(slider_min, slider_max, slider_step, value=slider_val,
+                   id=slider_id, marks=marks),
+    ])
+
 
 app.layout = html.Div(
-    style={
-        "width": "98vw",
-        "maxWidth": "1800px",
-        "margin": "0 auto",
-        "paddingTop": "8px",
-        "fontFamily": "Arial",
-        "overflow": "visible",
-    },
+    id="app-root",
+    style={"display": "flex", "flexDirection": "column", "height": "100vh", "width": "100vw", "overflow": "hidden"},
     children=[
-        html.H2("GRB Detection Rate Surface", style={"margin": "0", "paddingTop": "10px", "paddingBottom": "6px"}),
-        dcc.Graph(id="surface", style={"height": "780px", "marginTop": "0px", "paddingTop": "0px"}),
+        dcc.Store(id="theme-store", data="dark"),
+        dcc.Store(id="_dom-theme-dummy"),
+
+        # ── Header ──────────────────────────────────────────────────────────
         html.Div(
-            style={"display": "flex", "gap": "28px", "alignItems": "center", "marginTop": "6px", "marginBottom": "10px"},
+            className="header-bar",
             children=[
-                dcc.Checklist(
-                    id="optical_checkbox",
-                    options=[{"label": "Optical survey", "value": "on"}],
-                    value=[],
-                    inline=True,
-                    style={"userSelect": "none"},
-                ),
-                dcc.Checklist(
-                    id="color_checkbox",
-                    options=[{"label": "Color regimes", "value": "on"}],
-                    value=[],
-                    inline=True,
-                    style={"userSelect": "none"},
-                ),
+                html.Button("✕", id="sidebar-toggle", className="icon-btn", n_clicks=0),
+                html.H2("GRB Detection Rate Surface"),
+                html.Button("☾ Dark", id="theme-toggle", className="icon-btn", n_clicks=0),
             ],
         ),
+
+        # ── Body: sidebar + plot area ────────────────────────────────────────
         html.Div(
-            style={"display": "grid", "gridTemplateColumns": "repeat(3, minmax(320px, 1fr))", "gap": "12px 18px"},
+            style={"display": "flex", "flex": "1", "overflow": "hidden"},
             children=[
+
+                # ── Collapsible sidebar ──────────────────────────────────────
                 html.Div(
-                    [
-                        html.Label("i (detections required)", style={"fontSize": "14px"}),
-                        dcc.Slider(
-                            2,
-                            300,
-                            1,
-                            value=10,
-                            id="i_slider",
-                            marks={2: "2", 10: "10", 30: "30", 150: "150", 300: "300"},
-                        ),
-                    ]
+                    id="sidebar",
+                    className="sidebar open",
+                    children=[html.Div(
+                        className="sidebar-inner",
+                        children=[
+                            # ── STRATEGY ──────────────────────────────────────
+                            html.Div("Strategy", className="slider-group-title"),
+                            _param_block("i", "i_slider", "i_input",
+                                         2, 300, 1, 10,
+                                         {2: "2", 10: "10", 30: "30", 100: "100", 300: "300"}),
+                            _param_block("f_live", "flive_slider", "flive_input",
+                                         0.01, 1.0, 0.01, 0.2,
+                                         {0.01: "0.01", 0.1: "0.1", 0.5: "0.5", 1.0: "1.0"},
+                                         input_step=0.01),
+
+                            # ── INSTRUMENT ────────────────────────────────────
+                            html.Div("Instrument", className="slider-group-title"),
+                            _param_block("log A [Jy]", "Alog_slider", "Alog_input",
+                                         -12, -2, 0.01, -4.68,
+                                         {-12: "-12", -8: "-8", -4.68: "-4.68", -2: "-2"},
+                                         input_step=0.01),
+                            _param_block("Ω_exp [deg²]", "omegaexp_slider", "omegaexp_input",
+                                         1, 200, 1, 47,
+                                         {1: "1", 47: "47", 100: "100", 200: "200"}),
+                            _param_block("t_overhead [s]", "toh_slider", "toh_input",
+                                         0.0, 30.0, 0.5, 0.0,
+                                         {0: "0", 10: "10", 20: "20", 30: "30"},
+                                         input_step=0.5),
+
+                            # ── CONSTRAINTS ───────────────────────────────────
+                            html.Div("Constraints", className="slider-group-title"),
+                            _param_block("Ω_srv max [deg²]", "omega_srv_slider", "omega_srv_input",
+                                         100, 41253, 100, OMEGA_SRV_DEFAULT_DEG2,
+                                         {100: "100", 10000: "10 k", 27500: "27.5 k", 41253: "41.3 k"},
+                                         input_step=100),
+                            html.Div(
+                                id="tnight_container",
+                                style={"display": "none"},
+                                children=[
+                                    _param_block("t_night [h]", "tnight_slider", "tnight_input",
+                                                 4.0, 14.0, 0.25, T_NIGHT_DEFAULT_S / 3600.0,
+                                                 {4: "4", 6: "6", 8: "8", 10: "10", 12: "12", 14: "14"},
+                                                 input_step=0.25),
+                                ],
+                            ),
+                        ],
+                    )],
                 ),
+
+                # ── Plot area ────────────────────────────────────────────────
                 html.Div(
-                    [
-                        html.Label("log(A [Jy])", style={"fontSize": "14px"}),
-                        dcc.Slider(
-                            -12,
-                            -2,
-                            0.01,
-                            value=-4.68,
-                            id="Alog_slider",
-                            marks={-12: "-12", -8: "-8", -4.68: "-4.68", -4: "-4", -2: "-2"},
-                        ),
-                    ]
-                ),
-                html.Div(
-                    [
-                        html.Label("Ω_exp [deg²]", style={"fontSize": "14px"}),
-                        dcc.Slider(
-                            1,
-                            200,
-                            1,
-                            value=47,
-                            id="omegaexp_slider",
-                            marks={1: "1", 47: "47", 100: "100", 200: "200"},
-                        ),
-                    ]
-                ),
-                html.Div(
-                    [
-                        html.Label("f_live", style={"fontSize": "14px"}),
-                        dcc.Slider(
-                            0.01,
-                            1.0,
-                            0.01,
-                            value=0.1,
-                            id="flive_slider",
-                            marks={0.01: "0.01", 0.1: "0.1", 0.2: "0.2", 0.5: "0.5", 1.0: "1.0"},
-                        ),
-                    ]
-                ),
-                html.Div(
-                    [
-                        html.Label("t_overhead [s]", style={"fontSize": "14px"}),
-                        dcc.Slider(
-                            0.0,
-                            30.0,
-                            0.5,
-                            value=0.0,
-                            id="toh_slider",
-                            marks={0: "0", 10: "10", 15: "15", 20: "20", 30: "30"},
-                        ),
-                    ]
-                ),
-                html.Div(
-                    id="tnight_container",
-                    style={"display": "none"},
+                    style={"flex": "1", "display": "flex", "flexDirection": "column",
+                           "overflow": "hidden", "minWidth": "0"},
                     children=[
-                        html.Label("t_night [h]", style={"fontSize": "14px"}),
-                        dcc.Slider(
-                            4.0,
-                            14.0,
-                            0.25,
-                            value=T_NIGHT_DEFAULT_S / 3600.0,
-                            id="tnight_slider",
-                            marks={4: "4", 6: "6", 8: "8", 10: "10", 12: "12", 14: "14"},
+                        html.Div(
+                            className="toolbar-row",
+                            children=[
+                                dcc.Checklist(
+                                    id="optical_checkbox",
+                                    options=[{"label": "  Optical survey", "value": "on"}],
+                                    value=[], inline=True,
+                                ),
+                                dcc.Checklist(
+                                    id="color_checkbox",
+                                    options=[{"label": "  Color regimes", "value": "on"}],
+                                    value=[], inline=True,
+                                ),
+                            ],
                         ),
+                        dcc.Graph(id="surface", style={"flex": "1", "minHeight": "0"}),
+                        html.Div(id="status", className="status-bar"),
                     ],
                 ),
             ],
         ),
-        html.Div(id="status", style={"marginTop": "10px", "opacity": 0.85}),
     ],
 )
 
 
+# ── Sidebar toggle ────────────────────────────────────────────────────────────
+@app.callback(
+    Output("sidebar", "className"),
+    Output("sidebar-toggle", "children"),
+    Input("sidebar-toggle", "n_clicks"),
+)
+def toggle_sidebar(n_clicks):
+    if n_clicks and n_clicks % 2 == 1:
+        return "sidebar", "☰"
+    return "sidebar open", "✕"
+
+
+# ── t_night visibility ────────────────────────────────────────────────────────
 @app.callback(Output("tnight_container", "style"), Input("optical_checkbox", "value"))
 def toggle_tnight_slider(optical_vals):
     optical_on = "on" in (optical_vals or [])
     return {"display": "block"} if optical_on else {"display": "none"}
+
+
+# ── Theme toggle (server) ─────────────────────────────────────────────────────
+@app.callback(
+    Output("theme-store", "data"),
+    Output("theme-toggle", "children"),
+    Input("theme-toggle", "n_clicks"),
+    prevent_initial_call=True,
+)
+def toggle_theme(n_clicks):
+    if n_clicks and n_clicks % 2 == 1:
+        return "light", "☀ Light"
+    return "dark", "☾ Dark"
+
+
+# ── Theme apply (clientside) — sets CSS custom properties on <html> ───────────
+app.clientside_callback(
+    """
+    function(theme) {
+        document.documentElement.setAttribute("data-theme", theme || "dark");
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output("_dom-theme-dummy", "data"),
+    Input("theme-store", "data"),
+)
+
+
+# ── Slider ↔ input sync ───────────────────────────────────────────────────────
+# Format: (slider_id, input_id, clamp_min, clamp_max)
+_SYNC_PAIRS = [
+    ("i_slider",         "i_input",         2,      300),
+    ("flive_slider",     "flive_input",     0.01,   1.0),
+    ("Alog_slider",      "Alog_input",      -12,    -2),
+    ("omegaexp_slider",  "omegaexp_input",  1,      200),
+    ("toh_slider",       "toh_input",       0.0,    30.0),
+    ("omega_srv_slider", "omega_srv_input", 100,    41253),
+    ("tnight_slider",    "tnight_input",    4.0,    14.0),
+]
+
+# Slider → input: instant clientside update (no server round-trip)
+for _sid, _iid, *_ in _SYNC_PAIRS:
+    app.clientside_callback(
+        "function(v) { return (v === null || v === undefined) ? window.dash_clientside.no_update : v; }",
+        Output(_iid, "value"),
+        Input(_sid, "value"),
+    )
+
+
+def _make_input_to_slider_cb(slider_id: str, input_id: str, lo: float, hi: float):
+    """Register a callback: input.n_blur → slider.value (with clamping)."""
+    @app.callback(
+        Output(slider_id, "value"),
+        Input(input_id, "n_blur"),
+        State(input_id, "value"),
+        prevent_initial_call=True,
+    )
+    def _fn(_, v):
+        if v is None:
+            return dash.no_update
+        return float(np.clip(float(v), lo, hi))
+
+
+for _sid, _iid, _lo, _hi in _SYNC_PAIRS:
+    _make_input_to_slider_cb(_sid, _iid, _lo, _hi)
 
 
 @app.callback(
@@ -360,28 +442,44 @@ def toggle_tnight_slider(optical_vals):
     Input("optical_checkbox", "value"),
     Input("color_checkbox", "value"),
     Input("tnight_slider", "value"),
+    Input("omega_srv_slider", "value"),
+    Input("theme-store", "data"),
 )
-def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_vals, color_vals, tnight_hours):
+def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_vals, color_vals, tnight_hours,
+                   omega_srv_deg2, theme):
     optical_on = "on" in (optical_vals or [])
     color_on = "on" in (color_vals or [])
 
     t_night_s = float(tnight_hours) * 3600.0 if optical_on else T_NIGHT_DEFAULT_S
-
-    model_day = make_rate_model(
-        A_log=float(A_log),
-        f_live=float(f_live),
-        t_overhead_s=float(t_overhead_s),
-        omega_exp_deg2=float(omega_exp_deg2),
-    )
+    design = SurveyDesignParams(omega_survey_max_sr=float(omega_srv_deg2) * DEG2_TO_SR)
+    plotly_template = "plotly_dark" if (theme or "dark") == "dark" else "plotly_white"
 
     model_night = None
     if optical_on:
         f_live_night = float(f_live) * (t_night_s / DAY_S)
-        model_night = make_rate_model(
+        # Multi-day cadence (n days): survey spread over n nights → t_exp = n × f_live × t_night / N_exp
+        model_day = make_rate_model(
             A_log=float(A_log),
             f_live=f_live_night,
             t_overhead_s=float(t_overhead_s),
             omega_exp_deg2=float(omega_exp_deg2),
+            design=design,
+        )
+        # Sub-day cadence: multiple visits per night → t_exp = f_live × t_cad / N_exp
+        model_night = make_rate_model(
+            A_log=float(A_log),
+            f_live=float(f_live),
+            t_overhead_s=float(t_overhead_s),
+            omega_exp_deg2=float(omega_exp_deg2),
+            design=design,
+        )
+    else:
+        model_day = make_rate_model(
+            A_log=float(A_log),
+            f_live=float(f_live),
+            t_overhead_s=float(t_overhead_s),
+            omega_exp_deg2=float(omega_exp_deg2),
+            design=design,
         )
 
     X, Y_s, Z_plot, Z_raw, regime_id = compute_surface(
@@ -391,8 +489,8 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
         optical_survey=optical_on,
         color_regimes=color_on,
         t_night_s=t_night_s,
-        nx=280 if color_on else 220,
-        ny=340 if color_on else 260,
+        nx=NX_REGIME if color_on else NX_DEFAULT,
+        ny=NY_REGIME if color_on else NY_DEFAULT,
     )
 
     Y_h = Y_s / 3600.0
@@ -416,16 +514,22 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
     t_exp_opt_s = np.nan
     if np.isfinite(N_opt) and np.isfinite(t_cad_opt_s):
         try:
+            # Select instrument with the correct f_live for the optimal cadence regime
+            opt_instrument = (
+                model_night.instrument
+                if (optical_on and model_night is not None and t_cad_opt_s < DAY_S)
+                else model_day.instrument
+            )
             t_exp_opt_s = float(
                 exposure_time_s(
                     SurveyStrategy(N_exp=float(N_opt), t_cad_s=float(t_cad_opt_s)),
-                    model_day.instrument,
+                    opt_instrument,
                 )
             )
         except Exception:
             t_exp_opt_s = np.nan
 
-    N_ztf = 27500.0 / 47.0
+    N_ztf = OMEGA_SRV_DEFAULT_DEG2 / ZTF_OMEGA_EXP_DEG2
     t_cad_ztf_s = 2.0 * DAY_S
     t_cad_ztf_hr = t_cad_ztf_s / 3600.0
     log10_ztf = float(
@@ -485,7 +589,7 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
                 i_det=int(i_det),
                 N_cols=N_cols,
                 t_cad_max_s=t_cad_max_s,
-                zmin_plot_log10=-1.0,
+                zmin_plot_log10=ZMIN_DISPLAY_LOG10,
                 color_mode="regime",
                 regime_colors=regime_cols,
             )
@@ -497,7 +601,7 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
                 i_det=int(i_det),
                 N_cols=N_cols,
                 t_cad_max_s=t_cad_max_s,
-                zmin_plot_log10=-1.0,
+                zmin_plot_log10=ZMIN_DISPLAY_LOG10,
                 color_mode="height",
                 height_cmin=-1.0,
                 height_cmax=zmax_color,
@@ -531,7 +635,16 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
         if bl is not None:
             fig.add_trace(bl)
 
-        for idx, col in enumerate(colors, start=1):
+        regime_labels = [
+            "Flux-limited · decel.",
+            "Flux-limited · post-jet",
+            "Flux-limited · pre-jet",
+            "Cadence-limited · decel.",
+            "Cadence-limited · post-jet",
+            "Cadence-limited · pre-jet",
+            "Doubly limited",
+        ]
+        for col, label in zip(colors, regime_labels):
             fig.add_trace(
                 go.Scatter3d(
                     x=[None],
@@ -539,7 +652,7 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
                     z=[None],
                     mode="markers",
                     marker=dict(size=7, color=col),
-                    name=f"A{idx}",
+                    name=label,
                     showlegend=True,
                     hoverinfo="skip",
                 )
@@ -560,7 +673,12 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
                 colorscale="Plasma",
                 connectgaps=False,
                 name="",
-                colorbar=dict(title="log10 R_det"),
+                colorbar=dict(
+                    title=dict(text="log₁₀ R", side="right"),
+                    x=0.85, xanchor="left",
+                    thickness=14, len=0.65,
+                    y=0.45, yanchor="middle",
+                ),
             )
         )
 
@@ -571,9 +689,11 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
                 x=[N_opt],
                 y=[t_cad_opt_hr],
                 z=[R_opt],
-                mode="markers",
-                marker=dict(size=7, color="black"),
-                name="Grid maximum",
+                mode="markers+text",
+                marker=dict(size=10, color="#FFD700", symbol="diamond"),
+                text=["Optimum"],
+                textposition="top center",
+                name="Optimum",
                 hovertemplate=(
                     "Grid optimum"
                     + "<br>N_exp=%{x:.4g}"
@@ -591,8 +711,10 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
                 x=[N_ztf],
                 y=[t_cad_ztf_hr],
                 z=[R_ztf],
-                mode="markers",
-                marker=dict(size=7, color="green"),
+                mode="markers+text",
+                marker=dict(size=9, color="#FF6B6B", symbol="circle"),
+                text=["ZTF"],
+                textposition="top center",
                 name="ZTF (2 d cadence)",
                 hovertemplate=(
                     "ZTF strategy"
@@ -607,20 +729,32 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
 
     fig.update_layout(
         uirevision="keep-view-v1",
+        template=plotly_template,
         scene=dict(
             xaxis=dict(title="N_exp", type="log"),
-            yaxis=dict(title="t_cad [h]", type="log"),
-            zaxis=dict(title="R_det [yr^-1]", type="log", range=[-1.0, np.log10(Rmax) + 0.05]),
+            yaxis=dict(
+                title="t_cad",
+                type="log",
+                tickvals=[1 / 3600, 1 / 60, 1, 6, 24, 168, 730, 8760],
+                ticktext=["1 s", "1 min", "1 h", "6 h", "1 d", "1 wk", "1 mo", "1 yr"],
+            ),
+            zaxis=dict(title="R_det [yr^-1]", type="log", range=[ZMIN_DISPLAY_LOG10, np.log10(Rmax) + 0.05]),
             aspectmode="cube",
         ),
         scene_camera=dict(eye=dict(x=-1.25, y=-1.25, z=0.95), up=dict(x=0, y=0, z=1)),
         margin=dict(l=0, r=0, b=0, t=5),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.02) if color_on else dict(),
+        legend=dict(
+            orientation="v",
+            x=0.01, y=0.98,
+            xanchor="left", yanchor="top",
+            font=dict(size=11),
+            bgcolor="rgba(0,0,0,0)",
+        ),
     )
 
     omega_exp_sr = float(omega_exp_deg2) * DEG2_TO_SR
 
-    status_children = [
+    debug_items = [
         html.Div(RUNTIME_INFO),
         html.Div(
             f"i = {int(i_det)} | "
@@ -632,12 +766,20 @@ def update_surface(i_det, A_log, omega_exp_deg2, f_live, t_overhead_s, optical_v
             f"color regimes = {color_on}"
         ),
     ]
-
     if optical_on:
-        status_children.append(
+        debug_items.append(
             html.Div(
                 f"t_night = {t_night_s / 3600.0:.3g} h | "
                 f"f_live_night = {float(f_live) * (t_night_s / DAY_S):.4g}"
+            )
+        )
+
+    status_children: list = []
+    if DEBUG_MODE:
+        status_children.append(
+            html.Details(
+                [html.Summary("Debug info"), *debug_items],
+                style={"fontSize": "0.82em", "color": "#888", "marginBottom": "4px"},
             )
         )
 

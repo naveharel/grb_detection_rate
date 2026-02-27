@@ -53,7 +53,8 @@ def exposure_time_s(strategy: SurveyStrategy, instrument: SurveyInstrumentParams
     if strategy.N_exp <= 0:
         raise ValueError("N_exp must be > 0")
 
-    return instrument.f_live * strategy.t_cad_s / strategy.N_exp - instrument.t_overhead_s
+    t_exp = instrument.f_live * strategy.t_cad_s / strategy.N_exp - instrument.t_overhead_s
+    return t_exp if t_exp > 0 else float("nan")
 
 
 def limiting_flux_Jy(t_exp_s: float, instrument: SurveyInstrumentParams) -> float:

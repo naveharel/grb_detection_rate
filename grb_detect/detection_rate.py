@@ -36,6 +36,9 @@ from .params import AfterglowPhysicalParams, MicrophysicsParams, SurveyInstrumen
 from .pls import PLSG, PLSModel
 from .survey import N_exp_max, exposure_time_s, is_strategy_physical, limiting_flux_Jy, sky_fraction
 
+# Tolerance used to make boundary cases robust (e.g. N_exp = N_exp_max exactly)
+_REGION_BOUNDARY_EPS: float = 1e-12
+
 
 @dataclass(frozen=True)
 class DerivedAfterglowScales:
@@ -121,9 +124,10 @@ class DetectionRateModel:
 
     # ---------- Core building blocks (vectorized) ----------
     def t_exp_s(self, N_exp: np.ndarray, t_cad_s: np.ndarray) -> np.ndarray:
-        """Exposure time per pointing (vectorized)."""
+        """Exposure time per pointing (vectorized). Returns NaN where t_exp ≤ 0."""
 
-        return self.instrument.f_live * t_cad_s / N_exp - self.instrument.t_overhead_s
+        t_exp = self.instrument.f_live * t_cad_s / N_exp - self.instrument.t_overhead_s
+        return np.where(t_exp > 0, t_exp, np.nan)
 
     def F_lim_Jy(self, t_exp_s: np.ndarray) -> np.ndarray:
         """Limiting flux model F_lim ∝ t_exp^{-alpha} (vectorized)."""
@@ -241,8 +245,7 @@ class DetectionRateModel:
         Nmax = N_exp_max(self.instrument)
         t_exp = self.t_exp_s(N_exp, t_cad_s)
 
-        # Tolerance to make boundary cases (like N_exp = Omega_srv,max / Omega_exp) robust
-        eps = 1e-12
+        eps = _REGION_BOUNDARY_EPS
 
         A0 = (
                 (N_exp >= 1.0 - eps)
@@ -259,8 +262,7 @@ class DetectionRateModel:
         qj = float(self.derived.q_j)
         qd = float(self.derived.q_dec)
 
-        # Tolerance for boundary robustness
-        eps = 1e-12
+        eps = _REGION_BOUNDARY_EPS
 
         def ge(a, b):
             return a >= (b - eps)

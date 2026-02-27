@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(apt list --installed)",
+      "Bash(pdftotext \"/c/Users/naveh/PycharmProjects/grb_detections_claude/sources/Detection Rates of Gamma-Ray Burst Afterglows in Optical Surveys - An Analytic Approach.pdf\" -)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(.venv/Scripts/python -c \":*)"
+    ]
+  }
+}
