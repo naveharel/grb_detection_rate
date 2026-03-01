@@ -187,13 +187,13 @@ def discrete_regime_colorscale() -> tuple[list[list[float | str]], list[str]]:
     # Cool (teal/blue)  = cadence-limited (A4–A6, q_i > q_Euc — faster cadence helps)
     # Neutral slate     = doubly limited (A7)
     colors = [
-        "#FF1744",  # A1 flux-limited · decel. (Material red accent)
-        "#FF9100",  # A2 flux-limited · post-jet (Material deep orange accent)
-        "#FFD740",  # A3 flux-limited · pre-jet (Material amber accent)
-        "#1DE9B6",  # A4 cadence-limited · decel. (Material teal accent)
-        "#00E5FF",  # A5 cadence-limited · post-jet (Material cyan accent)
-        "#2979FF",  # A6 cadence-limited · pre-jet (Material blue accent)
-        "#9E9E9E",  # A7 doubly limited (neutral gray)
+        "#FF1744",  # A1 Saturated · Range IV           (strongest warm, deep red)
+        "#FF9100",  # A2 Distance-limited · Range III    (medium warm, orange)
+        "#FFD740",  # A3 Distance-limited · Range II     (muted warm, amber)
+        "#2979FF",  # A4 Cadence-limited · Range IV      (strongest cool, deep blue)
+        "#00E5FF",  # A5 Cadence-limited · Range III     (medium cool, cyan)
+        "#1DE9B6",  # A6 Cadence-limited · Range II      (muted cool, teal)
+        "#9E9E9E",  # A7 Flux-limited · Range I          (neutral gray — D_dec limited)
     ]
     cs: list[list[float | str]] = []
     for k, c in enumerate(colors, start=1):

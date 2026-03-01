@@ -24,3 +24,10 @@ dist/
 
 # Outputs
 *.png
+
+# Physics reference documents (large PDFs, copyrighted)
+sources/
+
+# Claude Code local settings (machine-specific permission lists)
+.claude/settings.json
+.claude/settings.local.json
