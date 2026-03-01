@@ -125,7 +125,8 @@ html, body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 5px 10px;
+  height: 30px;
+  padding: 0 10px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
   background: var(--surface-2);
@@ -173,6 +174,7 @@ html, body {
 /* ── View-mode segmented control ───────────────────────────── */
 .view-controls {
   display: flex;
+  height: 30px;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   overflow: hidden;
@@ -180,7 +182,8 @@ html, body {
   flex-shrink: 0;
 }
 .view-btn {
-  padding: 4px 10px;
+  height: 30px;
+  padding: 0 10px;
   border: none;
   border-right: 1px solid var(--border);
   background: transparent;
@@ -227,6 +230,12 @@ html, body {
   width: 1px;
   height: 16px;
   background: var(--border);
+  flex-shrink: 0;
+}
+.metric-sep-prominent {
+  width: 1px;
+  height: 26px;
+  background: var(--text-lo);
   flex-shrink: 0;
 }
 .metric-label {

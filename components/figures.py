@@ -46,7 +46,7 @@ CORAL = "#f87171"   # ZTF reference point
 XYZ_HOVER = (
     "N<sub>exp</sub> = %{x:.4g}<br>"
     "t<sub>cad</sub> = %{y:.4g} hr<br>"
-    "R<sub>det</sub> = %{z:.4g} yr⁻¹"
+    "R<sub>det</sub> = %{z:.4g} yr ⁻¹"
     "<extra></extra>"
 )
 
@@ -429,6 +429,7 @@ def build_3d_figure(
             colorscale=cs,
             showscale=False,
             connectgaps=False,
+            hovertemplate=XYZ_HOVER,
             lighting=dict(ambient=0.75, diffuse=0.75, specular=0.08, roughness=0.95),
             lightposition=dict(x=100, y=200, z=0),
             showlegend=False,
@@ -456,11 +457,14 @@ def build_3d_figure(
             showscale=True,
             colorscale="Plasma",
             connectgaps=False,
+            hovertemplate=XYZ_HOVER,
             colorbar=dict(
-                title=dict(text="log₁₀ R", side="right"),
-                x=0.85, xanchor="left",
-                thickness=14, len=0.65,
-                y=0.45, yanchor="middle",
+                title=dict(text="R<sub>det</sub> [yr ⁻¹]", side="top"),
+                x=0.88, xanchor="left",
+                thickness=18, len=0.80,
+                y=0.5, yanchor="middle",
+                tickvals=[-1, 0, 1, 2, 3, 4],
+                ticktext=["0.1", "1", "10", "100", "1k", "10k"],
             ),
         ))
 
@@ -479,7 +483,7 @@ def build_3d_figure(
                 f"<br>N<sub>exp</sub> = %{{x:.4g}}"
                 f"<br>t<sub>cad</sub> = %{{y:.4g}} hr"
                 f"{texp_str}"
-                f"<br>R<sub>det</sub> = %{{z:.4g}} yr⁻¹<extra></extra>"
+                f"<br>R<sub>det</sub> = %{{z:.4g}} yr ⁻¹<extra></extra>"
             ),
         ))
     if np.isfinite(R_ztf):
@@ -496,7 +500,7 @@ def build_3d_figure(
                 f"<br>N<sub>exp</sub> = %{{x:.4g}}"
                 f"<br>t<sub>cad</sub> = %{{y:.4g}} hr"
                 f"{texp_str}"
-                f"<br>R<sub>det</sub> = %{{z:.4g}} yr⁻¹<extra></extra>"
+                f"<br>R<sub>det</sub> = %{{z:.4g}} yr ⁻¹<extra></extra>"
             ),
         ))
 
@@ -525,7 +529,7 @@ def build_3d_figure(
                 showbackground=False,
             ),
             zaxis=dict(
-                title="R<sub>det</sub> [yr⁻¹]",
+                title="R<sub>det</sub> [yr ⁻¹]",
                 type="log",
                 range=[ZMIN_DISPLAY_LOG10, np.log10(max(Rmax, 0.11)) + 0.05],
                 gridcolor=grid_col,
@@ -535,8 +539,9 @@ def build_3d_figure(
             aspectratio=dict(x=1.2, y=1.2, z=0.9),
         ),
         scene_camera=dict(
-            eye=dict(x=-1.10, y=-1.10, z=0.90),
+            eye=dict(x=-1.48, y=-1.48, z=0.70),
             up=dict(x=0, y=0, z=1),
+            center=dict(x=0, y=0, z=-0.2),
         ),
         margin=dict(l=0, r=0, b=0, t=0),
         legend=dict(
@@ -570,7 +575,7 @@ def build_nslice_figure(
     hl = _hover_label(dark)
     N_HOVER = (
         "N<sub>exp</sub> = %{x:.4g}<br>"
-        "R<sub>det</sub> = %{y:.4g} yr⁻¹"
+        "R<sub>det</sub> = %{y:.4g} yr ⁻¹"
         "<extra></extra>"
     )
 
@@ -596,7 +601,7 @@ def build_nslice_figure(
         fig.add_hline(
             y=R_ztf,
             line=dict(color=CORAL, width=1.5, dash="dot"),
-            annotation=dict(text=f"R_ZTF = {R_ztf:.2g} yr⁻¹", font_size=11,
+            annotation=dict(text=f"R_ZTF = {R_ztf:.2g} yr ⁻¹", font_size=11,
                             font_color=CORAL, xanchor="right", x=0.98),
         )
 
@@ -621,7 +626,7 @@ def build_nslice_figure(
             name="Optimum",
             hovertemplate=(
                 "N<sub>exp</sub> = %{x:.4g}<br>"
-                "R<sub>det</sub> = %{y:.4g} yr⁻¹"
+                "R<sub>det</sub> = %{y:.4g} yr ⁻¹"
                 "<extra>Optimum</extra>"
             ),
             hoverlabel=hl,
@@ -644,7 +649,7 @@ def build_nslice_figure(
             gridcolor="rgba(255,255,255,0.08)" if dark else "rgba(0,0,0,0.08)",
         ),
         yaxis=dict(
-            title="R<sub>det</sub> [yr⁻¹]",
+            title="R<sub>det</sub> [yr ⁻¹]",
             type="log",
             showgrid=True,
             gridcolor="rgba(255,255,255,0.08)" if dark else "rgba(0,0,0,0.08)",
@@ -687,7 +692,7 @@ def build_tslice_figure(
     hl = _hover_label(dark)
     T_HOVER = (
         "t<sub>cad</sub> = %{x:.4g} hr<br>"
-        "R<sub>det</sub> = %{y:.4g} yr⁻¹"
+        "R<sub>det</sub> = %{y:.4g} yr ⁻¹"
         "<extra></extra>"
     )
 
@@ -758,7 +763,7 @@ def build_tslice_figure(
         fig.add_hline(
             y=R_ztf,
             line=dict(color=CORAL, width=1.5, dash="dot"),
-            annotation=dict(text=f"R_ZTF = {R_ztf:.2g} yr⁻¹", font_size=11,
+            annotation=dict(text=f"R_ZTF = {R_ztf:.2g} yr ⁻¹", font_size=11,
                             font_color=CORAL, xanchor="right", x=0.98),
         )
 
@@ -790,7 +795,7 @@ def build_tslice_figure(
                     name="Optimum",
                     hovertemplate=(
                         "t<sub>cad</sub> = %{x:.4g} hr<br>"
-                        "R<sub>det</sub> = %{y:.4g} yr⁻¹"
+                        "R<sub>det</sub> = %{y:.4g} yr ⁻¹"
                         "<extra>Optimum</extra>"
                     ),
                     hoverlabel=hl,
@@ -814,7 +819,7 @@ def build_tslice_figure(
             gridcolor=grid_col,
         ),
         yaxis=dict(
-            title="R<sub>det</sub> [yr⁻¹]",
+            title="R<sub>det</sub> [yr ⁻¹]",
             type="log",
             showgrid=True,
             gridcolor=grid_col,
@@ -839,6 +844,9 @@ def build_metrics_bar(
     t_cad_opt_s: float,
     N_opt: float,
     t_exp_opt_s: float,
+    t_cad_ztf_s: float,
+    N_ztf: float,
+    t_exp_ztf_s: float,
 ) -> list:
     """Return a list of html children for the metrics strip."""
 
@@ -872,22 +880,41 @@ def build_metrics_bar(
     def _lbl(children):
         return html.Span(children, className="metric-label")
 
-    badges = [
-        (_lbl("R★"),                               f"{_fmt_r(R_opt)} /yr",                  "amber"),
-        (_lbl(["R", html.Sub("ZTF")]),              f"{_fmt_r(R_ztf)} /yr",                  "coral"),
-        (_lbl("Gain"),                              gain_str,                                 gain_cls),
-        (_lbl(["t", html.Sub("cad"), "★"]),         _fmt_t(t_cad_opt_s),                     "muted"),
-        (_lbl(["N", html.Sub("exp"), "★"]),         f"{N_opt:.0f}" if np.isfinite(N_opt) else "—", "muted"),
-        (_lbl(["t", html.Sub("exp"), "★"]),         _fmt_t(t_exp_opt_s),                     "muted"),
+    # Groups: [optimum group], [ZTF group], [gain]
+    # Prominent separators are inserted between groups.
+    opt_badges = [
+        (_lbl(["R", html.Sub("det,★")]),  f"{_fmt_r(R_opt)} /yr",                         "amber"),
+        (_lbl(["t", html.Sub("cad,★")]),  _fmt_t(t_cad_opt_s),                             "muted"),
+        (_lbl(["N", html.Sub("exp,★")]),  f"{N_opt:.0f}" if np.isfinite(N_opt) else "—",   "muted"),
+        (_lbl(["t", html.Sub("exp,★")]),  _fmt_t(t_exp_opt_s),                             "muted"),
+    ]
+    ztf_badges = [
+        (_lbl(["R", html.Sub("det,ZTF")]),  f"{_fmt_r(R_ztf)} /yr",                           "coral"),
+        (_lbl(["t", html.Sub("cad,ZTF")]),  _fmt_t(t_cad_ztf_s),                               "muted"),
+        (_lbl(["N", html.Sub("exp,ZTF")]),  f"{N_ztf:.0f}" if np.isfinite(N_ztf) else "—",     "muted"),
+        (_lbl(["t", html.Sub("exp,ZTF")]),  _fmt_t(t_exp_ztf_s),                               "muted"),
+    ]
+    gain_badge = [
+        (_lbl("Gain"),  gain_str,  gain_cls),
     ]
 
-    children = []
-    for i, (label_elem, value, style_cls) in enumerate(badges):
-        children.append(html.Div([
-            label_elem,
-            html.Span(value, className=f"metric-value metric-{style_cls}"),
-        ], className="metric-badge"))
-        if i < len(badges) - 1:
-            children.append(html.Div(className="metric-sep"))
+    def _render_group(badges):
+        out = []
+        for i, (label_elem, value, style_cls) in enumerate(badges):
+            out.append(html.Div([
+                label_elem,
+                html.Span(value, className=f"metric-value metric-{style_cls}"),
+            ], className="metric-badge"))
+            if i < len(badges) - 1:
+                out.append(html.Div(className="metric-sep"))
+        return out
+
+    children = _render_group(opt_badges)
+    children.append(html.Div(className="metric-sep"))
+    children.append(html.Div(className="metric-sep-prominent"))
+    children += _render_group(ztf_badges)
+    children.append(html.Div(className="metric-sep"))
+    children.append(html.Div(className="metric-sep-prominent"))
+    children += _render_group(gain_badge)
 
     return children

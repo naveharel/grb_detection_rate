@@ -307,8 +307,8 @@ def register(app: dash.Dash) -> None:
         # ── Metrics strip ─────────────────────────────────────────────────────
         metrics_children = build_metrics_bar(
             R_opt=R_opt, R_ztf=R_ztf,
-            t_cad_opt_s=t_cad_opt_s, N_opt=N_opt,
-            t_exp_opt_s=t_exp_opt_s,
+            t_cad_opt_s=t_cad_opt_s, N_opt=N_opt, t_exp_opt_s=t_exp_opt_s,
+            t_cad_ztf_s=t_cad_ztf_s, N_ztf=N_ztf, t_exp_ztf_s=t_exp_ztf_s,
         )
 
         # ── Status bar (debug) ────────────────────────────────────────────────

@@ -9,11 +9,13 @@ from dash import Input, Output, State
 _PRESETS: dict[str, dict] = {
     "ztf": {
         "i": 10, "f_live": 0.2, "A_log": -4.68,
-        "omega_exp": 47, "t_oh": 0, "omega_srv": 27500,
+        "omega_exp": 47, "t_oh": 15, "omega_srv": 27500,
+        "optical": True,
     },
     "rubin": {
         "i": 10, "f_live": 0.7, "A_log": -7.0,
         "omega_exp": 9.6, "t_oh": 30, "omega_srv": 18000,
+        "optical": True,
     },
 }
 
@@ -127,12 +129,13 @@ def register(app: dash.Dash) -> None:
         Output("omegaexp_slider", "value", allow_duplicate=True),
         Output("toh_slider", "value", allow_duplicate=True),
         Output("omega_srv_slider", "value", allow_duplicate=True),
+        Output("optical-switch", "value", allow_duplicate=True),
         Input("preset-select", "value"),
         prevent_initial_call=True,
     )
     def apply_preset(preset_key):
         if preset_key not in _PRESETS:
-            return dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update, dash.no_update
+            return (dash.no_update,) * 7
         p = _PRESETS[preset_key]
-        return p["i"], p["f_live"], p["A_log"], p["omega_exp"], p["t_oh"], p["omega_srv"]
+        return p["i"], p["f_live"], p["A_log"], p["omega_exp"], p["t_oh"], p["omega_srv"], p.get("optical", dash.no_update)
 

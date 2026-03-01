@@ -65,8 +65,8 @@ def _strategy_section() -> list:
         _param_block(
             "i", "Number of detections required per GRB to count as a detection event",
             "i_slider", "i_input",
-            2, 300, 1, 10,
-            {2: "2", 10: "10", 30: "30", 100: "100", 300: "300"},
+            2, 100, 1, 10,
+            {2: "2", 10: "10", 30: "30", 100: "100", 100: "100"},
         ),
         _param_block(
             "f_live", "Fraction of total time the telescope is actually observing (0=never, 1=always)",
