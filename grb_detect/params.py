@@ -99,7 +99,9 @@ class AfterglowPhysicalParams:
     # Volumetric GRB rate
     rho_grb_gpc3_yr: float = 260.0  # [Gpc^-3 yr^-1]
 
-    # Euclidean calibration (kept explicit for reproducibility with existing runs)
+    # Euclidean calibration (kept explicit for reproducibility with existing runs).
+    # D_euc_cm = 1.63e28 cm = 5.28 Gpc, consistent with z_Euc ≈ 2.0 in flat ΛCDM
+    # (H0 = 70 km/s/Mpc, Ω_m = 0.3): comoving distance D_c ≈ 5.27 Gpc.
     D_euc_cm: float = 1.63e28
     R_int_yr: float = (4.0 / 3.0) * math.pi * rho_grb_gpc3_yr * (CM_TO_GPC * D_euc_cm) ** 3
 

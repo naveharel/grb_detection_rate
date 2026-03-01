@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(apt list --installed)",
+      "Bash(pdftotext \"/c/Users/naveh/PycharmProjects/grb_detections_claude/sources/Detection Rates of Gamma-Ray Burst Afterglows in Optical Surveys - An Analytic Approach.pdf\" -)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(.venv/Scripts/python -c \":*)",
+      "Bash(ls .venv/Scripts/python*)",
+      "Bash(ls venv/Scripts/python*)",
+      "Bash(.venv/Scripts/pip install \"dash-bootstrap-components>=2.0\")",
+      "Bash(GRB_DEBUG=1 .venv/Scripts/python -c \":*)",
+      "Bash(.venv/Scripts/python -c \"import dash, dash_bootstrap_components as dbc, plotly; print\\(''dash:'', dash.__version__\\); print\\(''dbc:'', dbc.__version__\\); print\\(''plotly:'', plotly.__version__\\)\")",
+      "Bash(timeout 8 .venv/Scripts/python -c \":*)",
+      "Bash(c:/Users/naveh/PycharmProjects/grb_detections_claude/.venv/Scripts/python.exe -c \"import dash, dash_bootstrap_components, plotly; print\\(''dash:'', dash.__version__\\); print\\(''dbc:'', dash_bootstrap_components.__version__\\); print\\(''plotly:'', plotly.__version__\\)\")",
+      "Bash(c:/Users/naveh/PycharmProjects/grb_detections_claude/.venv/Scripts/python.exe -m pip index versions dash-bootstrap-components)",
+      "Bash(c:/Users/naveh/PycharmProjects/grb_detections_claude/.venv/Scripts/python.exe -c \"import dash_bootstrap_components as dbc; print\\(dir\\(dbc\\)\\)\")",
+      "Bash(pkill -f \"_test_minimal.py\")",
+      "Bash(pkill -f \"plot_3d.py\")",
+      "Bash(__NEW_LINE_3f9f70c41edec866__ c:/Users/naveh/PycharmProjects/grb_detections_claude/.venv/Scripts/python.exe -c \":*)",
+      "Bash(c:/Users/naveh/PycharmProjects/grb_detections_claude/.venv/Scripts/python.exe -c \":*)",
+      "Bash(curl -s \"http://127.0.0.1:8050/_dash-component-suites/dash/deps/react@18.v4_0_0m1772180414.3.1.min.js\")",
+      "Bash(curl -s \"http://127.0.0.1:8050/_dash-component-suites/dash/dash-renderer/build/dash_renderer.v4_0_0m1772180414.min.js\")",
+      "Bash(c:/Users/naveh/PycharmProjects/grb_detections_claude/.venv/Scripts/python.exe -m pip index versions dash)",
+      "Bash(c:/Users/naveh/PycharmProjects/grb_detections_claude/.venv/Scripts/python.exe -m pip index versions plotly)",
+      "WebFetch(domain:github.com)",
+      "Bash(curl -s \"http://127.0.0.1:8050/_dash-component-suites/dash/dcc/async-slider.js\")",
+      "Bash(.venv/Scripts/python.exe -m pip install \"dash==3.4.0\")",
+      "Bash(.venv/Scripts/python.exe -c \":*)",
+      "Bash(pkill -f \"python.exe\")",
+      "Bash(c:/Users/naveh/PycharmProjects/grb_detections_claude/.venv/Scripts/python.exe -c \"import dash; print\\(''Dash version:'', dash.__version__\\)\")",
+      "Bash(taskkill /F /IM python.exe)",
+      "Bash(taskkill /F /IM \"python3.exe\")",
+      "Bash(c:/Users/naveh/PycharmProjects/grb_detections_claude/.venv/Scripts/python.exe -c \"import dash; print\\(dash.__version__\\)\")",
+      "Bash(Start-Sleep -Seconds 8)",
+      "Bash(Select-String 'dash_version')",
+      "Bash(curl -s \"http://127.0.0.1:8050/_dash-component-suites/dash/dash-renderer/build/dash_renderer.v4_0_0m1772262281.min.js\")",
+      "Bash(.venv/Scripts/python.exe -c \"import dash; print\\(''dash:'', dash.__version__\\); import dash_bootstrap_components as dbc; print\\(''dbc:'', dbc.__version__\\); import plotly; print\\(''plotly:'', plotly.__version__\\)\")"
+    ]
+  }
+}

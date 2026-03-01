@@ -34,6 +34,11 @@ import numpy as np
 from .constants import DAY_S
 from .params import AfterglowPhysicalParams, MicrophysicsParams
 
+# Normalization constants for Eq. (24) of the Bachelor's project (PLS G)
+_PLSG_NORM_mJy: float = 0.461
+_PLSG_P_OFFSET: float = 0.04
+_PLSG_EXP_COEFF: float = 2.53
+
 
 class PLSModel(Protocol):
     """Interface for a PLS model used by the rate calculator."""
@@ -123,9 +128,9 @@ class PLSG:
         )
 
         F_mJy = (
-            0.461
-            * (p - 0.04)
-            * np.exp(2.53 * p)
+            _PLSG_NORM_mJy
+            * (p - _PLSG_P_OFFSET)
+            * np.exp(_PLSG_EXP_COEFF * p)
             * z_factor
             * (eps_e_bar ** (p - 1.0))
             * (eps_B ** ((p + 1.0) / 4.0))

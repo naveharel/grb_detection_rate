@@ -22,6 +22,9 @@ import numpy as np
 
 from .params import AfterglowPhysicalParams, MicrophysicsParams
 
+# Normalization constant for t_dec (Tier-1 Eq. 30): t_dec = 27 * zeta * ... [s]
+_T_DEC_NORM_S: float = 27.0
+
 
 def t_dec_s(phys: AfterglowPhysicalParams, micro: MicrophysicsParams) -> float:
     """Deceleration time t_dec in seconds.
@@ -42,7 +45,7 @@ def t_dec_s(phys: AfterglowPhysicalParams, micro: MicrophysicsParams) -> float:
 
     zeta = (1.0 + micro.z) / 3.0 if micro.include_redshift_factors else 1.0 / 3.0
 
-    return 27.0 * zeta * (E52 ** (1.0 / 3.0)) * (n0 ** (-1.0 / 3.0)) * (Gamma_2p5 ** (-8.0 / 3.0))
+    return _T_DEC_NORM_S * zeta * (E52 ** (1.0 / 3.0)) * (n0 ** (-1.0 / 3.0)) * (Gamma_2p5 ** (-8.0 / 3.0))
 
 
 def t_j_s(phys: AfterglowPhysicalParams, t_dec_s_: float) -> float:
