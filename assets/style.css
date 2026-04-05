@@ -390,6 +390,15 @@ html, body {
   margin-top: 6px;
 }
 
+/* Toggle description hints */
+.toggle-hint {
+  font-size: 11px;
+  color: var(--text-lo);
+  line-height: 1.45;
+  margin-top: 2px;
+  margin-bottom: 6px;
+}
+
 /* ── Dash slider (rc-slider) overrides ─────────────────────── */
 .param-slider { margin: 0 0 2px !important; padding: 8px 4px 16px !important; }
 .rc-slider-rail {

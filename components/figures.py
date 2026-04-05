@@ -12,9 +12,8 @@ import plotly.graph_objects as go
 from dash import html
 
 from grb_detect.constants import DAY_S
-from grb_detect.plot_3d_core import discrete_regime_colorscale
-
-# ── Regime palette (matches discrete_regime_colorscale) ─────────────────────
+from grb_detect.plot_3d_core import ZMIN_DISPLAY_LOG10
+# ── Regime palette ───────────────────────────────────────────────────────────
 REGIME_HEX: list[str] = [
     "#FF1744",  # A1 Saturated · Range IV           (strongest warm, deep red)
     "#FF9100",  # A2 Distance-limited · Range III    (medium warm, orange)
@@ -49,9 +48,6 @@ XYZ_HOVER = (
     "R<sub>det</sub> = %{z:.4g} yr ⁻¹"
     "<extra></extra>"
 )
-
-# Minimum log10 R displayed on plots
-ZMIN_DISPLAY_LOG10: float = -1.0
 
 # Line widths for day-cadence overlays
 _DL_WIDTH_REGIME = 2.5
@@ -235,7 +231,7 @@ def _add_discrete_day_lines(
     t_cad_max_s: float,
     zmin_plot_log10: float = ZMIN_DISPLAY_LOG10,
     color_mode: str = "height",
-    height_cmin: float = -1.0,
+    height_cmin: float = -2.0,
     height_cmax: float = 1.0,
     height_colorscale: str = "Plasma",
     regime_colors: list[str] | None = None,
@@ -404,11 +400,10 @@ def build_3d_figure(
     # Discrete day lines (optical mode only)
     if optical_on:
         if color_on and surface_regime_id is not None:
-            _, rc = discrete_regime_colorscale()
             _add_discrete_day_lines(
                 fig, model_day=model_day, i_det=i_det,
                 N_cols=day_line_N_cols, t_cad_max_s=day_line_t_max_s,
-                zmin_plot_log10=ZMIN_DISPLAY_LOG10, color_mode="regime", regime_colors=rc,
+                zmin_plot_log10=ZMIN_DISPLAY_LOG10, color_mode="regime", regime_colors=REGIME_HEX,
             )
         else:
             zmax_color = float(np.nanmax(surface_Z_plot)) if np.any(np.isfinite(surface_Z_plot)) else 0.0
@@ -416,29 +411,35 @@ def build_3d_figure(
                 fig, model_day=model_day, i_det=i_det,
                 N_cols=day_line_N_cols, t_cad_max_s=day_line_t_max_s,
                 zmin_plot_log10=ZMIN_DISPLAY_LOG10, color_mode="height",
-                height_cmin=-1.0, height_cmax=zmax_color, height_colorscale="Plasma",
+                height_cmin=-2.0, height_cmax=zmax_color, height_colorscale="Plasma",
             )
 
     # Main surface trace
     if color_on and surface_regime_id is not None:
-        cs, colors = discrete_regime_colorscale()
-        fig.add_trace(go.Surface(
-            x=_a2l(surface_Xs), y=_a2l(surface_Ys_h), z=_a2l(surface_Rs),
-            surfacecolor=_a2l(surface_regime_id),
-            cmin=1, cmax=7,
-            colorscale=cs,
-            showscale=False,
-            connectgaps=False,
-            hovertemplate=XYZ_HOVER,
-            lighting=dict(ambient=0.75, diffuse=0.75, specular=0.08, roughness=0.95),
-            lightposition=dict(x=100, y=200, z=0),
-            showlegend=False,
-        ))
-        bl = boundary_lines_from_regimes(surface_Xs, surface_Ys_h, surface_Rs, surface_regime_id)
-        if bl is not None:
-            fig.add_trace(bl)
+        # One solid-color trace per regime — avoids Plotly's interpolation of
+        # surfacecolor values across regime boundaries (which caused color bleed
+        # and required explicit black boundary lines).
+        rid = np.asarray(surface_regime_id)
+        Rs  = np.asarray(surface_Rs)
+        for k in range(1, 8):
+            mask_k = np.isfinite(rid) & (rid == k) & np.isfinite(Rs)
+            if not np.any(mask_k):
+                continue
+            Z_k = np.where(mask_k, Rs, np.nan)
+            col = REGIME_HEX[k - 1]
+            fig.add_trace(go.Surface(
+                x=_a2l(surface_Xs), y=_a2l(surface_Ys_h), z=_a2l(Z_k),
+                colorscale=[[0, col], [1, col]],
+                cmin=0, cmax=1,
+                showscale=False,
+                connectgaps=False,
+                hovertemplate=XYZ_HOVER,
+                lighting=dict(ambient=0.75, diffuse=0.75, specular=0.08, roughness=0.95),
+                lightposition=dict(x=100, y=200, z=0),
+                showlegend=False,
+            ))
         # Legend entries (regime labels only in color mode)
-        for col, label in zip(colors, REGIME_LABELS):
+        for col, label in zip(REGIME_HEX, REGIME_LABELS):
             fig.add_trace(go.Scatter3d(
                 x=[None], y=[None], z=[None],
                 mode="markers",
@@ -463,8 +464,8 @@ def build_3d_figure(
                 x=0.88, xanchor="left",
                 thickness=18, len=0.80,
                 y=0.5, yanchor="middle",
-                tickvals=[-1, 0, 1, 2, 3, 4],
-                ticktext=["0.1", "1", "10", "100", "1k", "10k"],
+                tickvals=[-2, -1, 0, 1, 2, 3, 4],
+                ticktext=["0.01", "0.1", "1", "10", "100", "1k", "10k"],
             ),
         ))
 
@@ -601,7 +602,7 @@ def build_nslice_figure(
         fig.add_hline(
             y=R_ztf,
             line=dict(color=CORAL, width=1.5, dash="dot"),
-            annotation=dict(text=f"R_ZTF = {R_ztf:.2g} yr ⁻¹", font_size=11,
+            annotation=dict(text=f"R<sub>ZTF</sub> = {R_ztf:.2g} yr ⁻¹", font_size=11,
                             font_color=CORAL, xanchor="right", x=0.98),
         )
 
@@ -613,7 +614,7 @@ def build_nslice_figure(
         )
         fig.add_annotation(
             x=np.log10(N_ztf), y=0.04, xref="x", yref="paper",
-            text=f"N_ZTF={N_ztf:.0f}", showarrow=False,
+            text=f"N<sub>ZTF</sub>={N_ztf:.0f}", showarrow=False,
             font=dict(size=10, color=CORAL), xanchor="center",
         )
 
@@ -763,7 +764,7 @@ def build_tslice_figure(
         fig.add_hline(
             y=R_ztf,
             line=dict(color=CORAL, width=1.5, dash="dot"),
-            annotation=dict(text=f"R_ZTF = {R_ztf:.2g} yr ⁻¹", font_size=11,
+            annotation=dict(text=f"R<sub>ZTF</sub> = {R_ztf:.2g} yr ⁻¹", font_size=11,
                             font_color=CORAL, xanchor="right", x=0.98),
         )
 
@@ -883,10 +884,10 @@ def build_metrics_bar(
     # Groups: [optimum group], [ZTF group], [gain]
     # Prominent separators are inserted between groups.
     opt_badges = [
-        (_lbl(["R", html.Sub("det,★")]),  f"{_fmt_r(R_opt)} /yr",                         "amber"),
-        (_lbl(["t", html.Sub("cad,★")]),  _fmt_t(t_cad_opt_s),                             "muted"),
-        (_lbl(["N", html.Sub("exp,★")]),  f"{N_opt:.0f}" if np.isfinite(N_opt) else "—",   "muted"),
-        (_lbl(["t", html.Sub("exp,★")]),  _fmt_t(t_exp_opt_s),                             "muted"),
+        (_lbl(["R", html.Sub("det,opt")]),  f"{_fmt_r(R_opt)} /yr",                         "amber"),
+        (_lbl(["t", html.Sub("cad,opt")]),  _fmt_t(t_cad_opt_s),                             "muted"),
+        (_lbl(["N", html.Sub("exp,opt")]),  f"{N_opt:.0f}" if np.isfinite(N_opt) else "—",   "muted"),
+        (_lbl(["t", html.Sub("exp,opt")]),  _fmt_t(t_exp_opt_s),                             "muted"),
     ]
     ztf_badges = [
         (_lbl(["R", html.Sub("det,ZTF")]),  f"{_fmt_r(R_ztf)} /yr",                           "coral"),
