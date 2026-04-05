@@ -28,6 +28,9 @@ dist/
 # Physics reference documents (large PDFs, copyrighted)
 sources/
 
-# Claude Code local settings (machine-specific permission lists)
-.claude/settings.json
-.claude/settings.local.json
+# Claude Code context files (project-specific, not for version control)
+.claude/
+CLAUDE.md
+
+# Stray home-directory paths accidentally tracked
+~/.claude/
