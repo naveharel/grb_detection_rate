@@ -516,11 +516,187 @@ class DetectionRateModel:
         D_eff = np.minimum(D_tilde_max, D_tilde_eff)  # (N_q, *shape)
 
         # Trapezoidal integral: ∫ q * D̃_eff^3 dq
-        I = np.sum(q_g * (D_eff ** 3), axis=0) * dq   # shape
+        integrand = q_g * (D_eff ** 3)                          # (N_q, *shape)
+        I = np.trapezoid(integrand, q_vals, axis=0)             # shape
 
         R = fO * (theta_j ** 2) * R_int * I
         R = np.where(np.isfinite(t_exp), R, np.nan)
         return _safe_log10(R)
+
+    # ---------- Median q and D for detected GRBs ----------
+
+    def compute_medians_analytic(
+        self,
+        i_det: int,
+        N_exp: np.ndarray,
+        t_cad_s: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Median q and D for the dominant-term (normal) mode.
+
+        In the dominant-term approximation, D_eff is constant within the
+        integration range [0, q_max] for each regime, giving analytic medians:
+            q_med  = q_max / sqrt(2)
+            D_med  = D_eff_const * 2^(-1/3)
+
+        Returns
+        -------
+        q_med     : ndarray, same shape as broadcast(N_exp, t_cad_s)
+        D_med_cm  : ndarray, median detectable distance [cm]
+        """
+        N_exp   = np.asarray(N_exp,   dtype=float)
+        t_cad_s = np.asarray(t_cad_s, dtype=float)
+        shape   = np.broadcast(N_exp, t_cad_s).shape
+        N_exp_b = np.broadcast_to(N_exp,   shape)
+        t_cad_b = np.broadcast_to(t_cad_s, shape)
+
+        t_exp  = self.t_exp_s(N_exp_b, t_cad_b)
+        F_lim  = self.F_lim_Jy(t_exp)
+
+        q_E    = self.q_Euc(F_lim)
+        qi     = self.q_i(i_det, t_cad_b)
+        D_i    = self.D_i(i_det, t_cad_b, F_lim)
+        D_dec  = self.D_dec(F_lim)
+
+        q_nr   = float(self.derived.q_nr)
+        q_dec  = float(self.derived.q_dec)
+        D_Euc  = self.phys.D_euc_cm
+
+        masks = self.region_masks(i_det, N_exp_b, t_cad_b, include_unphysical=False)
+
+        # q_max: upper integration limit per regime
+        q_max = np.full(shape, np.nan, dtype=float)
+        q_max = np.where(masks["A1"], q_nr,   q_max)
+        q_max = np.where(masks["A2"], q_E,    q_max)
+        q_max = np.where(masks["A3"], q_E,    q_max)
+        q_max = np.where(masks["A4"], q_nr,   q_max)
+        q_max = np.where(masks["A5"], qi,     q_max)
+        q_max = np.where(masks["A6"], qi,     q_max)
+        q_max = np.where(masks["A7"], q_dec,  q_max)
+
+        # D_eff_const: constant effective distance per regime
+        D_eff_const = np.full(shape, np.nan, dtype=float)
+        D_eff_const = np.where(masks["A1"] | masks["A2"] | masks["A3"], D_Euc,  D_eff_const)
+        D_eff_const = np.where(masks["A4"] | masks["A5"] | masks["A6"], D_i,   D_eff_const)
+        D_eff_const = np.where(masks["A7"],                              D_dec, D_eff_const)
+
+        # Analytic medians: p(q) ∝ q → q_med = q_max/√2
+        #                   p(D) ∝ D² → D_med = D_eff_const · 2^(-1/3)
+        q_med    = q_max / np.sqrt(2.0)
+        D_med_cm = D_eff_const * (2.0 ** (-1.0 / 3.0))
+
+        invalid  = ~np.isfinite(t_exp) | (t_exp <= 0)
+        return np.where(invalid, np.nan, q_med), np.where(invalid, np.nan, D_med_cm)
+
+    def compute_medians_numerical(
+        self,
+        i_det: int,
+        N_exp: np.ndarray,
+        t_cad_s: np.ndarray,
+        N_q: int = 200,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Median q and D for the full-integral mode, computed numerically.
+
+        Uses the same D_eff(q) = min(D_max(q), D_tilde_eff) profile as
+        rate_log10_full_integral.  Integrand for marginal q: w(q) = q·D_eff³.
+        Marginal D: p(D) ∝ D²·Q(D)² where Q(D) = max{q : D_eff(q) ≥ D}.
+
+        Returns
+        -------
+        q_med     : ndarray
+        D_med_cm  : ndarray [cm]
+        """
+        N_exp   = np.asarray(N_exp,   dtype=float)
+        t_cad_s = np.asarray(t_cad_s, dtype=float)
+        shape   = np.broadcast(N_exp, t_cad_s).shape
+        N_exp_b = np.broadcast_to(N_exp,   shape)
+        t_cad_b = np.broadcast_to(t_cad_s, shape)
+
+        t_exp  = self.t_exp_s(N_exp_b, t_cad_b)
+        F_lim  = self.F_lim_Jy(t_exp)
+
+        D_Euc   = self.phys.D_euc_cm
+        q_dec   = self.derived.q_dec
+        q_j     = float(self.derived.q_j)
+        q_nr    = float(self.derived.q_nr)
+        q_td    = q_dec - 1.0
+        a_II    = float(self.pls.a_II(self.phys.p))
+        a_III   = float(self.pls.a_III(self.phys.p))
+
+        D_i_arr     = self.D_i(i_det, t_cad_b, F_lim)
+        D_tilde_dec = self.D_dec(F_lim) / D_Euc
+        D_tilde_eff = np.minimum(D_i_arr / D_Euc, 1.0)
+
+        # q grid — same construction as rate_log10_full_integral
+        q_vals = np.linspace(0.0, q_nr, N_q + 1)[1:]
+        ndim   = len(shape)
+        q_g    = q_vals.reshape((-1,) + (1,) * ndim)
+        qt_g   = np.maximum(q_g - 1.0, 0.0)
+
+        on_axis   = q_g <  q_dec
+        phase_II  = (q_g >= q_dec) & (q_g < q_j)
+        phase_III = q_g >= q_j
+
+        safe_II  = np.where(phase_II,  np.maximum(qt_g, 1e-30), 1.0)
+        safe_III = np.where(phase_III, np.maximum(qt_g, 1e-30), 1.0)
+
+        D_max_II  = D_tilde_dec * (safe_II  / q_td) ** (-a_II)
+        D_max_III = (D_tilde_dec / q_td) * (safe_III / q_td) ** (-a_III)
+
+        D_tilde_max = np.where(on_axis,  D_tilde_dec,
+                      np.where(phase_II, D_max_II,
+                                         D_max_III))
+
+        D_eff = np.minimum(D_tilde_max, D_tilde_eff)   # (N_q, *shape), normalized
+
+        # ── Median q ──────────────────────────────────────────────────────────
+        # w(q) = q · D_eff(q)³ is the marginal density (unnormalized)
+        w_q        = q_g * (D_eff ** 3)                # (N_q, *shape)
+        cumsum_q   = np.cumsum(w_q, axis=0)
+        total_q    = cumsum_q[-1:] + 1e-300
+        idx_q      = np.argmax(cumsum_q / total_q >= 0.5, axis=0)  # (*shape)
+        q_med      = q_vals[idx_q]
+
+        # ── Median D ──────────────────────────────────────────────────────────
+        # p(D) ∝ D² · Q(D)²  where  Q(D) = max{q : D_eff(q) ≥ D}.
+        # D_eff is non-increasing in q, so Q(D) = q_vals[n_above(D) - 1]
+        # where n_above(D) = #{q : D_eff(q) ≥ D}.
+        D_eff_max  = np.maximum(D_eff[0], 1e-30)       # (*shape), max detectable (normalized)
+        D_eff_norm = D_eff / D_eff_max[np.newaxis, ...]# (N_q, *shape), in [0, 1]
+
+        N_D    = 100
+        d_grid = np.linspace(1.0 / N_D, 1.0, N_D)     # normalized D levels, (N_D,)
+        Q_vals = np.empty((N_D,) + shape, dtype=float)
+
+        for j, d in enumerate(d_grid):
+            # Number of q-values with D_eff_norm >= d (D_eff_norm non-increasing → contiguous block)
+            n_above     = np.sum(D_eff_norm >= d, axis=0)          # (*shape)
+            last_idx    = np.clip(n_above - 1, 0, N_q - 1)
+            Q_vals[j]   = q_vals[last_idx]
+
+        d_g      = d_grid.reshape((-1,) + (1,) * ndim)
+        w_D      = d_g ** 2 * Q_vals ** 2              # (N_D, *shape)
+        cumsum_D = np.cumsum(w_D, axis=0)
+        total_D  = cumsum_D[-1:] + 1e-300
+        idx_D    = np.argmax(cumsum_D / total_D >= 0.5, axis=0)    # (*shape)
+        d_med    = d_grid[idx_D]
+        D_med_cm = d_med * D_eff_max * D_Euc                       # (*shape) in cm
+
+        invalid  = ~np.isfinite(t_exp) | (t_exp <= 0)
+        return np.where(invalid, np.nan, q_med), np.where(invalid, np.nan, D_med_cm)
+
+    def compute_medians(
+        self,
+        i_det: int,
+        N_exp: np.ndarray,
+        t_cad_s: np.ndarray,
+        *,
+        full_integral: bool = False,
+        N_q: int = 200,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return (q_med, D_med_cm) using analytic (normal) or numerical (full-integral) formula."""
+        if full_integral:
+            return self.compute_medians_numerical(i_det, N_exp, t_cad_s, N_q)
+        return self.compute_medians_analytic(i_det, N_exp, t_cad_s)
 
     # ---------- Analytic optimal strategy (from  ) ----------
     def analytic_optimum(self, i_det: int) -> Dict[str, float]:

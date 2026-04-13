@@ -2,10 +2,15 @@
 """Sidebar parameter controls: DBC Accordion with styled sliders and inputs."""
 from __future__ import annotations
 
+import math
+
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
-from grb_detect.params import SurveyDesignParams
+from grb_detect.params import AfterglowPhysicalParams, CM_TO_GPC, MicrophysicsParams, SurveyDesignParams
+
+_phys_defaults = AfterglowPhysicalParams()
+_micro_defaults = MicrophysicsParams()
 
 _survey_defaults = SurveyDesignParams()
 T_NIGHT_DEFAULT_H: float = _survey_defaults.t_night_s / 3600.0
@@ -13,6 +18,18 @@ OMEGA_SRV_DEFAULT_DEG2: float = 27500.0
 
 
 # ── Parameter block helper ───────────────────────────────────────────────────
+
+def _bold_default_mark(marks: dict, slider_val: float) -> dict:
+    """Return a copy of *marks* where the entry matching *slider_val* is bolded."""
+    result = {}
+    for k, v in marks.items():
+        lbl = v if isinstance(v, str) else v.get("label", str(v))
+        if abs(float(k) - float(slider_val)) < 1e-9:
+            result[k] = {"label": lbl, "style": {"fontWeight": "700", "fontSize": "11px"}}
+        else:
+            result[k] = {"label": lbl, "style": {"fontSize": "11px"}}
+    return result
+
 
 def _param_block(
     label,          # str or list of Dash children
@@ -29,6 +46,7 @@ def _param_block(
     input_max: float | None = None,
     input_step: float | None = None,
 ) -> html.Div:
+    styled_marks = _bold_default_mark(marks, slider_val)
     return html.Div(className="param-block", children=[
         html.Div(className="param-row", children=[
             html.Label(
@@ -52,7 +70,7 @@ def _param_block(
             slider_min, slider_max, slider_step,
             value=slider_val,
             id=slider_id,
-            marks=marks,
+            marks=styled_marks,
             className="param-slider",
         ),
     ])
@@ -173,7 +191,7 @@ def _settings_section() -> list:
             ],
         ),
         _toggle_block(
-            "color-switch",
+            "regime-color-switch",
             "Color by detection regime",
             [
                 "Colors the surface by analytical detection regime. "
@@ -212,14 +230,121 @@ def _settings_section() -> list:
     ]
 
 
+def _physics_section() -> list:
+    _deuc_gpc_default = round(_phys_defaults.D_euc_cm * CM_TO_GPC, 2)  # cm → Gpc, ≈ 5.28
+    _rho_log_default = round(math.log10(_phys_defaults.rho_grb_gpc3_yr), 3)  # ≈ 2.415
+    _gamma0_log_default = round(math.log10(_phys_defaults.gamma0), 2)        # = 2.5
+    return [
+        # ── Physical model ─────────────────────────────────────────
+        html.P("Physical model", className="param-group-label"),
+        _param_block(
+            "p",
+            "Electron power-law index (must be > 2). Exponentially amplified in flux; "
+            "strongly affects spectral slope and all detection ranges.",
+            "p_slider", "p_input",
+            2.01, 3.0, 0.01, _phys_defaults.p,
+            {2.01: "2", 2.5: "2.5", 3: "3"},
+            input_step=0.01,
+        ),
+        _param_block(
+            ["log ν [Hz]"],
+            "log₁₀ of observing frequency in Hz. Range spans typical ν_m (lower end of "
+            "PLS G, ~10⁹ Hz at late Phase II) to just below typical ν_c (~10¹⁸ Hz). "
+            "Default 5×10¹⁴ Hz = optical V-band.",
+            "nu_log_slider", "nu_log_input",
+            9.0, 18.0, 0.1, round(math.log10(_phys_defaults.nu_hz), 1),
+            {9: "9", 12: "12", 14.7: "14.7", 18: "18"},
+            input_step=0.1,
+        ),
+        _param_block(
+            ["log E", html.Sub("k,iso"), " [erg]"],
+            "log₁₀ of isotropic-equivalent kinetic energy in erg. "
+            "Scales flux as E^{(p+3)/4} and deceleration time as E^{1/3}.",
+            "Ekiso_log_slider", "Ekiso_log_input",
+            51.0, 55.0, 0.1, 53.0,
+            {51: "51", 52: "52", 53: "53", 54: "54", 55: "55"},
+            input_step=0.1,
+        ),
+        _param_block(
+            ["log n", html.Sub("0"), " [cm⁻³]"],
+            "log₁₀ of ISM number density in cm⁻³. "
+            "Affects flux (∝ n^{1/2}) and deceleration time (∝ n^{-1/3}).",
+            "n0_log_slider", "n0_log_input",
+            -3.0, 2.0, 0.1, round(math.log10(_phys_defaults.n0_cm3), 1),
+            {-3: "-3", -2: "-2", -1: "-1", 0: "0", 1: "1", 2: "2"},
+            input_step=0.1,
+        ),
+        _param_block(
+            ["log Γ", html.Sub("0")],
+            "log₁₀ of initial bulk Lorentz factor. Affects deceleration time (∝ Γ₀^{-8/3}) "
+            "and the on-axis beaming cone angle.",
+            "gamma0_log_slider", "gamma0_log_input",
+            2.0, 3.5, 0.05, _gamma0_log_default,
+            {2: "2", 2.5: "2.5", 3: "3", 3.5: "3.5"},
+            input_step=0.05,
+        ),
+        _param_block(
+            ["θ", html.Sub("j"), " [rad]"],
+            "Jet half-opening angle in radians. Sets the jet-break time and "
+            "the beaming fraction f_b = θ_j²/2.",
+            "thetaj_slider", "thetaj_input",
+            0.01, 0.5, 0.01, _phys_defaults.theta_j_rad,
+            {0.01: "0.01", 0.1: "0.1", 0.3: "0.3", 0.5: "0.5"},
+            input_step=0.01,
+        ),
+        _param_block(
+            ["log ε", html.Sub("e")],
+            "log₁₀ of electron energy fraction. Enters flux as (ε_e·(p−2)/(p−1))^{p−1}.",
+            "epse_slider", "epse_input",
+            -2.0, -0.3, 0.05, round(math.log10(_micro_defaults.epsilon_e), 2),
+            {-2: "-2", -1: "-1", -0.3: "-0.3"},
+            input_step=0.05,
+        ),
+        _param_block(
+            ["log ε", html.Sub("B")],
+            "log₁₀ of magnetic energy fraction. Enters flux as ε_B^{(p+1)/4}.",
+            "epsB_slider", "epsB_input",
+            -3.0, -1.0, 0.05, round(math.log10(_micro_defaults.epsilon_B), 2),
+            {-3: "-3", -2: "-2", -1: "-1"},
+            input_step=0.05,
+        ),
+        # ── Cosmological model ─────────────────────────────────────
+        html.P("Cosmological model", className="param-group-label"),
+        _param_block(
+            ["D", html.Sub("Euc"), " [Gpc]"],
+            "Euclidean calibration distance in Gpc. Sets the volume for the rate integral. "
+            "Default 5.28 Gpc ≈ z = 2 in flat ΛCDM.",
+            "deuc_slider", "deuc_input",
+            1.0, 12.0, 0.01, _deuc_gpc_default,
+            {1: "1", 5.28: "5.28", 8: "8", 12: "12"},
+            input_step=0.01,
+        ),
+        _param_block(
+            ["log ℛ [Gpc⁻³ yr⁻¹]"],
+            "log₁₀ of GRB volumetric rate density. Scales the total detection rate linearly.",
+            "rho_grb_log_slider", "rho_grb_log_input",
+            1.0, 3.3, 0.005, _rho_log_default,
+            {1: "10", 2: "100", 2.415: "260", 3: "1k", 3.3: "2k"},
+            input_step=0.005,
+        ),
+        html.Div(
+            className="param-row grb-derived-row",
+            children=[
+                html.Span(id="grb-ntotal-display", className="grb-derived-val"),
+                html.Span(id="grb-ntoward-display", className="grb-derived-val"),
+            ],
+        ),
+    ]
+
+
 # ── Public factory ───────────────────────────────────────────────────────────
 
 def create_sidebar() -> html.Aside:
     """Return the full collapsible sidebar element."""
     accordion = dbc.Accordion(
         id="param-accordion",
-        always_open=True,
-        active_item=["strategy", "instrument", "constraints", "settings"],
+        always_open=True,   # DBC: multiple sections can be open simultaneously; opening one does NOT auto-close others
+        active_item=["strategy", "instrument", "constraints"],
         className="param-accordion",
         children=[
             dbc.AccordionItem(
@@ -238,6 +363,12 @@ def create_sidebar() -> html.Aside:
                 _constraints_section(),
                 title="Constraints",
                 item_id="constraints",
+                className="accordion-section",
+            ),
+            dbc.AccordionItem(
+                _physics_section(),
+                title="Parameters",
+                item_id="parameters",
                 className="accordion-section",
             ),
             dbc.AccordionItem(

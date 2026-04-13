@@ -215,8 +215,15 @@ html, body {
   background: var(--surface-0);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
   gap: 0;
+  /* Hide scrollbar visually while keeping scroll functionality */
+  scrollbar-width: none;
+}
+.metrics-strip::-webkit-scrollbar {
+  display: none;
 }
 
 .metric-badge {
@@ -399,8 +406,37 @@ html, body {
   margin-bottom: 6px;
 }
 
+/* ── Physics section derived-value display ──────────────────── */
+.param-group-label {
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-lo);
+  margin: 6px 0 2px;
+}
+.grb-derived-row {
+  margin-top: 4px;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.grb-derived-val {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-mid);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+
 /* ── Dash slider (rc-slider) overrides ─────────────────────── */
-.param-slider { margin: 0 0 2px !important; padding: 8px 4px 16px !important; }
+/* 16px on both sides so mark labels at the slider edges don't get clipped
+   by .sidebar-inner { overflow-x: hidden }. The mark at 100% has its centre at
+   the track's right edge; 16px gives room even for multi-char labels. */
+.param-slider { margin: 0 0 2px !important; padding: 8px 16px 16px 16px !important; }
 .rc-slider-rail {
   height: 3px !important;
   background: var(--surface-3) !important;
@@ -432,9 +468,9 @@ html, body {
 .rc-slider-mark-text {
   font-family: var(--font-mono) !important;
   font-size: 10px !important;
-  color: var(--text-lo) !important;
+  color: var(--text-mid) !important;
 }
-.rc-slider-mark-text-active { color: var(--text-mid) !important; }
+.rc-slider-mark-text-active { color: var(--text-hi) !important; }
 .rc-slider-dot {
   border-color: var(--surface-3) !important;
   background: var(--surface-2) !important;

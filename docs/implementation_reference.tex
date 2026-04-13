@@ -1,0 +1,226 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{geometry}
+\usepackage{hyperref}
+\geometry{margin=2.5cm}
+
+\title{\textbf{GRB Afterglow Detection Rates: Implementation Reference}\\
+\large Model equations as implemented in \texttt{grb\_detections\_claude}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+% -------------------------------------------------------
+\section*{Summary}
+
+The code computes the expected annual detection rate $R_{\rm det}$ [yr$^{-1}$] of gamma-ray burst (GRB) optical afterglows as a function of survey strategy parameters $(N_{\rm exp},\,t_{\rm cad})$.
+The calculation combines a Blandford--McKee ISM afterglow model with a Euclidean population of GRBs and a background-limited survey instrument.
+
+The central insight is that detectability is governed by \emph{two competing horizons}.
+The \textbf{Euclidean horizon} $q_{\rm Euc}$ is the maximum off-axis viewing angle at which a burst at the calibration distance $D_{\rm euc}$ is brighter than the survey flux limit.
+The \textbf{cadence horizon} $q_i$ is the maximum off-axis angle whose afterglow peak arrives early enough to be caught within $i$ cadence intervals.
+Comparing these two angles against three characteristic afterglow angles ($q_{\rm dec}$, $q_j$, $q_{\rm nr}$) divides the strategy space into seven piecewise regimes A1--A7, each with its own analytic rate formula.
+The surface $\log_{10}R_{\rm det}(N_{\rm exp},t_{\rm cad})$ is computed on a dense grid and displayed interactively.
+
+% -------------------------------------------------------
+\section{Parameters}
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{llll}
+\toprule
+Symbol & Default & Unit & Meaning \\
+\midrule
+\multicolumn{4}{l}{\textit{Physical model} (\texttt{AfterglowPhysicalParams})} \\
+$p$ & 2.5 & -- & Electron energy distribution index \\
+$E_{k,{\rm iso}}$ & $10^{53}$ & erg & Isotropic kinetic energy \\
+$n_0$ & 1.0 & cm$^{-3}$ & ISM ambient number density \\
+$\theta_j$ & 0.1 & rad & Jet half-opening angle \\
+$\Gamma_0$ & $10^{2.5}$ & -- & Initial bulk Lorentz factor \\
+$\nu$ & $5\times10^{14}$ & Hz & Observing frequency (optical V-band) \\
+\midrule
+\multicolumn{4}{l}{\textit{Microphysics} (\texttt{MicrophysicsParams})} \\
+$\varepsilon_e$ & 0.1 & -- & Electron energy fraction \\
+$\varepsilon_B$ & 0.01 & -- & Magnetic field energy fraction \\
+\midrule
+\multicolumn{4}{l}{\textit{Cosmological model}} \\
+$\mathcal{R}$ & 260 & Gpc$^{-3}$\,yr$^{-1}$ & Volumetric GRB rate density \\
+$D_{\rm euc}$ & 1.63$\times10^{28}$\,cm $\approx$ 5.28\,Gpc & cm & Euclidean calibration distance \\
+$R_{\rm int}$ & $\frac{4\pi}{3}\mathcal{R}D_{\rm euc}^3\approx4.8\times10^4$ & yr$^{-1}$ & GRBs/yr in calibration volume \\
+\midrule
+\multicolumn{4}{l}{\textit{Survey instrument} (\texttt{SurveyTelescopeParams}, \texttt{SurveyDesignParams})} \\
+$F_{\rm ref}$ & $10^{-4.68}\approx2.09\times10^{-5}$ & Jy & Limiting flux at $t_{\rm ref}=30$\,s \\
+$\alpha$ & 0.5 & -- & Flux--exposure exponent (background-limited) \\
+$\Omega_{\rm exp}$ & 47 & deg$^2$ & Field of view per exposure \\
+$\Omega_{\rm srv,max}$ & 27500 & deg$^2$ & Maximum surveyable area \\
+$t_{\rm night}$ & 36000 & s & Astronomical night duration \\
+\midrule
+\multicolumn{4}{l}{\textit{Survey strategy} (free variables)} \\
+$N_{\rm exp}$ & -- & -- & Exposures per cadence cycle \\
+$t_{\rm cad}$ & -- & s & Cadence interval \\
+$f_{\rm live}$ & 0.1 & -- & Fraction of $t_{\rm cad}$ spent observing \\
+$t_{\rm OH}$ & 0 & s & Fixed overhead per exposure \\
+$i$ & 1 & -- & Required detections per GRB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% -------------------------------------------------------
+\section{Afterglow Model (ISM)}
+
+\subsection*{Deceleration and jet break times}
+
+\noindent Blandford--McKee ISM dynamics (thesis Eq.~30):
+\begin{equation}
+t_{\rm dec} = 27\,\zeta\,E_{52}^{1/3}\,n_0^{-1/3}\,\Gamma_{2.5}^{-8/3}\;[\text{s}],
+\qquad \zeta = \tfrac{1}{3}\;\text{(Euclidean approximation, }z\to0\text{)}
+\end{equation}
+where $E_{52}=E_{k,{\rm iso}}/10^{52}$\,erg and $\Gamma_{2.5}=\Gamma_0/10^{2.5}$.
+
+\begin{equation}
+t_j = t_{\rm dec}\,(\Gamma_0\,\theta_j)^{8/3}
+\end{equation}
+
+\subsection*{Viewing-angle parameterisation}
+
+\noindent Define normalized viewing angle $q = \theta_{\rm obs}/\theta_j$ and $\tilde{q}=q-1$.
+Three characteristic boundaries separate the afterglow into phases:
+\begin{equation}
+q_{\rm dec} = 1 + (\Gamma_0\,\theta_j)^{-1}, \qquad q_j = 2, \qquad q_{\rm nr} = \frac{\sqrt{2}}{\theta_j}
+\end{equation}
+Phase~I ($t < t_{\rm dec}$) is excluded by design. Phase~II: $q\in[q_{\rm dec},q_j)$. Phase~III: $q\ge q_j$.
+
+\subsection*{On-axis reference flux}
+
+\noindent PLS\,G ($\nu_m < \nu < \nu_c$, standard optical; thesis Eq.~24):
+\begin{equation}
+F_{\rm dec} = \frac{0.461}{1000}\,(p-0.04)\,e^{2.53p}\;
+\bar{\varepsilon}_e^{\,p-1}\,\varepsilon_B^{(p+1)/4}\,
+n_0^{1/2}\,E_{52}^{(p+3)/4}\,
+t_{\rm dec,d}^{-3(p-1)/4}\,D_{28}^{-2}\,\nu_{14}^{-(p-1)/2}
+\;[\text{Jy}]
+\end{equation}
+where $\bar{\varepsilon}_e=\varepsilon_e(p-2)/(p-1)$, $t_{\rm dec,d}$ is $t_{\rm dec}$ in days, $D_{28}=D_{\rm euc}/10^{28}$\,cm, $\nu_{14}=\nu/10^{14}$\,Hz.
+For PLS\,H ($\nu>\nu_c$) the coefficient is 0.855, the pre-exponential factor is $(p-0.98)$, the exponential coefficient is 1.95, and the $\varepsilon_B$ exponent changes to $(p-2)/4$ (thesis Eq.~25).
+
+\subsection*{Off-axis peak flux scaling}
+
+\noindent Exponents: PLS\,G: $a_{\rm II}=p-1$, $a_{\rm III}=p$.\quad PLS\,H: $a_{\rm II}=(3p-2)/3$, $a_{\rm III}=p$.
+\begin{equation}
+\frac{F_p}{F_{\rm dec}} = \begin{cases}
+\left(\dfrac{\tilde{q}}{\tilde{q}_{\rm dec}}\right)^{-2a_{\rm II}} & q_{\rm dec}\le q<q_j\;\text{(Phase II)}\\[8pt]
+\tilde{q}_{\rm dec}^{-2}\left(\dfrac{\tilde{q}}{\tilde{q}_{\rm dec}}\right)^{-2a_{\rm III}} & q\ge q_j\;\text{(Phase III)}
+\end{cases}
+\end{equation}
+Reference fluxes at the boundaries:
+$F_j = F_{\rm dec}\,\tilde{q}_{\rm dec}^{2a_{\rm II}}$ and
+$F_{\rm nr} = F_{\rm dec}\,\tilde{q}_{\rm dec}^{-2}(\tilde{q}_{\rm nr}/\tilde{q}_{\rm dec})^{-2a_{\rm III}}$.
+
+% -------------------------------------------------------
+\section{Survey Model}
+
+\begin{equation}
+t_{\rm exp} = \frac{f_{\rm live}\,t_{\rm cad}}{N_{\rm exp}} - t_{\rm OH},\qquad
+F_{\rm lim} = F_{\rm ref}\!\left(\frac{t_{\rm exp}}{t_{\rm ref}}\right)^{-\alpha},\qquad
+f_\Omega = \frac{N_{\rm exp}\,\Omega_{\rm exp}}{4\pi}
+\end{equation}
+Valid only when $t_{\rm exp}>0$ and $N_{\rm exp}\le\Omega_{\rm srv,max}/\Omega_{\rm exp}$.
+
+% -------------------------------------------------------
+\section{Detection Rate: Two Horizons and Seven Regimes}
+
+\subsection*{Distance and horizon angles}
+
+\begin{equation}
+D_{\rm dec} = D_{\rm euc}\!\left(\frac{F_{\rm lim}}{F_{\rm dec}}\right)^{-1/2}
+\end{equation}
+
+\noindent\textbf{Euclidean horizon angle} $q_{\rm Euc}$ (largest off-axis angle detectable at $D_{\rm euc}$):
+\begin{equation}
+\tilde{q}_{\rm Euc} = \begin{cases}
+\tilde{q}_{\rm dec}\!\left(\dfrac{F_{\rm lim}}{F_{\rm dec}}\right)^{-1/(2a_{\rm II})} & F_{\rm lim}\ge F_j\;\text{(Phase II)}\\[8pt]
+\tilde{q}_{\rm dec}^{(a_{\rm III}-1)/a_{\rm III}}\!\left(\dfrac{F_{\rm lim}}{F_{\rm dec}}\right)^{-1/(2a_{\rm III})} & F_{\rm lim}<F_j\;\text{(Phase III)}
+\end{cases}
+\end{equation}
+
+\noindent\textbf{Cadence horizon angle} $q_i$ (largest off-axis angle whose peak arrives within $i\cdot t_{\rm cad}$):
+\begin{equation}
+\tilde{q}_i = \begin{cases}
+(i\,t_{\rm cad}/t_j)^{3/8} & i\,t_{\rm cad}<t_j\\
+(i\,t_{\rm cad}/t_j)^{1/2} & i\,t_{\rm cad}\ge t_j
+\end{cases}
+\end{equation}
+
+\noindent\textbf{Cadence distance} $D_i$ (max detection distance at angle $q_i$):
+\begin{equation}
+D_i = \begin{cases}
+D_{\rm dec}\,(\tilde{q}_i/\tilde{q}_{\rm dec})^{-a_{\rm II}} & i\,t_{\rm cad}<t_j\\[4pt]
+(D_{\rm dec}/\tilde{q}_{\rm dec})\,(\tilde{q}_i/\tilde{q}_{\rm dec})^{-a_{\rm III}} & i\,t_{\rm cad}\ge t_j
+\end{cases}
+\end{equation}
+
+\subsection*{Piecewise rate formulas (dominant-term approximation)}
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.4}
+\begin{tabular}{cll}
+\toprule
+Regime & Condition & Rate $R_k$ [yr$^{-1}$] \\
+\midrule
+A1 & $q_{\rm Euc}\ge q_{\rm nr}$ \textbf{and} $q_{\rm Euc}\ge q_i$ & $f_\Omega\,R_{\rm int}$ \\
+A2 & $q_j\le q_{\rm Euc}<q_{\rm nr}$ \textbf{and} $q_{\rm Euc}\ge q_i$ & $\tfrac{1}{2}f_\Omega\,\theta_j^2\,q_{\rm Euc}^2\,R_{\rm int}$ \\
+A3 & $q_{\rm dec}\le q_{\rm Euc}<q_j$ \textbf{and} $q_{\rm Euc}\ge q_i$ & $\tfrac{1}{2}f_\Omega\,\theta_j^2\,q_{\rm Euc}^2\,R_{\rm int}$ \\
+A4 & $q_i\ge q_{\rm nr}$ \textbf{and} $q_{\rm Euc}<q_i$ & $\tfrac{1}{2}f_\Omega\,\theta_j^2\,q_{\rm nr}^2\,(D_i/D_{\rm euc})^3\,R_{\rm int}$ \\
+A5 & $q_j\le q_i<q_{\rm nr}$ \textbf{and} $q_{\rm Euc}<q_i$ & $\tfrac{1}{2}f_\Omega\,\theta_j^2\,q_i^2\,(D_i/D_{\rm euc})^3\,R_{\rm int}$ \\
+A6 & $q_{\rm dec}\le q_i<q_j$ \textbf{and} $q_{\rm Euc}<q_i$ & $\tfrac{1}{2}f_\Omega\,\theta_j^2\,q_i^2\,(D_i/D_{\rm euc})^3\,R_{\rm int}$ \\
+A7 & $q_{\rm Euc}<q_{\rm dec}$ \textbf{and} $q_i<q_{\rm dec}$ & $\tfrac{1}{2}f_\Omega\,\theta_j^2\,q_{\rm dec}^2\,(D_{\rm dec}/D_{\rm euc})^3\,R_{\rm int}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The output surface shows $\log_{10}R_{\rm det}$.
+Region A0 ($t_{\rm exp}\le0$ or $N_{\rm exp}$ out of range) is undefined.
+Boundary comparisons use tolerance $\varepsilon=10^{-12}$.
+
+% -------------------------------------------------------
+\section{Full-Integral Mode (Optional)}
+
+Instead of the dominant-term formulas above, the rate is computed by numerically integrating over all viewing angles:
+\begin{equation}
+R = f_\Omega\,\theta_j^2\,R_{\rm int}\int_0^{q_{\rm nr}} q\,\bigl[\min(D_{\rm max}(q),\,D_{\rm eff}\cdot D_{\rm euc})\bigr]^3\,dq
+\end{equation}
+where $D_{\rm eff}=\min(D_i/D_{\rm euc},1)$ and
+\begin{equation}
+D_{\rm max}(q) = \begin{cases}
+D_{\rm dec} & q<q_{\rm dec}\\
+D_{\rm dec}(\tilde{q}/\tilde{q}_{\rm dec})^{-a_{\rm II}} & q_{\rm dec}\le q<q_j\\
+(D_{\rm dec}/\tilde{q}_{\rm dec})(\tilde{q}/\tilde{q}_{\rm dec})^{-a_{\rm III}} & q\ge q_j
+\end{cases}
+\end{equation}
+Evaluated with a trapezoidal rule over $N_q=500$ points ($<0.3\%$ error).
+
+% -------------------------------------------------------
+\section{Optical Cadence Constraints}
+
+For optical surveys, only three cadence regions are physically valid:
+\begin{itemize}
+\item \textbf{Continuous} ($t_{\rm cad}<t_{\rm night}/i$): sub-night sampling.
+  Only nights contribute; rate weighted by night fraction:
+  \[
+  \log_{10}R_{\rm eff} = \log_{10}R_{\rm night} + \log_{10}\!\left(\frac{t_{\rm night}}{1\;\text{day}}\right)
+  \]
+\item \textbf{Gap} ($t_{\rm night}/i\le t_{\rm cad}<1\;\text{day}$): physically forbidden.
+  Cannot obtain $i$ detections within one night at this cadence.
+\item \textbf{Discrete} ($t_{\rm cad}=n\times1\;\text{day}$, $n\in\mathbb{Z}^+$): multi-night sampling.
+  No night-fraction penalty.
+\end{itemize}
+
+\end{document}

@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 from dash import html
 
 from grb_detect.constants import DAY_S
-from grb_detect.plot_3d_core import ZMIN_DISPLAY_LOG10
+from grb_detect.plot_3d_core import ZMIN_DISPLAY_LOG10, _rate
 # ── Regime palette ───────────────────────────────────────────────────────────
 REGIME_HEX: list[str] = [
     "#FF1744",  # A1 Saturated · Range IV           (strongest warm, deep red)
@@ -41,18 +41,42 @@ TCAD_TICKTEXT = ["1 sec", "1 min", "1 hr", "6 hr", "1 day", "1 wk", "1 mo", "1 y
 AMBER = "#fbbf24"   # optimal point
 CORAL = "#f87171"   # ZTF reference point
 
-# Hover template for 3D surface traces
+# Standardized hover templates — order: N_exp, t_cad, t_exp, q_med, D_med, R_det
+# 3D surface: N_exp=x, t_cad=y, R_det=z; customdata=[t_exp, q_med, D_med_Gpc]
 XYZ_HOVER = (
     "N<sub>exp</sub> = %{x:.4g}<br>"
     "t<sub>cad</sub> = %{y:.4g} hr<br>"
+    "t<sub>exp</sub> = %{customdata[0]:.3g} s<br>"
+    "q<sub>med</sub> = %{customdata[1]:.3g}<br>"
+    "D<sub>med</sub> = %{customdata[2]:.3g} Gpc<br>"
     "R<sub>det</sub> = %{z:.4g} yr ⁻¹"
+    "<extra></extra>"
+)
+# N-slice: N_exp=x, R_det=y; customdata=[t_cad_hr, t_exp, q_med, D_med_Gpc]
+N_HOVER_FULL = (
+    "N<sub>exp</sub> = %{x:.4g}<br>"
+    "t<sub>cad</sub> = %{customdata[0]:.4g} hr<br>"
+    "t<sub>exp</sub> = %{customdata[1]:.3g} s<br>"
+    "q<sub>med</sub> = %{customdata[2]:.3g}<br>"
+    "D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>"
+    "R<sub>det</sub> = %{y:.4g} yr ⁻¹"
+    "<extra></extra>"
+)
+# T-slice: t_cad=x, R_det=y; customdata=[N_exp, t_exp, q_med, D_med_Gpc]
+T_HOVER_FULL = (
+    "N<sub>exp</sub> = %{customdata[0]:.4g}<br>"
+    "t<sub>cad</sub> = %{x:.4g} hr<br>"
+    "t<sub>exp</sub> = %{customdata[1]:.3g} s<br>"
+    "q<sub>med</sub> = %{customdata[2]:.3g}<br>"
+    "D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>"
+    "R<sub>det</sub> = %{y:.4g} yr ⁻¹"
     "<extra></extra>"
 )
 
 # Line widths for day-cadence overlays
-_DL_WIDTH_REGIME = 2.5
+_DL_WIDTH_REGIME = 6
 _DL_WIDTH_HEIGHT = 1.0
-_DL_MARKER_HEIGHT = 3
+_DL_MARKER_HEIGHT = 2
 
 
 # ── Utilities ────────────────────────────────────────────────────────────────
@@ -130,6 +154,7 @@ def _draw_regime_segments_2d(
     y_vals: np.ndarray,
     regime_ids: np.ndarray,
     *,
+    customdata: np.ndarray | None = None,
     line_width: float = 2.5,
     opacity: float = 1.0,
     hovertemplate: str | None = None,
@@ -153,8 +178,9 @@ def _draw_regime_segments_2d(
 
         seg_x = list(x_vals[i:j])
         seg_y = list(y_vals[i:j])
+        bridged = j < n and np.isfinite(x_vals[j]) and np.isfinite(y_vals[j])
         # Bridge to next segment for continuity
-        if j < n and np.isfinite(x_vals[j]) and np.isfinite(y_vals[j]):
+        if bridged:
             seg_x.append(x_vals[j])
             seg_y.append(y_vals[j])
 
@@ -165,6 +191,11 @@ def _draw_regime_segments_2d(
             line=dict(color=col, width=line_width),
             showlegend=False,
         )
+        if customdata is not None:
+            seg_cd = customdata[i:j]
+            if bridged:
+                seg_cd = np.vstack([seg_cd, customdata[j : j + 1]])
+            trace_kwargs["customdata"] = seg_cd
         if hovertemplate is not None:
             trace_kwargs["hovertemplate"] = hovertemplate
             if hoverlabel is not None:
@@ -180,6 +211,7 @@ def _draw_single_line_2d(
     x_vals: np.ndarray,
     y_vals: np.ndarray,
     *,
+    customdata: np.ndarray | None = None,
     color: str = "#6d9eff",
     line_width: float = 2.5,
     name: str = "",
@@ -194,6 +226,8 @@ def _draw_single_line_2d(
         name=name,
         showlegend=show_legend,
     )
+    if customdata is not None:
+        trace_kwargs["customdata"] = customdata
     if hovertemplate is not None:
         trace_kwargs["hovertemplate"] = hovertemplate
         if hoverlabel is not None:
@@ -235,6 +269,8 @@ def _add_discrete_day_lines(
     height_cmax: float = 1.0,
     height_colorscale: str = "Plasma",
     regime_colors: list[str] | None = None,
+    full_integral: bool = False,
+    off_axis: bool = False,
 ) -> None:
     """Draw discrete integer-day cadence curves on top of a 3-D surface."""
     N_cols = np.asarray(N_cols, dtype=float)
@@ -260,6 +296,7 @@ def _add_discrete_day_lines(
         return
 
     N_line = N_cols[None, :]  # (1, nN)
+    _GPC = 3.086e27
 
     def _regime_id_for_t(t_s: float) -> np.ndarray:
         t_arr = np.full_like(N_line, float(t_s), dtype=float)
@@ -270,12 +307,21 @@ def _add_discrete_day_lines(
             rid[mk] = float(k)
         return rid
 
+    def _customdata_for_t(t_s: float) -> np.ndarray:
+        """Return customdata array of shape (nN, 3) = [t_exp_s, q_med, D_med_Gpc]."""
+        t_arr = np.full_like(N_cols, float(t_s))
+        t_exp_arr = model_day.t_exp_s(N_cols, t_arr)
+        q_med_arr, D_med_cm_arr = model_day.compute_medians(
+            int(i_det), N_cols, t_arr, full_integral=full_integral,
+        )
+        D_med_Gpc_arr = D_med_cm_arr / _GPC
+        return np.stack([t_exp_arr, q_med_arr, D_med_Gpc_arr], axis=-1)  # (nN, 3)
+
     for n in n_vals:
         t_s = float(n) * float(DAY_S)
-        log10R = model_day.rate_log10(
-            i_det=int(i_det),
-            N_exp=N_line,
-            t_cad_s=np.array([[t_s]], dtype=float),
+        log10R = _rate(
+            model_day, int(i_det), N_line, np.full_like(N_line, t_s),
+            full_integral, off_axis=off_axis,
         )
         log10R = np.asarray(log10R).reshape(1, -1).ravel()
 
@@ -286,6 +332,7 @@ def _add_discrete_day_lines(
         x = _a2l(N_cols[good])
         y = _a2l(np.full(len(x), t_s / 3600.0, dtype=float))
         z = _a2l((10 ** log10R[good]).astype(float))
+        cd_good = _customdata_for_t(t_s)[good]  # (n_good, 3)
 
         if color_mode == "regime" and regime_colors is not None and len(regime_colors) == 7:
             rid_all = _regime_id_for_t(t_s)
@@ -304,6 +351,7 @@ def _add_discrete_day_lines(
                     col = _hex_to_rgba(regime_colors[k - 1], alpha=0.80)
                     fig.add_trace(go.Scatter3d(
                         x=x[start:end], y=y[start:end], z=z[start:end],
+                        customdata=_a2l(cd_good[start:end]),
                         mode="lines+markers",
                         line=dict(color=col, width=_DL_WIDTH_REGIME),
                         marker=dict(size=0, opacity=0.001),
@@ -314,6 +362,7 @@ def _add_discrete_day_lines(
         else:
             fig.add_trace(go.Scatter3d(
                 x=x, y=y, z=z,
+                customdata=_a2l(cd_good),
                 mode="lines+markers",
                 line=dict(color="rgba(255,255,255,0.12)", width=_DL_WIDTH_HEIGHT),
                 marker=dict(
@@ -330,40 +379,6 @@ def _add_discrete_day_lines(
             ))
 
 
-# ── Regime boundary lines on 3-D surface ─────────────────────────────────────
-
-def boundary_lines_from_regimes(X, Y, Z, regime_id) -> go.Scatter3d | None:
-    if regime_id is None:
-        return None
-    rid = np.asarray(regime_id)
-    valid = np.isfinite(rid) & np.isfinite(Z)
-    xs, ys, zs = [], [], []
-
-    diff_y = (rid[1:, :] != rid[:-1, :]) & valid[1:, :] & valid[:-1, :]
-    ii, jj = np.where(diff_y)
-    for i, j in zip(ii, jj):
-        xs.extend([X[i, j], X[i + 1, j], None])
-        ys.extend([Y[i, j], Y[i + 1, j], None])
-        zs.extend([Z[i, j], Z[i + 1, j], None])
-
-    diff_x = (rid[:, 1:] != rid[:, :-1]) & valid[:, 1:] & valid[:, :-1]
-    ii, jj = np.where(diff_x)
-    for i, j in zip(ii, jj):
-        xs.extend([X[i, j], X[i, j + 1], None])
-        ys.extend([Y[i, j], Y[i, j + 1], None])
-        zs.extend([Z[i, j], Z[i, j + 1], None])
-
-    if len(xs) == 0:
-        return None
-    return go.Scatter3d(
-        x=xs, y=ys, z=zs,
-        mode="lines",
-        line=dict(color="rgba(0,0,0,0.85)", width=4),
-        name="Regime boundaries",
-        showlegend=False,
-        hoverinfo="skip",
-    )
-
 
 # ── 3-D surface figure ───────────────────────────────────────────────────────
 
@@ -374,23 +389,32 @@ def build_3d_figure(
     surface_Rs: np.ndarray,
     surface_Z_plot: np.ndarray,
     surface_regime_id,
+    surface_t_exp: np.ndarray,
+    surface_q_med: np.ndarray,
+    surface_D_med_Gpc: np.ndarray,
     color_on: bool,
     optical_on: bool,
-    model_day,
-    model_night,
-    i_det: int,
-    day_line_N_cols: np.ndarray,
-    day_line_t_max_s: float,
-    N_opt: float,
-    t_cad_opt_hr: float,
-    R_opt: float,
-    t_exp_opt_s: float,
-    N_ztf: float,
-    t_cad_ztf_hr: float,
-    R_ztf: float,
-    t_exp_ztf_s: float,
-    Rmax: float,
-    theme: str,
+    full_integral_on: bool = False,
+    off_axis_on: bool = False,
+    model_day=None,
+    model_night=None,
+    i_det: int = 1,
+    day_line_N_cols: np.ndarray = None,
+    day_line_t_max_s: float = 0.0,
+    N_opt: float = np.nan,
+    t_cad_opt_hr: float = np.nan,
+    R_opt: float = np.nan,
+    t_exp_opt_s: float = np.nan,
+    q_med_opt: float = np.nan,
+    D_med_Gpc_opt: float = np.nan,
+    N_ztf: float = np.nan,
+    t_cad_ztf_hr: float = np.nan,
+    R_ztf: float = np.nan,
+    t_exp_ztf_s: float = np.nan,
+    q_med_ztf: float = np.nan,
+    D_med_Gpc_ztf: float = np.nan,
+    Rmax: float = 1.0,
+    theme: str = "dark",
 ) -> go.Figure:
     dark = (theme or "dark") != "light"
     plotly_template = "plotly_dark" if dark else "plotly_white"
@@ -404,6 +428,7 @@ def build_3d_figure(
                 fig, model_day=model_day, i_det=i_det,
                 N_cols=day_line_N_cols, t_cad_max_s=day_line_t_max_s,
                 zmin_plot_log10=ZMIN_DISPLAY_LOG10, color_mode="regime", regime_colors=REGIME_HEX,
+                full_integral=full_integral_on, off_axis=off_axis_on,
             )
         else:
             zmax_color = float(np.nanmax(surface_Z_plot)) if np.any(np.isfinite(surface_Z_plot)) else 0.0
@@ -412,7 +437,16 @@ def build_3d_figure(
                 N_cols=day_line_N_cols, t_cad_max_s=day_line_t_max_s,
                 zmin_plot_log10=ZMIN_DISPLAY_LOG10, color_mode="height",
                 height_cmin=-2.0, height_cmax=zmax_color, height_colorscale="Plasma",
+                full_integral=full_integral_on, off_axis=off_axis_on,
             )
+
+    # Per-point customdata for hover: [t_exp_s, q_med, D_med_Gpc].
+    # Plotly's go.Surface looks up customdata at transposed indices [j, i, k] for the
+    # grid point at (row i, col j), so we must transpose (ny, nx, 3) → (nx, ny, 3).
+    surf_cd = np.stack(
+        [np.asarray(surface_t_exp), np.asarray(surface_q_med), np.asarray(surface_D_med_Gpc)],
+        axis=-1,
+    ).transpose(1, 0, 2)  # (ny, nx, 3) → (nx, ny, 3)
 
     # Main surface trace
     if color_on and surface_regime_id is not None:
@@ -429,6 +463,7 @@ def build_3d_figure(
             col = REGIME_HEX[k - 1]
             fig.add_trace(go.Surface(
                 x=_a2l(surface_Xs), y=_a2l(surface_Ys_h), z=_a2l(Z_k),
+                customdata=surf_cd,
                 colorscale=[[0, col], [1, col]],
                 cmin=0, cmax=1,
                 showscale=False,
@@ -453,6 +488,7 @@ def build_3d_figure(
         fig.add_trace(go.Surface(
             x=_a2l(surface_Xs), y=_a2l(surface_Ys_h), z=_a2l(surface_Rs),
             surfacecolor=_a2l(surface_Z_plot),
+            customdata=surf_cd,
             cmin=ZMIN_DISPLAY_LOG10,
             cmax=zmax_color,
             showscale=True,
@@ -469,9 +505,21 @@ def build_3d_figure(
             ),
         ))
 
+    def _marker_hover(label: str, t_exp: float, q_med: float, D_med_Gpc: float) -> str:
+        """Build standardized hover text for a special marker (optimum / ZTF)."""
+        texp_str   = f"<br>t<sub>exp</sub> = {t_exp:.3g} s"   if np.isfinite(t_exp)    else ""
+        qmed_str   = f"<br>q<sub>med</sub> = {q_med:.3g}"      if np.isfinite(q_med)    else ""
+        dmed_str   = f"<br>D<sub>med</sub> = {D_med_Gpc:.3g} Gpc" if np.isfinite(D_med_Gpc) else ""
+        return (
+            f"{label}"
+            f"<br>N<sub>exp</sub> = %{{x:.4g}}"
+            f"<br>t<sub>cad</sub> = %{{y:.4g}} hr"
+            f"{texp_str}{qmed_str}{dmed_str}"
+            f"<br>R<sub>det</sub> = %{{z:.4g}} yr ⁻¹<extra></extra>"
+        )
+
     # Markers: optimal (amber diamond) and ZTF (coral circle)
-    if np.isfinite(N_opt) and np.isfinite(t_cad_opt_hr) and np.isfinite(R_opt):
-        texp_str = f"<br>t<sub>exp</sub> = {t_exp_opt_s:.3g} sec" if np.isfinite(t_exp_opt_s) else ""
+    if N_opt is not None and R_opt is not None and np.isfinite(N_opt) and np.isfinite(t_cad_opt_hr) and np.isfinite(R_opt):
         fig.add_trace(go.Scatter3d(
             x=[N_opt], y=[t_cad_opt_hr], z=[R_opt],
             mode="markers+text",
@@ -479,16 +527,9 @@ def build_3d_figure(
             text=["Optimum"],
             textposition="top center",
             name="Optimum",
-            hovertemplate=(
-                "Grid optimum"
-                f"<br>N<sub>exp</sub> = %{{x:.4g}}"
-                f"<br>t<sub>cad</sub> = %{{y:.4g}} hr"
-                f"{texp_str}"
-                f"<br>R<sub>det</sub> = %{{z:.4g}} yr ⁻¹<extra></extra>"
-            ),
+            hovertemplate=_marker_hover("Grid optimum", t_exp_opt_s, q_med_opt, D_med_Gpc_opt),
         ))
-    if np.isfinite(R_ztf):
-        texp_str = f"<br>t<sub>exp</sub> = {t_exp_ztf_s:.3g} sec" if np.isfinite(t_exp_ztf_s) else ""
+    if R_ztf is not None and np.isfinite(R_ztf):
         fig.add_trace(go.Scatter3d(
             x=[N_ztf], y=[t_cad_ztf_hr], z=[R_ztf],
             mode="markers+text",
@@ -496,13 +537,7 @@ def build_3d_figure(
             text=["ZTF"],
             textposition="top center",
             name="ZTF (2 day cadence)",
-            hovertemplate=(
-                "ZTF strategy"
-                f"<br>N<sub>exp</sub> = %{{x:.4g}}"
-                f"<br>t<sub>cad</sub> = %{{y:.4g}} hr"
-                f"{texp_str}"
-                f"<br>R<sub>det</sub> = %{{z:.4g}} yr ⁻¹<extra></extra>"
-            ),
+            hovertemplate=_marker_hover("ZTF strategy", t_exp_ztf_s, q_med_ztf, D_med_Gpc_ztf),
         ))
 
     # Layout
@@ -563,6 +598,9 @@ def build_nslice_figure(
     N_sweep: np.ndarray,
     R_n: np.ndarray,
     rid_n: np.ndarray,
+    t_exp_n: np.ndarray,
+    q_med_n: np.ndarray,
+    D_med_Gpc_n: np.ndarray,
     N_opt: float,
     R_opt: float,
     R_ztf: float,
@@ -574,11 +612,6 @@ def build_nslice_figure(
     dark = (theme or "dark") != "light"
     accent = "#6d9eff" if dark else "#3b6fff"
     hl = _hover_label(dark)
-    N_HOVER = (
-        "N<sub>exp</sub> = %{x:.4g}<br>"
-        "R<sub>det</sub> = %{y:.4g} yr ⁻¹"
-        "<extra></extra>"
-    )
 
     fig = go.Figure()
 
@@ -589,16 +622,22 @@ def build_nslice_figure(
     if not np.any(valid):
         return _empty_figure("No valid data in N-slice", theme)
 
+    # customdata: [t_cad_hr (fixed), t_exp, q_med, D_med_Gpc]
+    t_cad_col = np.full(len(N_sweep), t_cad_opt_hr)
+    cd_n = np.stack([t_cad_col, t_exp_n, q_med_n, D_med_Gpc_n], axis=-1)
+
     # Main rate curve
     if color_on and np.any(np.isfinite(rid_n)):
         _draw_regime_segments_2d(fig, N_sweep[valid], R_n[valid], rid_n[valid],
-                                 line_width=2.5, hovertemplate=N_HOVER, hoverlabel=hl)
+                                 customdata=cd_n[valid],
+                                 line_width=2.5, hovertemplate=N_HOVER_FULL, hoverlabel=hl)
     else:
         _draw_single_line_2d(fig, N_sweep[valid], R_n[valid], color=accent, line_width=2.5,
-                             hovertemplate=N_HOVER, hoverlabel=hl)
+                             customdata=cd_n[valid],
+                             hovertemplate=N_HOVER_FULL, hoverlabel=hl)
 
     # ZTF reference line (horizontal dashed)
-    if np.isfinite(R_ztf):
+    if R_ztf is not None and np.isfinite(R_ztf):
         fig.add_hline(
             y=R_ztf,
             line=dict(color=CORAL, width=1.5, dash="dot"),
@@ -607,7 +646,7 @@ def build_nslice_figure(
         )
 
     # Vertical line at ZTF N
-    if np.isfinite(N_ztf):
+    if N_ztf is not None and np.isfinite(N_ztf):
         fig.add_vline(
             x=N_ztf,
             line=dict(color=CORAL, width=1.2, dash="dot"),
@@ -618,15 +657,22 @@ def build_nslice_figure(
             font=dict(size=10, color=CORAL), xanchor="center",
         )
 
-    # Optimal marker
-    if np.isfinite(N_opt) and np.isfinite(R_opt):
+    # Optimal marker — find customdata at closest N_sweep point
+    if N_opt is not None and R_opt is not None and np.isfinite(N_opt) and np.isfinite(R_opt):
+        opt_idx = int(np.argmin(np.abs(N_sweep - N_opt)))
+        opt_cd  = cd_n[opt_idx : opt_idx + 1]
         fig.add_trace(go.Scatter(
             x=[N_opt], y=[R_opt],
             mode="markers",
             marker=dict(size=12, color=AMBER, symbol="diamond", line=dict(width=1.5, color="white")),
             name="Optimum",
+            customdata=opt_cd,
             hovertemplate=(
                 "N<sub>exp</sub> = %{x:.4g}<br>"
+                "t<sub>cad</sub> = %{customdata[0]:.4g} hr<br>"
+                "t<sub>exp</sub> = %{customdata[1]:.3g} s<br>"
+                "q<sub>med</sub> = %{customdata[2]:.3g}<br>"
+                "D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>"
                 "R<sub>det</sub> = %{y:.4g} yr ⁻¹"
                 "<extra>Optimum</extra>"
             ),
@@ -673,9 +719,15 @@ def build_tslice_figure(
     t_cont_h: np.ndarray,
     R_cont: np.ndarray,
     rid_cont: np.ndarray,
+    t_exp_cont: np.ndarray,
+    q_med_cont: np.ndarray,
+    D_med_Gpc_cont: np.ndarray,
     t_disc_h: np.ndarray,
     R_disc: np.ndarray,
     rid_disc: np.ndarray,
+    t_exp_disc: np.ndarray,
+    q_med_disc: np.ndarray,
+    D_med_Gpc_disc: np.ndarray,
     gap_lo_h: float | None,
     gap_hi_h: float | None,
     t_opt_h: float,
@@ -691,11 +743,6 @@ def build_tslice_figure(
     accent = "#6d9eff" if dark else "#3b6fff"
     gap_col = "rgba(255,200,100,0.07)" if dark else "rgba(200,140,0,0.07)"
     hl = _hover_label(dark)
-    T_HOVER = (
-        "t<sub>cad</sub> = %{x:.4g} hr<br>"
-        "R<sub>det</sub> = %{y:.4g} yr ⁻¹"
-        "<extra></extra>"
-    )
 
     fig = go.Figure()
 
@@ -710,15 +757,24 @@ def build_tslice_figure(
 
     grid_col = "rgba(255,255,255,0.08)" if dark else "rgba(0,0,0,0.08)"
 
+    # customdata: [N_exp (fixed), t_exp, q_med, D_med_Gpc]
+    N_opt_col_c = np.full(len(t_cont_h), N_opt)
+    cd_cont = np.stack([N_opt_col_c, t_exp_cont, q_med_cont, D_med_Gpc_cont], axis=-1)
+
+    N_opt_col_d = np.full(len(t_disc_h), N_opt)
+    cd_disc = np.stack([N_opt_col_d, t_exp_disc, q_med_disc, D_med_Gpc_disc], axis=-1)
+
     # Continuous region
     if has_cont:
         valid_c = np.isfinite(R_cont) & (R_cont > 0)
         if color_on and np.any(np.isfinite(rid_cont)):
             _draw_regime_segments_2d(fig, t_cont_h[valid_c], R_cont[valid_c], rid_cont[valid_c],
-                                     line_width=2.5, hovertemplate=T_HOVER, hoverlabel=hl)
+                                     customdata=cd_cont[valid_c],
+                                     line_width=2.5, hovertemplate=T_HOVER_FULL, hoverlabel=hl)
         else:
             _draw_single_line_2d(fig, t_cont_h[valid_c], R_cont[valid_c], color=accent, line_width=2.5,
-                                 hovertemplate=T_HOVER, hoverlabel=hl)
+                                 customdata=cd_cont[valid_c],
+                                 hovertemplate=T_HOVER_FULL, hoverlabel=hl)
 
     # Gap region shading
     if optical_on and gap_lo_h is not None and gap_hi_h is not None and gap_lo_h < gap_hi_h:
@@ -734,8 +790,9 @@ def build_tslice_figure(
         valid_d = np.isfinite(R_disc) & (R_disc > 0)
         if color_on and np.any(np.isfinite(rid_disc)):
             _draw_regime_segments_2d(fig, t_disc_h[valid_d], R_disc[valid_d], rid_disc[valid_d],
+                                     customdata=cd_disc[valid_d],
                                      line_width=1.5, opacity=0.9,
-                                     hovertemplate=T_HOVER, hoverlabel=hl)
+                                     hovertemplate=T_HOVER_FULL, hoverlabel=hl)
             # Overlay markers
             for idx in np.where(valid_d)[0]:
                 rid_val = rid_disc[idx]
@@ -745,7 +802,8 @@ def build_tslice_figure(
                     mode="markers",
                     marker=dict(size=6, color=col, line=dict(width=1, color="white")),
                     showlegend=False,
-                    hovertemplate=T_HOVER,
+                    customdata=cd_disc[idx : idx + 1],
+                    hovertemplate=T_HOVER_FULL,
                     hoverlabel=hl,
                 ))
         else:
@@ -755,12 +813,13 @@ def build_tslice_figure(
                 marker=dict(size=5, color=accent, line=dict(width=1, color="white")),
                 line=dict(color=_hex_to_rgba("#6d9eff", 0.4), width=1.5),
                 showlegend=False,
-                hovertemplate=T_HOVER,
+                customdata=cd_disc[valid_d],
+                hovertemplate=T_HOVER_FULL,
                 hoverlabel=hl,
             ))
 
     # ZTF reference line (horizontal dashed)
-    if np.isfinite(R_ztf):
+    if R_ztf is not None and np.isfinite(R_ztf):
         fig.add_hline(
             y=R_ztf,
             line=dict(color=CORAL, width=1.5, dash="dot"),
@@ -769,21 +828,22 @@ def build_tslice_figure(
         )
 
     # ZTF cadence vertical marker
-    if np.isfinite(t_ztf_h):
+    if t_ztf_h is not None and np.isfinite(t_ztf_h):
         fig.add_vline(
             x=t_ztf_h,
             line=dict(color=CORAL, width=1.2, dash="dot"),
         )
 
     # Optimal t_cad vertical marker
-    if np.isfinite(t_opt_h):
+    if t_opt_h is not None and np.isfinite(t_opt_h):
         fig.add_vline(
             x=t_opt_h,
             line=dict(color=AMBER, width=1.8, dash="dash"),
         )
-        # Optimal point on slice (find R at t_opt_h)
+        # Optimal point on slice (find R and customdata at t_opt_h)
         all_t = np.concatenate([t_cont_h, t_disc_h]) if has_disc else t_cont_h
         all_R = np.concatenate([R_cont, R_disc]) if has_disc else R_cont
+        all_cd = np.concatenate([cd_cont, cd_disc], axis=0) if has_disc else cd_cont
         if len(all_t) > 0:
             idx_closest = np.nanargmin(np.abs(all_t - t_opt_h))
             R_at_opt = all_R[idx_closest]
@@ -794,8 +854,13 @@ def build_tslice_figure(
                     marker=dict(size=12, color=AMBER, symbol="diamond",
                                 line=dict(width=1.5, color="white")),
                     name="Optimum",
+                    customdata=all_cd[idx_closest : idx_closest + 1],
                     hovertemplate=(
+                        "N<sub>exp</sub> = %{customdata[0]:.4g}<br>"
                         "t<sub>cad</sub> = %{x:.4g} hr<br>"
+                        "t<sub>exp</sub> = %{customdata[1]:.3g} s<br>"
+                        "q<sub>med</sub> = %{customdata[2]:.3g}<br>"
+                        "D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>"
                         "R<sub>det</sub> = %{y:.4g} yr ⁻¹"
                         "<extra>Optimum</extra>"
                     ),
@@ -804,7 +869,7 @@ def build_tslice_figure(
 
     title_txt = (
         f"t-slice at N<sub>exp</sub> = {N_opt:.0f} fields"
-        if np.isfinite(N_opt) else "t-slice (optimal N<sub>exp</sub>)"
+        if N_opt is not None and np.isfinite(N_opt) else "t-slice (optimal N<sub>exp</sub>)"
     )
 
     fig.update_layout(
@@ -873,7 +938,7 @@ def build_metrics_bar(
 
     gain_str = "—"
     gain_cls = "gain"
-    if np.isfinite(R_opt) and np.isfinite(R_ztf) and R_ztf > 0:
+    if R_opt is not None and R_ztf is not None and np.isfinite(R_opt) and np.isfinite(R_ztf) and R_ztf > 0:
         gain = R_opt / R_ztf
         gain_str = f"×{gain:.2f}"
         gain_cls = "gain positive" if gain >= 1 else "gain negative"
@@ -886,13 +951,13 @@ def build_metrics_bar(
     opt_badges = [
         (_lbl(["R", html.Sub("det,opt")]),  f"{_fmt_r(R_opt)} /yr",                         "amber"),
         (_lbl(["t", html.Sub("cad,opt")]),  _fmt_t(t_cad_opt_s),                             "muted"),
-        (_lbl(["N", html.Sub("exp,opt")]),  f"{N_opt:.0f}" if np.isfinite(N_opt) else "—",   "muted"),
+        (_lbl(["N", html.Sub("exp,opt")]),  f"{N_opt:.0f}" if N_opt is not None and np.isfinite(N_opt) else "—",   "muted"),
         (_lbl(["t", html.Sub("exp,opt")]),  _fmt_t(t_exp_opt_s),                             "muted"),
     ]
     ztf_badges = [
         (_lbl(["R", html.Sub("det,ZTF")]),  f"{_fmt_r(R_ztf)} /yr",                           "coral"),
         (_lbl(["t", html.Sub("cad,ZTF")]),  _fmt_t(t_cad_ztf_s),                               "muted"),
-        (_lbl(["N", html.Sub("exp,ZTF")]),  f"{N_ztf:.0f}" if np.isfinite(N_ztf) else "—",     "muted"),
+        (_lbl(["N", html.Sub("exp,ZTF")]),  f"{N_ztf:.0f}" if N_ztf is not None and np.isfinite(N_ztf) else "—",     "muted"),
         (_lbl(["t", html.Sub("exp,ZTF")]),  _fmt_t(t_exp_ztf_s),                               "muted"),
     ]
     gain_badge = [

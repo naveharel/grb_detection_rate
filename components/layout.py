@@ -16,6 +16,8 @@ def create_layout() -> html.Div:
             # ── Persistent stores ────────────────────────────────────────────
             dcc.Store(id="theme-store", data="dark"),
             dcc.Store(id="view-store", data="3d"),
+            dcc.Store(id="preset-active-store", data=None),  # tracks active preset's parameter values
+            dcc.Store(id="surface-store", data=None),        # last computed surface (for CSV export)
             dcc.Store(id="_dom-theme-dummy"),
             dcc.Download(id="download-data"),
 
@@ -41,9 +43,18 @@ def create_layout() -> html.Div:
                                 className="preset-select",
                                 size="sm",
                             ),
-                            # Export button
-                            html.Button("⬇ CSV", id="export-btn", className="nav-btn",
-                                        n_clicks=0, title="Download surface data as CSV"),
+                            # Export button (dcc.Loading shows spinner while computing)
+                            dcc.Loading(
+                                id="export-loading",
+                                type="circle",
+                                color="var(--accent)",
+                                children=html.Button(
+                                    "⬇ CSV", id="export-btn", className="nav-btn",
+                                    n_clicks=0, title="Download surface data as CSV",
+                                ),
+                                style={"display": "inline-flex", "alignItems": "center"},
+                                overlay_style={"visibility": "visible"},
+                            ),
                             # View-mode segmented control
                             html.Div(
                                 className="view-controls",

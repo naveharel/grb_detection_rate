@@ -130,12 +130,46 @@ def register(app: dash.Dash) -> None:
         Output("toh_slider", "value", allow_duplicate=True),
         Output("omega_srv_slider", "value", allow_duplicate=True),
         Output("optical-switch", "value", allow_duplicate=True),
+        Output("preset-active-store", "data", allow_duplicate=True),
         Input("preset-select", "value"),
         prevent_initial_call=True,
     )
     def apply_preset(preset_key):
         if preset_key not in _PRESETS:
-            return (dash.no_update,) * 7
+            return (dash.no_update,) * 7 + (None,)
         p = _PRESETS[preset_key]
-        return p["i"], p["f_live"], p["A_log"], p["omega_exp"], p["t_oh"], p["omega_srv"], p.get("optical", dash.no_update)
+        store = {"key": preset_key, **p}
+        return p["i"], p["f_live"], p["A_log"], p["omega_exp"], p["t_oh"], p["omega_srv"], p.get("optical", dash.no_update), store
+
+    # ── Preset drift detector: reset dropdown when user changes a controlled param ──
+    @app.callback(
+        Output("preset-select", "value", allow_duplicate=True),
+        Output("preset-active-store", "data", allow_duplicate=True),
+        Input("i_slider", "value"),
+        Input("flive_slider", "value"),
+        Input("Alog_slider", "value"),
+        Input("omegaexp_slider", "value"),
+        Input("toh_slider", "value"),
+        Input("omega_srv_slider", "value"),
+        Input("optical-switch", "value"),
+        State("preset-active-store", "data"),
+        prevent_initial_call=True,
+    )
+    def reset_preset_on_drift(i, f_live, a_log, omega_exp, t_oh, omega_srv, optical, store):
+        if store is None:
+            return dash.no_update, dash.no_update
+        p = store
+        checks = [
+            (i,         p["i"]),
+            (f_live,    p["f_live"]),
+            (a_log,     p["A_log"]),
+            (omega_exp, p["omega_exp"]),
+            (t_oh,      p["t_oh"]),
+            (omega_srv, p["omega_srv"]),
+            (optical,   p.get("optical", optical)),
+        ]
+        for actual, expected in checks:
+            if actual != expected:
+                return "none", None
+        return dash.no_update, dash.no_update
 

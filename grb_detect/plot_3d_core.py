@@ -11,11 +11,22 @@ the interactive app:
 
 from __future__ import annotations
 
+import math
+from functools import lru_cache
+
 import numpy as np
 
 from .constants import DAY_S, DEG2_TO_SR
 from .detection_rate import DetectionRateModel
-from .params import AfterglowPhysicalParams, SurveyDesignParams, SurveyInstrumentParams, SurveyTelescopeParams
+from .params import (
+    AfterglowPhysicalParams,
+    CM_TO_GPC,
+    GPC_TO_CM,
+    MicrophysicsParams,
+    SurveyDesignParams,
+    SurveyInstrumentParams,
+    SurveyTelescopeParams,
+)
 
 # Minimum log10 R_det shown on the surface (rates below this are clipped)
 ZMIN_DISPLAY_LOG10: float = -2.0
@@ -25,17 +36,54 @@ _OPTICAL_GRID_FRAC_CONT: float = 0.45
 _OPTICAL_GRID_FRAC_GAP: float = 0.10
 
 
-def make_rate_model(
-    *,
+@lru_cache(maxsize=64)
+def _make_rate_model_cached(
     A_log: float,
     f_live: float,
     t_overhead_s: float,
     omega_exp_deg2: float,
-    design: SurveyDesignParams | None = None,
+    omega_survey_max_sr: float,
+    # Physics — all resolved to concrete floats (no None) by the public wrapper
+    p: float,
+    E_kiso_log10: float,
+    n0_log10: float,
+    epsilon_e_log10: float,
+    epsilon_B_log10: float,
+    theta_j_rad: float,
+    gamma0_log10: float,
+    nu_log10: float,
+    D_euc_gpc: float,
+    rho_grb_log10: float,
 ) -> DetectionRateModel:
-    """Construct a rate model from the survey parameters exposed in the UI."""
-    phys = AfterglowPhysicalParams()
+    """Cached model construction — called only when parameters change."""
+    p_val      = float(p)
+    E_kiso_val = 10.0 ** float(E_kiso_log10)
+    n0_val     = 10.0 ** float(n0_log10)
+    eps_e_val  = 10.0 ** float(epsilon_e_log10)
+    eps_B_val  = 10.0 ** float(epsilon_B_log10)
+    theta_j_val = float(theta_j_rad)
+    gamma0_val  = 10.0 ** float(gamma0_log10)
+    nu_val      = 10.0 ** float(nu_log10)
+    D_euc_val   = float(D_euc_gpc) * GPC_TO_CM
+    rho_val     = 10.0 ** float(rho_grb_log10)
 
+    # R_int_yr must be recomputed explicitly: the frozen dataclass bakes it in at class-load
+    # time from the default rho=260 and D_euc=1.63e28 and does NOT re-evaluate on construction.
+    D_euc_gpc_val = D_euc_val * CM_TO_GPC
+    R_int_val = (4.0 / 3.0) * math.pi * rho_val * D_euc_gpc_val ** 3
+
+    phys = AfterglowPhysicalParams(
+        p=p_val,
+        E_kiso_erg=E_kiso_val,
+        n0_cm3=n0_val,
+        theta_j_rad=theta_j_val,
+        gamma0=gamma0_val,
+        nu_hz=nu_val,
+        D_euc_cm=D_euc_val,
+        rho_grb_gpc3_yr=rho_val,
+        R_int_yr=R_int_val,
+    )
+    micro = MicrophysicsParams(epsilon_e=eps_e_val, epsilon_B=eps_B_val)
     telescope = SurveyTelescopeParams(
         omega_exp_sr=float(omega_exp_deg2) * DEG2_TO_SR,
         F_lim_ref_Jy=10 ** float(A_log),
@@ -44,9 +92,64 @@ def make_rate_model(
     )
     instrument = SurveyInstrumentParams(
         telescope=telescope,
-        design=design if design is not None else SurveyDesignParams(),
+        design=SurveyDesignParams(omega_survey_max_sr=float(omega_survey_max_sr)),
     )
-    return DetectionRateModel(phys=phys, instrument=instrument)
+    return DetectionRateModel(phys=phys, instrument=instrument, micro=micro)
+
+
+def make_rate_model(
+    *,
+    A_log: float,
+    f_live: float,
+    t_overhead_s: float,
+    omega_exp_deg2: float,
+    design: SurveyDesignParams | None = None,
+    # Physics kwargs — all optional; default to AfterglowPhysicalParams / MicrophysicsParams defaults
+    p: float | None = None,
+    E_kiso_log10: float | None = None,
+    n0_log10: float | None = None,
+    epsilon_e_log10: float | None = None,
+    epsilon_B_log10: float | None = None,
+    theta_j_rad: float | None = None,
+    gamma0_log10: float | None = None,
+    nu_log10: float | None = None,
+    D_euc_gpc: float | None = None,
+    rho_grb_log10: float | None = None,
+) -> DetectionRateModel:
+    """Construct a rate model from the survey parameters exposed in the UI.
+
+    Results are cached (up to 64 unique parameter combinations) so repeated
+    construction from the same slider values is free.
+    """
+    _d = AfterglowPhysicalParams()
+    _md = MicrophysicsParams()
+    _sd = SurveyDesignParams()
+
+    # Resolve optional physics to concrete defaults, then round to 8 sig-fig
+    # to ensure cache hits for slider values that only differ in floating-point noise.
+    def _r(x: float, n: int = 8) -> float:
+        return round(float(x), n)
+
+    omega_max = design.omega_survey_max_sr if design is not None else _sd.omega_survey_max_sr
+
+    return _make_rate_model_cached(
+        _r(A_log),
+        _r(f_live),
+        _r(t_overhead_s),
+        _r(omega_exp_deg2),
+        _r(omega_max, 12),
+        # physics
+        _r(p)              if p              is not None else _r(_d.p),
+        _r(E_kiso_log10)   if E_kiso_log10   is not None else _r(math.log10(_d.E_kiso_erg)),
+        _r(n0_log10)       if n0_log10       is not None else _r(math.log10(_d.n0_cm3)),
+        _r(epsilon_e_log10) if epsilon_e_log10 is not None else _r(math.log10(_md.epsilon_e)),
+        _r(epsilon_B_log10) if epsilon_B_log10 is not None else _r(math.log10(_md.epsilon_B)),
+        _r(theta_j_rad)    if theta_j_rad    is not None else _r(_d.theta_j_rad),
+        _r(gamma0_log10)   if gamma0_log10   is not None else _r(math.log10(_d.gamma0)),
+        _r(nu_log10)       if nu_log10       is not None else _r(math.log10(_d.nu_hz)),
+        _r(D_euc_gpc)      if D_euc_gpc      is not None else _r(_d.D_euc_cm * CM_TO_GPC),
+        _r(rho_grb_log10)  if rho_grb_log10  is not None else _r(math.log10(_d.rho_grb_gpc3_yr)),
+    )
 
 
 def _is_integer_day_multiple(t_s: np.ndarray, *, tol: float = 1e-12) -> np.ndarray:
@@ -414,10 +517,19 @@ def compute_surface(
         else:
             fill_regimes(model_day, np.ones_like(Z_raw, dtype=bool))
 
+    # ── Per-point extras: t_exp, median q, median D ──────────────────────────
+    # model_day and model_night share identical instrument parameters; use model_day.
+    # t_exp uses t_cad_eff (optical-corrected cadence) to match the rate computation.
+    t_exp_grid      = model_day.t_exp_s(N_exp, t_cad_eff)
+    q_med_grid, D_med_cm_grid = model_day.compute_medians(
+        i_det, N_exp, t_cad_eff, full_integral=full_integral,
+    )
+    D_med_Gpc_grid  = D_med_cm_grid / GPC_TO_CM
+
     # Return linear coordinates for true log axes
     X_lin = N_exp
     Y_lin = t_cad_s
-    return X_lin, Y_lin, Z_plot, Z_raw, regime_id
+    return X_lin, Y_lin, Z_plot, Z_raw, regime_id, t_exp_grid, q_med_grid, D_med_Gpc_grid
 
 
 def _warn_if_invalid(validity_fn, x0: float, y0: float) -> None:
@@ -446,6 +558,8 @@ def maximize_log_surface_iterative(
     *,
     optical_survey: bool,
     t_night_s: float,
+    full_integral: bool = False,
+    off_axis: bool = False,
     n0x: int = 180,
     n0y: int = 220,
     n_refine: int = 3,
@@ -462,6 +576,13 @@ def maximize_log_surface_iterative(
 
     Parameters
     ----------
+    full_integral : bool
+        If True, use ``rate_log10_full_integral`` instead of the dominant-term
+        approximation.  Must match the flag used in ``compute_surface`` so the
+        optimizer finds the maximum of the same surface that is displayed.
+    off_axis : bool
+        If True, subtract the on-axis contribution before optimising.  Must match
+        the flag used in ``compute_surface``.
     validity_fn : callable(N_arr, t_arr) -> bool_array, optional
         If provided, called with linear N_exp and t_cad_s arrays of the same shape as
         the evaluation grid.  Points where the function returns False are masked out
@@ -486,8 +607,8 @@ def maximize_log_surface_iterative(
             return None
 
         is_subday = t_eff < float(DAY_S)
-        Z_day = model_day.rate_log10(i_det=i_det, N_exp=N, t_cad_s=t_eff)
-        Z_night = model_night.rate_log10(i_det=i_det, N_exp=N, t_cad_s=t_eff)
+        Z_day   = _rate(model_day,   i_det, N, t_eff, full_integral, off_axis=off_axis)
+        Z_night = _rate(model_night, i_det, N, t_eff, full_integral, off_axis=off_axis)
         f_night = t_night_s / float(DAY_S)
         Z = np.where(is_subday, Z_night + np.log10(f_night), Z_day)
         Z = np.where(valid, Z, np.nan)
@@ -527,7 +648,7 @@ def maximize_log_surface_iterative(
         # Meshgrid over (t_days, N)
         N2, t2 = np.meshgrid(N, t_days)
 
-        Z = model_day.rate_log10(i_det=i_det, N_exp=N2, t_cad_s=t2)
+        Z = _rate(model_day, i_det, N2, t2, full_integral, off_axis=off_axis)
         if validity_fn is not None:
             Z = np.where(validity_fn(N2, t2), Z, np.nan)
         if not np.any(np.isfinite(Z)):
@@ -545,7 +666,7 @@ def maximize_log_surface_iterative(
             X, Y = np.meshgrid(xs, ys)
             N = 10 ** X
             t = 10 ** Y
-            Z = model_day.rate_log10(i_det=i_det, N_exp=N, t_cad_s=t)
+            Z = _rate(model_day, i_det, N, t, full_integral, off_axis=off_axis)
             Z = np.where(np.isfinite(Z), Z, np.nan)
             if validity_fn is not None:
                 Z = np.where(validity_fn(N, t), Z, np.nan)
@@ -615,4 +736,13 @@ def maximize_log_surface_iterative(
 
     x0, y0, z0 = max(candidates, key=lambda t: t[2])
     _warn_if_invalid(validity_fn, x0, y0)
-    return 10 ** x0, 10 ** y0, z0
+    N_ret = 10.0 ** x0
+    t_ret = 10.0 ** y0
+    # Snap to exact integer-day multiple if within floating-point tolerance.
+    # 10**log10(n*DAY_S) can underestimate by ~1e-11, causing t_ret < DAY_S for
+    # a 1-day cadence and triggering the wrong model dispatch in _eval_point.
+    ratio = t_ret / float(DAY_S)
+    nearest_n = round(ratio)
+    if nearest_n >= 1 and abs(ratio - nearest_n) < 1e-9:
+        t_ret = float(nearest_n) * float(DAY_S)
+    return N_ret, t_ret, z0
