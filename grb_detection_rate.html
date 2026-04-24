@@ -1,0 +1,2217 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GRB Detection Rate Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+/* ── Design tokens ────────────────────────────────────────────────────────── */
+:root {
+  --bg:#080c14; --surface-0:#0e1421; --surface-1:#141c2e;
+  --surface-2:#1c2640; --surface-3:#243050;
+  --border:rgba(255,255,255,0.07); --border-hover:rgba(255,255,255,0.14);
+  --text-hi:#f0f4ff; --text-mid:#8ba0c0; --text-lo:#445570;
+  --accent:#6d9eff; --accent-dim:rgba(109,158,255,0.10); --accent-glow:rgba(109,158,255,0.25);
+  --amber:#fbbf24; --coral:#f87171; --green:#34d399;
+  --font-ui:'Inter',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono','Cascadia Code','Fira Code',monospace;
+  --r-sm:5px; --r-md:8px; --r-lg:12px;
+  --shadow-panel:0 4px 24px rgba(0,0,0,0.50);
+  --t-fast:120ms ease; --t-mid:200ms ease;
+  --t-slow:250ms cubic-bezier(0.4,0,0.2,1);
+}
+[data-theme="light"] {
+  --bg:#f0f4f8; --surface-0:#ffffff; --surface-1:#f8fafc;
+  --surface-2:#eef2f7; --surface-3:#e4eaf4;
+  --border:rgba(0,0,0,0.08); --border-hover:rgba(0,0,0,0.16);
+  --text-hi:#0f172a; --text-mid:#4b6080; --text-lo:#94aec8;
+  --accent:#3b6fff; --accent-dim:rgba(59,111,255,0.08); --accent-glow:rgba(59,111,255,0.20);
+}
+/* ── Reset & base ─────────────────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:var(--font-ui);background:var(--bg);color:var(--text-hi);font-size:13px;line-height:1.5}
+button{cursor:pointer;border:none;background:none;font-family:inherit}
+select{font-family:inherit}
+input{font-family:inherit}
+/* ── App shell ───────────────────────────────────────────────────────────── */
+#app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+/* ── Navbar ──────────────────────────────────────────────────────────────── */
+.app-navbar{
+  display:flex;align-items:center;gap:10px;
+  min-height:52px;height:52px;flex-shrink:0;
+  background:var(--surface-1);border-bottom:1px solid var(--border);
+  box-shadow:var(--shadow-panel);padding:0 12px 0 8px;z-index:100;
+}
+.app-title{flex:1;font-size:14px;font-weight:600;letter-spacing:0.4px;color:var(--text-hi);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.navbar-right{display:flex;gap:8px;flex-shrink:0;align-items:center}
+.nav-btn,.icon-btn{
+  display:inline-flex;align-items:center;justify-content:center;
+  height:30px;padding:0 10px;
+  border:1px solid var(--border);border-radius:var(--r-sm);
+  background:var(--surface-2);color:var(--text-mid);
+  font-family:var(--font-ui);font-size:12px;font-weight:500;
+  cursor:pointer;white-space:nowrap;outline:none;user-select:none;
+  transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast);
+}
+.nav-btn:hover,.icon-btn:hover{background:var(--surface-3);color:var(--text-hi);border-color:var(--border-hover)}
+.preset-select{
+  height:30px;padding:3px 8px;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);
+  color:var(--text-mid);font-size:12px;font-weight:500;
+  transition:border-color var(--t-fast),color var(--t-fast);
+}
+.preset-select:hover{color:var(--text-hi);border-color:var(--border-hover)}
+.preset-select:focus{border-color:var(--accent);outline:none}
+.view-controls{display:flex;height:30px;border:1px solid var(--border);border-radius:var(--r-md);background:var(--surface-2);overflow:hidden}
+.view-btn{
+  height:30px;padding:0 10px;border-right:1px solid var(--border);
+  background:transparent;color:var(--text-mid);
+  font-family:var(--font-ui);font-size:12px;font-weight:500;
+  cursor:pointer;outline:none;user-select:none;white-space:nowrap;
+  transition:background var(--t-fast),color var(--t-fast);
+}
+.view-btn:last-child{border-right:none}
+.view-btn:hover{background:var(--surface-3);color:var(--text-hi)}
+.view-btn.active{background:var(--accent);color:#fff;font-weight:600}
+/* ── Metrics strip ───────────────────────────────────────────────────────── */
+.metrics-strip{
+  display:flex;align-items:center;
+  min-height:36px;height:36px;flex-shrink:0;
+  padding:0 16px;
+  background:var(--surface-0);border-bottom:1px solid var(--border);
+  overflow-x:auto;overflow-y:hidden;white-space:nowrap;
+}
+.metrics-strip::-webkit-scrollbar{display:none}
+.metric-badge{display:flex;align-items:baseline;gap:5px;padding:0 12px;white-space:nowrap}
+.metric-sep{width:1px;height:16px;background:var(--border);flex-shrink:0}
+.metric-sep-prominent{width:1px;height:26px;background:var(--text-lo);flex-shrink:0}
+.metric-label{font-family:var(--font-mono);font-size:10px;font-weight:500;letter-spacing:0.4px;color:var(--text-lo)}
+.metric-value{font-family:var(--font-mono);font-size:13px;font-weight:500;color:var(--text-mid)}
+.metric-amber{color:var(--amber)}
+.metric-coral{color:var(--coral)}
+.metric-muted{color:var(--text-mid)}
+.metric-gain{color:var(--text-mid)}
+.metric-gain.positive{color:var(--green)}
+.metric-gain.negative{color:var(--coral)}
+/* ── Body area ───────────────────────────────────────────────────────────── */
+.app-body{display:flex;flex:1;min-height:0;overflow:hidden}
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+.app-sidebar{
+  width:0;flex-shrink:0;overflow:hidden;
+  background:var(--surface-1);border-right:1px solid var(--border);
+  z-index:10;transition:width var(--t-slow);
+}
+.app-sidebar.open{width:300px}
+.sidebar-inner{width:300px;height:100%;overflow-y:auto;overflow-x:hidden;padding:8px 0 16px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.sidebar-inner::-webkit-scrollbar{width:10px}
+.sidebar-inner::-webkit-scrollbar-track{background:transparent}
+.sidebar-inner::-webkit-scrollbar-thumb{background:var(--border);border-radius:6px}
+.sidebar-inner::-webkit-scrollbar-thumb:hover{background:var(--border-hover)}
+/* ── Accordion ───────────────────────────────────────────────────────────── */
+details.acc-item{border-bottom:1px solid var(--border)}
+details.acc-item summary{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 14px;cursor:pointer;list-style:none;
+  font-size:10px;font-weight:600;letter-spacing:1.2px;text-transform:uppercase;
+  color:var(--text-lo);transition:color var(--t-fast),background var(--t-fast);
+  user-select:none;
+}
+details.acc-item summary::-webkit-details-marker{display:none}
+details.acc-item summary::after{content:"›";font-size:16px;line-height:1;transition:transform var(--t-fast)}
+details.acc-item[open] summary{color:var(--accent);background:var(--accent-dim)}
+details.acc-item[open] summary::after{transform:rotate(90deg)}
+.acc-body{padding:8px 14px 12px}
+/* ── Parameter blocks ────────────────────────────────────────────────────── */
+.param-block{margin-bottom:10px}
+.param-row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+.param-label{font-size:11px;font-weight:500;color:var(--text-mid);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:195px}
+.param-input{
+  width:72px;min-width:72px;padding:3px 4px;
+  border:1px solid var(--border);border-radius:var(--r-sm);
+  background:var(--surface-2);color:var(--text-hi);
+  font-family:var(--font-mono);font-size:12px;text-align:center;
+  transition:border-color var(--t-fast),box-shadow var(--t-fast);
+}
+.param-input:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-glow);outline:none}
+/* ── Sliders ─────────────────────────────────────────────────────────────── */
+/* Dash-parity: filled accent track up to --value-pct, dots at each mark,
+   labels below. Padding mirrors assets/style.css .param-slider rule:
+   8px top + 16px bottom, 16px horizontal so edge marks aren't clipped. */
+.param-slider-wrap{position:relative;padding:8px 16px 16px}
+input[type=range].param-slider{
+  -webkit-appearance:none;appearance:none;
+  width:100%;height:3px;display:block;
+  background:linear-gradient(to right,
+    var(--accent) 0%,
+    var(--accent) var(--value-pct,0%),
+    var(--surface-3) var(--value-pct,0%),
+    var(--surface-3) 100%);
+  border-radius:2px;outline:none;cursor:pointer;
+}
+input[type=range].param-slider::-webkit-slider-thumb{
+  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+  background:var(--accent);border:2px solid var(--surface-1);
+  box-shadow:0 0 0 2px var(--accent-glow);cursor:pointer;
+  transition:box-shadow var(--t-fast);
+}
+input[type=range].param-slider::-webkit-slider-thumb:hover{box-shadow:0 0 0 4px var(--accent-glow)}
+input[type=range].param-slider::-moz-range-thumb{
+  width:14px;height:14px;border-radius:50%;
+  background:var(--accent);border:2px solid var(--surface-1);cursor:pointer;
+}
+input[type=range].param-slider::-moz-range-progress{background:var(--accent);height:3px;border-radius:2px}
+input[type=range].param-slider::-moz-range-track{background:var(--surface-3);height:3px;border-radius:2px}
+/* Tick dots overlaid on the track (mirrors rc-slider-dot at each mark). */
+.slider-dots{position:absolute;left:16px;right:16px;top:8px;height:3px;pointer-events:none}
+.slider-dots span{
+  position:absolute;top:50%;transform:translate(-50%,-50%);
+  width:6px;height:6px;border-radius:50%;
+  background:var(--surface-2);border:1px solid var(--surface-3);
+}
+.slider-dots span.active{border-color:var(--accent)}
+/* Slider mark labels — mimic Dash's rc-slider-mark layout */
+.slider-marks{position:relative;height:14px;margin-top:2px}
+.slider-marks span{
+  position:absolute;top:0;transform:translateX(-50%);
+  font-family:var(--font-mono);font-size:10px;color:var(--text-mid);
+  white-space:nowrap;pointer-events:none;
+}
+.slider-mark-default{font-weight:700 !important;font-size:11px !important;color:var(--text-hi) !important}
+/* ── Switches ────────────────────────────────────────────────────────────── */
+.param-switch-row{display:flex;align-items:center;gap:8px;margin:6px 0}
+.toggle-switch{position:relative;display:inline-block;width:34px;height:18px;flex-shrink:0}
+.toggle-switch input{opacity:0;width:0;height:0}
+.toggle-track{
+  position:absolute;inset:0;border-radius:9px;
+  background:var(--surface-3);border:1px solid var(--border-hover);
+  transition:background var(--t-fast);cursor:pointer;
+}
+.toggle-thumb{
+  position:absolute;top:2px;left:2px;
+  width:12px;height:12px;border-radius:50%;
+  background:var(--text-lo);
+  transition:transform var(--t-fast),background var(--t-fast);
+}
+.toggle-switch input:checked + .toggle-track{background:var(--accent);border-color:var(--accent)}
+.toggle-switch input:checked + .toggle-track .toggle-thumb{transform:translateX(16px);background:#fff}
+.switch-label{font-size:12px;color:var(--text-mid);cursor:pointer}
+.toggle-hint{font-size:11px;color:var(--text-lo);line-height:1.45;margin-top:2px;margin-bottom:6px}
+/* ── Group labels ────────────────────────────────────────────────────────── */
+.param-group-label{font-size:10px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-lo);margin:6px 0 2px}
+/* ── Derived value display ───────────────────────────────────────────────── */
+.grb-derived-row{margin-top:4px;gap:6px;flex-wrap:wrap}
+.grb-derived-val{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:2px 6px;white-space:nowrap}
+/* ── Main area ───────────────────────────────────────────────────────────── */
+.app-main{display:flex;flex-direction:column;flex:1;min-width:0;overflow:hidden;background:var(--bg)}
+.view-panel{flex:1;min-height:0;display:flex;flex-direction:column}
+.view-panel.hidden{display:none}
+.plot-div{flex:1;min-height:0}
+/* ── Status bar ──────────────────────────────────────────────────────────── */
+.status-bar{flex-shrink:0;font-family:var(--font-mono);font-size:11px;color:var(--text-lo);padding:5px 16px;border-top:1px solid var(--border);background:var(--surface-0)}
+.status-bar.empty{padding:0;border-top:none}
+/* ── Spinner ─────────────────────────────────────────────────────────────── */
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{display:inline-block;width:10px;height:10px;border:2px solid var(--accent-dim);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;margin-right:6px;vertical-align:middle}
+/* ── Derived info displays (sidebar constraints / strategy) ──────────────── */
+.derived-info{display:inline-block;font-family:var(--font-mono);font-size:11px;color:var(--text-mid);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:3px 8px;margin:0 0 8px}
+.derived-info.warning{color:var(--amber);border-color:rgba(251,191,36,0.30);background:rgba(251,191,36,0.06)}
+/* ── Slice position controls (below N-slice / t-slice graphs) ───────────── */
+.slice-ctrl{display:flex;align-items:center;gap:10px;padding:6px 20px 12px 20px;border-top:1px solid var(--border);background:var(--surface-0);flex-shrink:0}
+.slice-ctrl-label{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);white-space:nowrap;min-width:80px;flex-shrink:0}
+.slice-pos-slider{flex:1;display:flex;flex-direction:column;gap:2px}
+.slice-pos-slider input[type=range]{width:100%;margin:0}
+.slice-pos-marks{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-lo);pointer-events:none}
+.slice-pos-value{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);min-width:70px;text-align:right;flex-shrink:0}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- ── Navbar ────────────────────────────────────────────────────────────── -->
+<nav class="app-navbar">
+  <button class="icon-btn" id="sidebar-toggle" title="Toggle sidebar">☰</button>
+  <span class="app-title">GRB Detection Rate Explorer</span>
+  <div class="navbar-right">
+    <select class="preset-select" id="preset-select" title="Load preset parameters">
+      <option value="none" disabled selected>— Presets —</option>
+      <option value="ztf">ZTF</option>
+      <option value="rubin">Rubin LSST</option>
+    </select>
+    <button class="nav-btn" id="export-btn" title="Download surface as CSV">⬇ CSV</button>
+    <div class="view-controls">
+      <button class="view-btn active" data-tab="3d" title="3D surface view">3D</button>
+      <button class="view-btn" data-tab="nslice" title="R vs N_exp at fixed t_cad">N<sub>exp</sub> slice</button>
+      <button class="view-btn" data-tab="tslice" title="R vs t_cad at fixed N_exp">t<sub>cad</sub> slice</button>
+    </div>
+    <button class="nav-btn" id="theme-toggle">☾ Dark</button>
+  </div>
+</nav>
+
+<!-- ── Metrics strip ─────────────────────────────────────────────────────── -->
+<div class="metrics-strip" id="metrics-strip">
+  <div class="metric-badge"><span class="metric-label">R<sub>det,opt</sub></span><span class="metric-value metric-amber" id="m-R-opt">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-badge"><span class="metric-label">t<sub>cad,opt</sub></span><span class="metric-value metric-muted" id="m-tcad-opt">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-badge"><span class="metric-label">N<sub>exp,opt</sub></span><span class="metric-value metric-muted" id="m-N-opt">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-badge"><span class="metric-label">t<sub>exp,opt</sub></span><span class="metric-value metric-muted" id="m-texp-opt">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-sep-prominent"></div>
+  <div class="metric-badge"><span class="metric-label">R<sub>det,ZTF</sub></span><span class="metric-value metric-coral" id="m-R-ztf">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-badge"><span class="metric-label">t<sub>cad,ZTF</sub></span><span class="metric-value metric-muted" id="m-tcad-ztf">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-badge"><span class="metric-label">N<sub>exp,ZTF</sub></span><span class="metric-value metric-muted" id="m-N-ztf">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-badge"><span class="metric-label">t<sub>exp,ZTF</sub></span><span class="metric-value metric-muted" id="m-texp-ztf">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-sep-prominent"></div>
+  <div class="metric-badge"><span class="metric-label">Gain</span><span class="metric-value metric-gain" id="m-gain">—</span></div>
+</div>
+
+<!-- ── App body ───────────────────────────────────────────────────────────── -->
+<div class="app-body">
+
+<!-- ── Sidebar ───────────────────────────────────────────────────────────── -->
+<aside class="app-sidebar open" id="app-sidebar">
+<div class="sidebar-inner">
+
+<!-- Strategy -->
+<details class="acc-item" open>
+<summary>Strategy</summary>
+<div class="acc-body">
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="i_slider" title="Number of detections required per GRB to count as a detection event">i</label>
+      <input type="number" id="i_input" class="param-input" min="2" max="100" step="1" value="10">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="i_slider" class="param-slider" min="2" max="100" step="1" value="10">
+      <div class="slider-marks">
+        <span style="left:0%">2</span>
+        <span class="slider-mark-default" style="left:8.163%">10</span>
+        <span style="left:28.571%">30</span>
+        <span style="left:100%">100</span>
+      </div>
+    </div>
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="flive_slider" title="Fraction of total time the telescope is actually observing (0=never, 1=always)">f<sub>live</sub></label>
+      <input type="number" id="flive_input" class="param-input" min="0.01" max="1" step="0.01" value="0.2">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="flive_slider" class="param-slider" min="0.01" max="1" step="0.01" value="0.2">
+      <div class="slider-marks">
+        <span style="left:0%">0.01</span>
+        <span class="slider-mark-default" style="left:19.192%">0.2</span>
+        <span style="left:49.495%">0.5</span>
+        <span style="left:100%">1</span>
+      </div>
+    </div>
+  </div>
+</div>
+</details>
+
+<!-- Instrument -->
+<details class="acc-item" open>
+<summary>Instrument</summary>
+<div class="acc-body">
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="Alog_slider" title="log₁₀ of reference limiting flux in Jansky at t_exp_ref = 30 s">log A [Jy]</label>
+      <input type="number" id="Alog_input" class="param-input" min="-12" max="-2" step="0.01" value="-4.68">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="Alog_slider" class="param-slider" min="-12" max="-2" step="0.01" value="-4.68">
+      <div class="slider-marks">
+        <span style="left:0%">-12</span>
+        <span style="left:40%">-8</span>
+        <span class="slider-mark-default" style="left:73.2%">-4.68</span>
+        <span style="left:100%">-2</span>
+      </div>
+    </div>
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="omegaexp_slider" title="Single-exposure field of view of the instrument in square degrees">Ω<sub>exp</sub> [deg²]</label>
+      <input type="number" id="omegaexp_input" class="param-input" min="1" max="200" step="1" value="47">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="omegaexp_slider" class="param-slider" min="1" max="200" step="1" value="47">
+      <div class="slider-marks">
+        <span style="left:0%">1</span>
+        <span class="slider-mark-default" style="left:23.116%">47</span>
+        <span style="left:49.749%">100</span>
+        <span style="left:100%">200</span>
+      </div>
+    </div>
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="toh_slider" title="Per-exposure overhead (readout, slew, settle) in seconds">t<sub>OH</sub> [sec]</label>
+      <input type="number" id="toh_input" class="param-input" min="0" max="30" step="0.5" value="0">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="toh_slider" class="param-slider" min="0" max="30" step="0.5" value="0">
+      <div class="slider-marks">
+        <span class="slider-mark-default" style="left:0%">0</span>
+        <span style="left:50%">15</span>
+        <span style="left:100%">30</span>
+      </div>
+    </div>
+  </div>
+</div>
+</details>
+
+<!-- Constraints -->
+<details class="acc-item" open>
+<summary>Constraints</summary>
+<div class="acc-body">
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="omega_srv_slider" title="Maximum surveyable sky area per cadence cycle in square degrees">Ω<sub>srv,max</sub> [deg²]</label>
+      <input type="number" id="omega_srv_input" class="param-input" min="100" max="41253" step="100" value="27500">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="omega_srv_slider" class="param-slider" min="100" max="41253" step="100" value="27500">
+      <div class="slider-marks">
+        <span style="left:0%">100</span>
+        <span style="left:24.057%">10k</span>
+        <span class="slider-mark-default" style="left:66.649%">27.5k</span>
+        <span style="left:100%">41k</span>
+      </div>
+    </div>
+    <div id="nexpmax-display"></div>
+  </div>
+  <div class="param-block" id="tnight-block" style="display:none">
+    <div class="param-row">
+      <label class="param-label" for="tnight_slider" title="Length of the observable astronomical night in hours">t<sub>night</sub> [hr]</label>
+      <input type="number" id="tnight_input" class="param-input" min="4" max="14" step="0.25" value="10">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="tnight_slider" class="param-slider" min="4" max="14" step="0.25" value="10">
+      <div class="slider-marks">
+        <span style="left:0%">4</span>
+        <span style="left:20%">6</span>
+        <span style="left:40%">8</span>
+        <span class="slider-mark-default" style="left:60%">10</span>
+        <span style="left:80%">12</span>
+        <span style="left:100%">14</span>
+      </div>
+    </div>
+    <div id="subnight-limit-display"></div>
+  </div>
+</div>
+</details>
+
+<!-- Physics -->
+<details class="acc-item">
+<summary>Parameters</summary>
+<div class="acc-body">
+  <div class="param-group-label">Physical model</div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="p_slider" title="Electron power-law index (must be > 2). Exponentially amplified in flux; strongly affects spectral slope and all detection ranges.">p</label>
+      <input type="number" id="p_input" class="param-input" min="2.01" max="3" step="0.01" value="2.5">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="p_slider" class="param-slider" min="2.01" max="3" step="0.01" value="2.5">
+      <div class="slider-marks">
+        <span style="left:0%">2</span>
+        <span class="slider-mark-default" style="left:49.495%">2.5</span>
+        <span style="left:100%">3</span>
+      </div>
+    </div>
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="nu_log_slider" title="log₁₀ of observing frequency in Hz. Optical/near-IR window: 10^14.3 Hz (~1 µm, J-band) to 10^15.1 Hz (~80 nm, near-UV). Default 5×10¹⁴ Hz = optical V-band (550 nm).">log ν [Hz]</label>
+      <input type="number" id="nu_log_input" class="param-input" min="14.3" max="15.1" step="0.01" value="14.7">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="nu_log_slider" class="param-slider" min="14.3" max="15.1" step="0.01" value="14.7">
+      <div class="slider-marks">
+        <span style="left:0%">14.3</span>
+        <span class="slider-mark-default" style="left:50%">14.7</span>
+        <span style="left:100%">15.1</span>
+      </div>
+    </div>
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="Ekiso_log_slider" title="log₁₀ of isotropic-equivalent kinetic energy in erg. Scales flux as E^{(p+3)/4} and deceleration time as E^{1/3}.">log E<sub>k,iso</sub> [erg]</label>
+      <input type="number" id="Ekiso_log_input" class="param-input" min="51" max="55" step="0.1" value="53">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="Ekiso_log_slider" class="param-slider" min="51" max="55" step="0.1" value="53">
+      <div class="slider-marks">
+        <span style="left:0%">51</span>
+        <span style="left:25%">52</span>
+        <span class="slider-mark-default" style="left:50%">53</span>
+        <span style="left:75%">54</span>
+        <span style="left:100%">55</span>
+      </div>
+    </div>
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="n0_log_slider" title="log₁₀ of ISM number density in cm⁻³. Affects flux (∝ n^{1/2}) and deceleration time (∝ n^{-1/3}).">log n<sub>0</sub> [cm⁻³]</label>
+      <input type="number" id="n0_log_input" class="param-input" min="-3" max="2" step="0.1" value="0">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="n0_log_slider" class="param-slider" min="-3" max="2" step="0.1" value="0">
+      <div class="slider-marks">
+        <span style="left:0%">-3</span>
+        <span style="left:20%">-2</span>
+        <span style="left:40%">-1</span>
+        <span class="slider-mark-default" style="left:60%">0</span>
+        <span style="left:80%">1</span>
+        <span style="left:100%">2</span>
+      </div>
+    </div>
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="gamma0_log_slider" title="log₁₀ of initial bulk Lorentz factor. Affects deceleration time (∝ Γ₀^{-8/3}) and the on-axis beaming cone angle.">log Γ<sub>0</sub></label>
+      <input type="number" id="gamma0_log_input" class="param-input" min="2" max="3.5" step="0.05" value="2.5">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="gamma0_log_slider" class="param-slider" min="2" max="3.5" step="0.05" value="2.5">
+      <div class="slider-marks">
+        <span style="left:0%">2</span>
+        <span class="slider-mark-default" style="left:33.333%">2.5</span>
+        <span style="left:66.667%">3</span>
+        <span style="left:100%">3.5</span>
+      </div>
+    </div>
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="thetaj_slider" title="Jet half-opening angle in radians. Sets the jet-break time and the beaming fraction f_b = θ_j²/2.">θ<sub>j</sub> [rad]</label>
+      <input type="number" id="thetaj_input" class="param-input" min="0.01" max="0.5" step="0.01" value="0.1">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="thetaj_slider" class="param-slider" min="0.01" max="0.5" step="0.01" value="0.1">
+      <div class="slider-marks">
+        <span style="left:0%">0.01</span>
+        <span class="slider-mark-default" style="left:18.367%">0.1</span>
+        <span style="left:59.184%">0.3</span>
+        <span style="left:100%">0.5</span>
+      </div>
+    </div>
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="epse_slider" title="log₁₀ of electron energy fraction. Enters flux as (ε_e·(p−2)/(p−1))^{p−1}.">log ε<sub>e</sub></label>
+      <input type="number" id="epse_input" class="param-input" min="-2" max="-0.3" step="0.05" value="-1">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="epse_slider" class="param-slider" min="-2" max="-0.3" step="0.05" value="-1">
+      <div class="slider-marks">
+        <span style="left:0%">-2</span>
+        <span class="slider-mark-default" style="left:58.824%">-1</span>
+        <span style="left:100%">-0.3</span>
+      </div>
+    </div>
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="epsB_slider" title="log₁₀ of magnetic energy fraction. Enters flux as ε_B^{(p+1)/4}.">log ε<sub>B</sub></label>
+      <input type="number" id="epsB_input" class="param-input" min="-3" max="-1" step="0.05" value="-2">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="epsB_slider" class="param-slider" min="-3" max="-1" step="0.05" value="-2">
+      <div class="slider-marks">
+        <span style="left:0%">-3</span>
+        <span class="slider-mark-default" style="left:50%">-2</span>
+        <span style="left:100%">-1</span>
+      </div>
+    </div>
+  </div>
+  <div class="param-group-label" style="margin-top:10px">Cosmological model</div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="deuc_slider" title="Euclidean calibration distance in Gpc. Sets the volume for the rate integral. Default 5.28 Gpc ≈ z = 2 in flat ΛCDM.">D<sub>Euc</sub> [Gpc]</label>
+      <input type="number" id="deuc_input" class="param-input" min="1" max="12" step="0.01" value="5.28">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="deuc_slider" class="param-slider" min="1" max="12" step="0.01" value="5.28">
+      <div class="slider-marks">
+        <span style="left:0%">1</span>
+        <span class="slider-mark-default" style="left:38.909%">5.28</span>
+        <span style="left:63.636%">8</span>
+        <span style="left:100%">12</span>
+      </div>
+    </div>
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="rho_grb_log_slider" title="log₁₀ of GRB volumetric rate density. Scales the total detection rate linearly.">log ℛ [Gpc⁻³ yr⁻¹]</label>
+      <input type="number" id="rho_grb_log_input" class="param-input" min="1" max="3.3" step="0.005" value="2.415">
+    </div>
+    <div class="param-slider-wrap">
+      <input type="range" id="rho_grb_log_slider" class="param-slider" min="1" max="3.3" step="0.005" value="2.415">
+      <div class="slider-marks">
+        <span style="left:0%">10</span>
+        <span style="left:43.478%">100</span>
+        <span class="slider-mark-default" style="left:61.522%">260</span>
+        <span style="left:86.957%">1k</span>
+        <span style="left:100%">2k</span>
+      </div>
+    </div>
+  </div>
+  <div class="param-row grb-derived-row">
+    <span id="grb-ntotal-display" class="grb-derived-val">R<sub>int</sub> = —</span>
+    <span id="grb-ntoward-display" class="grb-derived-val">f<sub>b</sub>R<sub>int</sub> = —</span>
+  </div>
+</div>
+</details>
+
+<!-- Settings -->
+<details class="acc-item">
+<summary>Settings</summary>
+<div class="acc-body">
+  <div class="param-switch-row">
+    <label class="toggle-switch" for="optical-switch">
+      <input type="checkbox" id="optical-switch">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    </label>
+    <span class="switch-label" onclick="document.getElementById('optical-switch').click()">Optical survey mode</span>
+  </div>
+  <p class="toggle-hint">Requires ≥ i detections in one night or a single detection each night. Multi-day effective live fraction is reduced by f<sub>night</sub> = t<sub>night</sub> / 24 h; the t<sub>night</sub> slider becomes active.</p>
+  <div class="param-switch-row">
+    <label class="toggle-switch" for="toh-approx-switch">
+      <input type="checkbox" id="toh-approx-switch">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    </label>
+    <span class="switch-label" onclick="document.getElementById('toh-approx-switch').click()">t<sub>OH</sub> approximation</span>
+  </div>
+  <p class="toggle-hint">Uses the naive t<sub>exp</sub> = f<sub>live</sub>·t<sub>cad</sub>/N<sub>exp</sub> equation (ignoring t<sub>OH</sub> in the exposure formula) for fully analytic optimal strategies, while still enforcing f<sub>live</sub>·t<sub>cad</sub>/N<sub>exp</sub> &gt; t<sub>OH</sub> as the validity boundary.</p>
+  <div class="param-switch-row">
+    <label class="toggle-switch" for="regime-color-switch">
+      <input type="checkbox" id="regime-color-switch">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    </label>
+    <span class="switch-label" onclick="document.getElementById('regime-color-switch').click()">Color by detection regime</span>
+  </div>
+  <p class="toggle-hint">Colors the surface by analytical detection regime. Warm colors (red→amber) indicate flux-limited (D<sub>Euc</sub>) regimes; cool colors (blue→teal) indicate cadence-limited (D<sub>i</sub>) regimes; gray indicates the singly-limited (D<sub>dec</sub>) regime. More vibrant colors correspond to higher detection ranges.</p>
+  <div class="param-switch-row">
+    <label class="toggle-switch" for="full-integral-switch">
+      <input type="checkbox" id="full-integral-switch">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    </label>
+    <span class="switch-label" onclick="document.getElementById('full-integral-switch').click()">Full integral mode</span>
+  </div>
+  <p class="toggle-hint">Computes R<sub>det</sub> using the exact integral over all viewing angles q ∈ [0, q<sub>nr</sub>] (thesis Eq. 39), instead of the dominant-term approximation. Adds the tail contribution beyond q<sub>Euc</sub> (flux-limited) or q<sub>i</sub> (cadence-limited). Slower but more accurate, especially near range boundaries.</p>
+  <div class="param-switch-row">
+    <label class="toggle-switch" for="off-axis-switch">
+      <input type="checkbox" id="off-axis-switch">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    </label>
+    <span class="switch-label" onclick="document.getElementById('off-axis-switch').click()">Off-axis detections only</span>
+  </div>
+  <p class="toggle-hint">Show only GRBs detected from outside the relativistic beaming cone (viewing angle q &gt; q<sub>dec</sub>). Subtracts the on-axis contribution (q &lt; q<sub>dec</sub>) from the rate integral. Regions where no off-axis detection is possible are masked out.</p>
+</div>
+</details>
+
+</div><!-- sidebar-inner -->
+</aside><!-- app-sidebar -->
+
+<!-- ── Main area ─────────────────────────────────────────────────────────── -->
+<main class="app-main">
+  <div id="panel-3d" class="view-panel">
+    <div id="plot-3d" class="plot-div"></div>
+  </div>
+  <div id="panel-nslice" class="view-panel hidden">
+    <div id="plot-nslice" class="plot-div"></div>
+    <div class="slice-ctrl">
+      <span class="slice-ctrl-label">Fixed t<sub>cad</sub></span>
+      <div class="slice-pos-slider">
+        <input type="range" id="nslice-tfix-slider" min="2" max="8" step="0.05" value="4.937">
+        <div class="slice-pos-marks">
+          <span>100 s</span><span>1 hr</span><span>1 day</span><span>1 wk</span><span>1 yr</span>
+        </div>
+      </div>
+      <span class="slice-pos-value" id="nslice-tfix-value">1 day</span>
+    </div>
+  </div>
+  <div id="panel-tslice" class="view-panel hidden">
+    <div id="plot-tslice" class="plot-div"></div>
+    <div class="slice-ctrl">
+      <span class="slice-ctrl-label">Fixed N<sub>exp</sub></span>
+      <div class="slice-pos-slider">
+        <input type="range" id="tslice-nfix-slider" min="0" max="4" step="0.05" value="2.0">
+        <div class="slice-pos-marks">
+          <span>1</span><span>10</span><span>100</span><span>1k</span><span>10k</span>
+        </div>
+      </div>
+      <span class="slice-pos-value" id="tslice-nfix-value">100</span>
+    </div>
+  </div>
+  <div class="status-bar" id="status-bar">Initializing Pyodide…</div>
+</main>
+
+</div><!-- app-body -->
+</div><!-- app -->
+
+<!-- ── Embedded physics package ───────────────────────────────────────────── -->
+<script id="physics-zip" type="application/octet-stream">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</script>
+
+<!-- ── Application JavaScript ────────────────────────────────────────────── -->
+<script>
+'use strict';
+
+// ── Constants ──────────────────────────────────────────────────────────────
+const DAY_S = 86400;
+const REGIME_HEX = ['#FF1744','#FF9100','#FFD740','#2979FF','#00E5FF','#1DE9B6','#9E9E9E'];
+const REGIME_LABELS = [
+  'Saturated · Range IV','Distance-limited · Range III','Distance-limited · Range II',
+  'Cadence-limited · Range IV','Cadence-limited · Range III','Cadence-limited · Range II',
+  'Flux-limited · Range I'
+];
+const TCAD_TICKVALS_H = [1/3600, 1/60, 1, 6, 24, 168, 730, 8760];
+const TCAD_TICKTEXT   = ['1 sec','1 min','1 hr','6 hr','1 day','1 wk','1 mo','1 yr'];
+const AMBER = '#fbbf24';
+const CORAL = '#f87171';
+const ZMIN_LOG = -2;
+
+// Explicit Plasma colorscale (from plotly.colors.sequential.Plasma resolved via
+// plotly.express.colors.make_colorscale). Passing the explicit array — instead
+// of the string 'Plasma' — guarantees Plotly.js renders identically to Plotly.py,
+// which is what Dash does behind the scenes.
+const PLASMA_SCALE = [
+  [0.0,                'rgb(13, 8, 135)'],
+  [0.1111111111111111, 'rgb(70, 3, 159)'],
+  [0.2222222222222222, 'rgb(114, 1, 168)'],
+  [0.3333333333333333, 'rgb(156, 23, 158)'],
+  [0.4444444444444444, 'rgb(189, 55, 134)'],
+  [0.5555555555555556, 'rgb(216, 87, 107)'],
+  [0.6666666666666666, 'rgb(237, 121, 83)'],
+  [0.7777777777777777, 'rgb(251, 159, 58)'],
+  [0.8888888888888888, 'rgb(253, 202, 38)'],
+  [1.0,                'rgb(240, 249, 33)'],
+];
+
+// Presets (match callbacks/ui.py) — touch only: i, f_live, A_log, omega_exp, t_oh, omega_srv, optical.
+const PRESETS = {
+  ztf:   {i:10, f_live:0.2,  A_log:-4.68, omega_exp:47,  t_oh:15, omega_srv:27500, optical:true},
+  rubin: {i:10, f_live:0.7,  A_log:-7.0,  omega_exp:9.6, t_oh:30, omega_srv:18000, optical:true},
+};
+// Map preset keys to DOM slider/switch IDs.
+const PRESET_MAP = {
+  i:         'i_slider',
+  f_live:    'flive_slider',
+  A_log:     'Alog_slider',
+  omega_exp: 'omegaexp_slider',
+  t_oh:      'toh_slider',
+  omega_srv: 'omega_srv_slider',
+};
+let _activePresetKey = null;     // which preset is currently active (drift detection)
+let _presetApplying  = false;    // suppress drift detection while we apply a preset
+
+// ── State ──────────────────────────────────────────────────────────────────
+let pyodide = null;
+let pyComputeAll = null;
+let pyComputeNslice = null;
+let pyComputeTslice = null;
+let _computing = false;
+let _pendingUpdate = false;
+let _debounceTimer = null;
+let _sliceDebounceTimer = null;   // independent debounce for slice-position drags
+let _sliceComputing = { nslice: false, tslice: false };
+let _sliceQueued    = { nslice: false, tslice: false };
+let _lastData = null;
+let _currentTab = '3d';
+let _currentTheme = 'dark';
+
+// ── Status bar ─────────────────────────────────────────────────────────────
+function setStatus(msg, spinning = false) {
+  const bar = document.getElementById('status-bar');
+  bar.innerHTML = spinning
+    ? '<span class="spinner"></span>' + msg
+    : msg;
+  bar.className = 'status-bar' + (msg ? '' : ' empty');
+}
+
+// ── Theme ──────────────────────────────────────────────────────────────────
+function setTheme(theme) {
+  _currentTheme = theme;
+  document.documentElement.dataset.theme = theme;
+  document.getElementById('theme-toggle').textContent = theme === 'dark' ? '☾ Dark' : '☀ Light';
+  if (_lastData) rerenderAll(_lastData);
+}
+
+document.getElementById('theme-toggle').addEventListener('click', () => {
+  setTheme(_currentTheme === 'dark' ? 'light' : 'dark');
+});
+
+// ── Sidebar ────────────────────────────────────────────────────────────────
+document.getElementById('sidebar-toggle').addEventListener('click', () => {
+  document.getElementById('app-sidebar').classList.toggle('open');
+  setTimeout(() => Plotly.Plots && Plotly.Plots.resize && Plotly.Plots.resize(document.getElementById('plot-' + _currentTab)), 260);
+});
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+document.querySelectorAll('.view-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tab = btn.dataset.tab;
+    if (tab === _currentTab) return;
+    _currentTab = tab;
+    document.querySelectorAll('.view-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    document.querySelectorAll('.view-panel').forEach(p => p.classList.toggle('hidden', p.id !== 'panel-' + tab));
+    if (_lastData) {
+      if (tab === 'nslice') renderNSlice(_lastData);
+      else if (tab === 'tslice') renderTSlice(_lastData);
+    }
+  });
+});
+
+// ── Slider ↔ input sync ────────────────────────────────────────────────────
+const SLIDER_IDS = [
+  'i','flive','Alog','omegaexp','toh','omega_srv','tnight',
+  'p','nu_log','Ekiso_log','n0_log','gamma0_log','thetaj','epse','epsB','deuc','rho_grb_log'
+];
+
+// Visual helpers: paint filled track up to current value + toggle active-dot class.
+function _sliderPct(sl) {
+  const mn = parseFloat(sl.min), mx = parseFloat(sl.max);
+  if (!isFinite(mn) || !isFinite(mx) || mx === mn) return 0;
+  const v = parseFloat(sl.value);
+  return Math.min(100, Math.max(0, (v - mn) / (mx - mn) * 100));
+}
+function updateSliderVisual(sl) {
+  if (!sl) return;
+  const pct = _sliderPct(sl);
+  sl.style.setProperty('--value-pct', pct.toFixed(3) + '%');
+  const wrap = sl.parentElement;
+  if (!wrap) return;
+  const dots = wrap.querySelectorAll('.slider-dots span');
+  dots.forEach(d => {
+    const lp = parseFloat(d.dataset.pct);
+    d.classList.toggle('active', isFinite(lp) && lp <= pct + 1e-6);
+  });
+}
+
+function syncFromSlider(id) {
+  const sl = document.getElementById(id + '_slider');
+  const inp = document.getElementById(id + '_input');
+  if (inp) inp.value = sl.value;
+  updateSliderVisual(sl);
+  if (id === 'deuc' || id === 'thetaj' || id === 'rho_grb_log') updateGrbCounts();
+  _checkPresetDrift();
+  triggerUpdate();
+}
+
+function syncFromInput(id) {
+  const inp = document.getElementById(id + '_input');
+  const sl = document.getElementById(id + '_slider');
+  if (!inp || !sl) return;
+  const raw = inp.value;
+  const v = parseFloat(raw);
+  // NaN / empty: revert to current slider value, do nothing
+  if (!isFinite(v)) {
+    inp.value = sl.value;
+    return;
+  }
+  // Clamp to [slider.min, slider.max] — matches Dash callbacks/sync.py
+  const mn = parseFloat(sl.min), mx = parseFloat(sl.max);
+  const clamped = Math.min(Math.max(v, mn), mx);
+  inp.value = clamped;
+  sl.value = clamped;
+  updateSliderVisual(sl);
+  if (id === 'deuc' || id === 'thetaj' || id === 'rho_grb_log') updateGrbCounts();
+  _checkPresetDrift();
+  triggerUpdate();
+}
+
+// Build a `.slider-dots` overlay per `.param-slider-wrap` using the positions
+// declared on the adjacent `.slider-marks span` elements. Then prime each
+// slider's `--value-pct` + active-dot state to match its initial value.
+function _initSliderDecorations() {
+  document.querySelectorAll('.param-slider-wrap').forEach(wrap => {
+    const marks = wrap.querySelector('.slider-marks');
+    const sl = wrap.querySelector('input[type=range].param-slider');
+    if (!sl) return;
+    if (marks && !wrap.querySelector('.slider-dots')) {
+      const dots = document.createElement('div');
+      dots.className = 'slider-dots';
+      marks.querySelectorAll('span').forEach(s => {
+        const left = s.style.left; // e.g. "8.163%"
+        if (!left) return;
+        const dot = document.createElement('span');
+        dot.style.left = left;
+        dot.dataset.pct = parseFloat(left);
+        dots.appendChild(dot);
+      });
+      // Insert dots BEFORE the slider so they sit behind the thumb visually.
+      wrap.insertBefore(dots, sl);
+    }
+    updateSliderVisual(sl);
+  });
+}
+_initSliderDecorations();
+
+SLIDER_IDS.forEach(id => {
+  const sl = document.getElementById(id + '_slider');
+  const inp = document.getElementById(id + '_input');
+  if (sl) sl.addEventListener('input', () => syncFromSlider(id));
+  if (inp) inp.addEventListener('change', () => syncFromInput(id));
+});
+
+// Optical switch shows/hides t_night
+document.getElementById('optical-switch').addEventListener('change', function() {
+  document.getElementById('tnight-block').style.display = this.checked ? 'block' : 'none';
+  updateSubnightLimitDisplay();
+  _checkPresetDrift();
+  triggerUpdate();
+});
+
+// Other toggles
+['toh-approx-switch','regime-color-switch','full-integral-switch','off-axis-switch'].forEach(id => {
+  document.getElementById(id).addEventListener('change', triggerUpdate);
+});
+
+// Derived-info display wiring (instant, no Python)
+document.getElementById('omegaexp_slider').addEventListener('input', updateNexpMaxDisplay);
+document.getElementById('omegaexp_input').addEventListener('change', updateNexpMaxDisplay);
+document.getElementById('omega_srv_slider').addEventListener('input', updateNexpMaxDisplay);
+document.getElementById('omega_srv_input').addEventListener('change', updateNexpMaxDisplay);
+document.getElementById('i_slider').addEventListener('input', updateSubnightLimitDisplay);
+document.getElementById('i_input').addEventListener('change', updateSubnightLimitDisplay);
+document.getElementById('tnight_slider').addEventListener('input', updateSubnightLimitDisplay);
+document.getElementById('tnight_input').addEventListener('change', updateSubnightLimitDisplay);
+
+// Slice-position sliders: live label + debounced partial recompute
+function triggerSliceUpdate(which) {
+  clearTimeout(_sliceDebounceTimer);
+  _sliceDebounceTimer = setTimeout(() => runSliceUpdate(which), 120);
+}
+async function runSliceUpdate(which) {
+  if (!_lastData) return;  // nothing to render against
+  const fn = which === 'nslice' ? pyComputeNslice : pyComputeTslice;
+  if (!fn) return;
+  if (_sliceComputing[which]) { _sliceQueued[which] = true; return; }
+  _sliceComputing[which] = true;
+  _sliceQueued[which] = false;
+  try {
+    const params = readParams();
+    const pyParams = pyodide.toPy(params);
+    let pyResult;
+    if (which === 'nslice') {
+      const t_cad_fix_s = Math.pow(10, parseFloat(document.getElementById('nslice-tfix-slider').value));
+      pyResult = fn(pyParams, t_cad_fix_s);
+    } else {
+      const N_fix = Math.pow(10, parseFloat(document.getElementById('tslice-nfix-slider').value));
+      pyResult = fn(pyParams, N_fix);
+    }
+    const payload = pyResult.toJs({ dict_converter: Object.fromEntries });
+    pyResult.destroy();
+    pyParams.destroy();
+    if (payload.error) {
+      setStatus('Slice error: ' + String(payload.error).slice(0, 200));
+    } else {
+      // Merge slice payload into _lastData so renderers use fresh values.
+      Object.assign(_lastData, payload);
+      if (which === 'nslice' && _currentTab === 'nslice') renderNSlice(_lastData);
+      if (which === 'tslice' && _currentTab === 'tslice') renderTSlice(_lastData);
+    }
+  } catch (e) {
+    setStatus('Slice compute failed: ' + e.message);
+    console.error(e);
+  }
+  _sliceComputing[which] = false;
+  if (_sliceQueued[which]) { _sliceQueued[which] = false; setTimeout(() => runSliceUpdate(which), 0); }
+}
+
+document.getElementById('nslice-tfix-slider').addEventListener('input', function() {
+  updateNsliceTfixDisplay();
+  triggerSliceUpdate('nslice');
+});
+document.getElementById('tslice-nfix-slider').addEventListener('input', function() {
+  updateTsliceNfixDisplay();
+  triggerSliceUpdate('tslice');
+});
+
+// ── Preset loader ──────────────────────────────────────────────────────────
+// Matches callbacks/ui.py: only 7 controls are touched.
+function _setSliderValue(id, val) {
+  const sl  = document.getElementById(id);
+  const inp = document.getElementById(id.replace(/_slider$/, '_input'));
+  if (sl)  sl.value  = val;
+  if (inp) inp.value = val;
+  if (sl) updateSliderVisual(sl);
+}
+document.getElementById('preset-select').addEventListener('change', function() {
+  const key = this.value;
+  if (!key || !PRESETS[key]) return;
+  const p = PRESETS[key];
+  _presetApplying = true;
+  for (const [k, domId] of Object.entries(PRESET_MAP)) {
+    _setSliderValue(domId, p[k]);
+  }
+  // Optical toggle: drives t_night visibility
+  const opticalSwitch = document.getElementById('optical-switch');
+  const newOptical = !!p.optical;
+  if (opticalSwitch.checked !== newOptical) {
+    opticalSwitch.checked = newOptical;
+    document.getElementById('tnight-block').style.display = newOptical ? 'block' : 'none';
+  }
+  _activePresetKey = key;
+  _presetApplying = false;
+  updateGrbCounts();
+  triggerUpdate();
+});
+
+// Drift detection: if the user edits any preset-controlled value, clear the preset dropdown.
+function _checkPresetDrift() {
+  if (_presetApplying || _activePresetKey === null) return;
+  const p = PRESETS[_activePresetKey];
+  if (!p) return;
+  const sel = document.getElementById('preset-select');
+  const opticalSwitch = document.getElementById('optical-switch');
+  for (const [k, domId] of Object.entries(PRESET_MAP)) {
+    const cur = parseFloat(document.getElementById(domId).value);
+    if (Math.abs(cur - p[k]) > 1e-9) {
+      _activePresetKey = null;
+      sel.value = 'none';
+      return;
+    }
+  }
+  if (opticalSwitch.checked !== !!p.optical) {
+    _activePresetKey = null;
+    sel.value = 'none';
+  }
+}
+
+// ── Read parameters ────────────────────────────────────────────────────────
+function readParams() {
+  const v = id => parseFloat(document.getElementById(id).value);
+  const b = id => document.getElementById(id).checked;
+  return {
+    i_det:           Math.round(v('i_slider')),
+    A_log:           v('Alog_slider'),
+    f_live:          v('flive_slider'),
+    t_overhead_s:    v('toh_slider'),
+    omega_exp_deg2:  v('omegaexp_slider'),
+    omega_srv_deg2:  v('omega_srv_slider'),
+    t_night_h:       v('tnight_slider'),
+    p:               v('p_slider'),
+    nu_log10:        v('nu_log_slider'),
+    E_kiso_log10:    v('Ekiso_log_slider'),
+    n0_log10:        v('n0_log_slider'),
+    epsilon_e_log10: v('epse_slider'),
+    epsilon_B_log10: v('epsB_slider'),
+    theta_j_rad:     v('thetaj_slider'),
+    gamma0_log10:    v('gamma0_log_slider'),
+    D_euc_gpc:       v('deuc_slider'),
+    rho_grb_log10:   v('rho_grb_log_slider'),
+    optical_survey:  b('optical-switch'),
+    color_regimes:   b('regime-color-switch'),
+    full_integral:   b('full-integral-switch'),
+    off_axis:        b('off-axis-switch'),
+    toh_approx:      b('toh-approx-switch'),
+    nslice_tfix_log: v('nslice-tfix-slider'),
+    tslice_nfix_log: v('tslice-nfix-slider'),
+    nx: 120, ny: 150,
+  };
+}
+
+// ── Slice-position helpers ────────────────────────────────────────────────
+function _fmtTcad(t_cad_s) {
+  if (!isFinite(t_cad_s) || t_cad_s <= 0) return '—';
+  if (t_cad_s < 60)        return t_cad_s.toFixed(0) + ' s';
+  if (t_cad_s < 3600)      return (t_cad_s / 60).toFixed(1) + ' min';
+  if (t_cad_s < 86400)     return (t_cad_s / 3600).toFixed(2) + ' hr';
+  if (t_cad_s < 86400 * 7) return (t_cad_s / 86400).toFixed(2) + ' day';
+  if (t_cad_s < 86400 * 30)return (t_cad_s / (86400 * 7)).toFixed(2) + ' wk';
+  if (t_cad_s < 86400 * 365)return (t_cad_s / (86400 * 30)).toFixed(2) + ' mo';
+  return (t_cad_s / (86400 * 365.25)).toFixed(2) + ' yr';
+}
+function _fmtNexp(n) {
+  if (!isFinite(n) || n <= 0) return '—';
+  if (n < 1)    return n.toFixed(2);
+  if (n < 10)   return n.toFixed(1);
+  if (n < 1000) return Math.round(n).toString();
+  if (n < 1e6)  return (n / 1000).toFixed(n < 1e4 ? 2 : 1) + 'k';
+  return (n / 1e6).toFixed(1) + 'M';
+}
+
+function updateNsliceTfixDisplay() {
+  const sl = document.getElementById('nslice-tfix-slider');
+  const el = document.getElementById('nslice-tfix-value');
+  if (sl && el) el.textContent = _fmtTcad(Math.pow(10, parseFloat(sl.value)));
+}
+function updateTsliceNfixDisplay() {
+  const sl = document.getElementById('tslice-nfix-slider');
+  const el = document.getElementById('tslice-nfix-value');
+  if (sl && el) el.textContent = _fmtNexp(Math.pow(10, parseFloat(sl.value)));
+}
+
+// ── Derived sidebar displays (instant, no Python needed) ──────────────────
+function updateNexpMaxDisplay() {
+  const el = document.getElementById('nexpmax-display');
+  if (!el) return;
+  const oe = parseFloat(document.getElementById('omegaexp_slider').value);
+  const os = parseFloat(document.getElementById('omega_srv_slider').value);
+  if (!isFinite(oe) || !isFinite(os)) { el.innerHTML = ''; return; }
+  if (oe > os) {
+    el.innerHTML = '<span class="derived-info warning">⚠ Ω<sub>exp</sub> &gt; Ω<sub>srv,max</sub> — survey impossible</span>';
+    return;
+  }
+  const nmax = Math.floor(os / oe);
+  el.innerHTML = '<span class="derived-info">Max N<sub>exp</sub>: ' + nmax + '</span>';
+}
+function updateSubnightLimitDisplay() {
+  const el = document.getElementById('subnight-limit-display');
+  if (!el) return;
+  const optical = document.getElementById('optical-switch').checked;
+  const i_val   = parseFloat(document.getElementById('i_slider').value);
+  const tnight  = parseFloat(document.getElementById('tnight_slider').value);
+  if (!optical || !isFinite(i_val) || !isFinite(tnight) || i_val <= 0) { el.innerHTML = ''; return; }
+  const limit_h = tnight / i_val;
+  el.innerHTML = '<span class="derived-info">Sub-night limit: '
+               + limit_h.toFixed(2) + ' hr  (t<sub>night</sub> / i)</span>';
+}
+
+// ── Derived GRB count display (instant, no Python needed) ─────────────────
+function updateGrbCounts() {
+  const rho = Math.pow(10, parseFloat(document.getElementById('rho_grb_log_slider').value));
+  const D   = parseFloat(document.getElementById('deuc_slider').value);
+  const tj  = parseFloat(document.getElementById('thetaj_slider').value);
+  const V   = (4/3) * Math.PI * D * D * D;
+  const N_total = rho * V;
+  const fb  = tj * tj / 2;
+  const N_toward_day = N_total * fb / 365.25;
+  const fmt = x => x >= 1e6 ? (x/1e6).toFixed(1)+'M' : x >= 1e3 ? (x/1e3).toFixed(1)+'k' : x.toFixed(1);
+  document.getElementById('grb-ntotal-display').innerHTML = 'R<sub>int</sub> = ' + fmt(N_total) + ' yr⁻¹';
+  document.getElementById('grb-ntoward-display').innerHTML = 'f<sub>b</sub>R<sub>int</sub> = ' + fmt(N_toward_day) + ' day⁻¹';
+}
+
+// ── Debounced update trigger ───────────────────────────────────────────────
+function triggerUpdate() {
+  if (!pyComputeAll) return;
+  clearTimeout(_debounceTimer);
+  _debounceTimer = setTimeout(runUpdate, 300);
+}
+
+// ── Main async compute + render ───────────────────────────────────────────
+async function runUpdate() {
+  if (_computing) { _pendingUpdate = true; return; }
+  if (!pyComputeAll) return;
+
+  const params = readParams();
+  _computing = true;
+  _pendingUpdate = false;
+  setStatus('Computing…', true);
+
+  let data;
+  try {
+    const pyParams = pyodide.toPy(params);
+    const pyResult = pyComputeAll(pyParams);
+    data = pyResult.toJs({ dict_converter: Object.fromEntries });
+    pyResult.destroy();
+    pyParams.destroy();
+  } catch (e) {
+    setStatus('Error: ' + e.message);
+    _computing = false;
+    return;
+  }
+
+  if (data.error) {
+    setStatus('Python error: ' + String(data.error).slice(0, 300));
+    _computing = false;
+    return;
+  }
+
+  _lastData = data;
+  // Shared reshape layer — compute once, reuse across 3D + slices + metrics.
+  data._shared = buildSharedData(data);
+
+  render3DSurface(data, params);
+  updateMetricsBar(data);
+  updateDerivedDisplays(data);
+
+  if (_currentTab === 'nslice') renderNSlice(data);
+  else if (_currentTab === 'tslice') renderTSlice(data);
+
+  const rStr = data.R_opt != null ? data.R_opt.toFixed(3) + ' yr⁻¹' : '—';
+  const tStr = data.t_cad_opt_h != null ? fmtT(data.t_cad_opt_s) : '—';
+  setStatus('Done · Opt: R=' + rStr + ', t_cad=' + tStr);
+
+  _computing = false;
+  if (_pendingUpdate) { _pendingUpdate = false; setTimeout(runUpdate, 0); }
+}
+
+// ── Reshape flat array → 2D ────────────────────────────────────────────────
+function reshape(flat, rows, cols) {
+  const out = [];
+  for (let r = 0; r < rows; r++) out.push(flat.slice(r * cols, (r + 1) * cols));
+  return out;
+}
+
+// ── Hex → rgba(…) for regime-coloured overlays (matches _hex_to_rgba) ──────
+function hexToRgba(hex, alpha) {
+  if (!hex || typeof hex !== 'string') return 'rgba(0,0,0,' + alpha + ')';
+  const h = hex.charAt(0) === '#' ? hex.substring(1) : hex;
+  if (h.length !== 6) return 'rgba(0,0,0,' + alpha + ')';
+  const r = parseInt(h.substring(0, 2), 16);
+  const g = parseInt(h.substring(2, 4), 16);
+  const b = parseInt(h.substring(4, 6), 16);
+  return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+
+// ── Shared data reshape layer ──────────────────────────────────────────────
+// Called once per compute; shapes flat bridge arrays into the 2D grids used
+// by the 3D figure AND (for Chunk 3) the slice figures. Fields:
+//   shape            : [ny, nx]
+//   X2d, Y2d, Z2d    : (ny, nx) grids of N_exp, t_cad_h, R_det
+//   Zlog2d           : (ny, nx) log10 R_det (for surfacecolor)
+//   regime2d         : (ny, nx) regime id ∈ {1..7} or null (or null if absent)
+//   tExp2d           : (ny, nx) t_exp_s per point
+//   qMed2d           : (ny, nx) q_med per point
+//   dMed2d           : (ny, nx) D_med_Gpc per point
+//   surfCustomdata3D : (nx, ny, 3) — Plotly 3D surface customdata order
+//   dayLine          : null when optical=false, else:
+//       {days:[…], n_days, n_N,
+//        N2d, R2d, regime2d, tExp2d, qMed2d, dMed2d   — each (n_days, n_N)}
+function buildSharedData(data) {
+  if (!data || !data.shape) return null;
+  const [ny, nx] = data.shape;
+  const shared = {shape: [ny, nx], ny: ny, nx: nx};
+
+  shared.X2d    = reshape(data.X_flat,    ny, nx);
+  shared.Y2d    = reshape(data.Y_flat,    ny, nx);
+  shared.Z2d    = reshape(data.Z_flat,    ny, nx);
+  shared.Zlog2d = reshape(data.Z_log_flat, ny, nx);
+  shared.regime2d = data.regime_flat ? reshape(data.regime_flat, ny, nx) : null;
+  shared.tExp2d = data.t_exp_flat    ? reshape(data.t_exp_flat,    ny, nx) : null;
+  shared.qMed2d = data.q_med_flat    ? reshape(data.q_med_flat,    ny, nx) : null;
+  shared.dMed2d = data.D_med_Gpc_flat ? reshape(data.D_med_Gpc_flat, ny, nx) : null;
+
+  // Plotly's 3D Surface customdata is indexed [j, i, k] (transposed from the
+  // (ny, nx, 3) per-cell tensor). Build (nx, ny, 3).
+  if (shared.tExp2d && shared.qMed2d && shared.dMed2d) {
+    const cd = new Array(nx);
+    for (let j = 0; j < nx; j++) {
+      const col = new Array(ny);
+      for (let i = 0; i < ny; i++) {
+        col[i] = [shared.tExp2d[i][j], shared.qMed2d[i][j], shared.dMed2d[i][j]];
+      }
+      cd[j] = col;
+    }
+    shared.surfCustomdata3D = cd;
+  } else {
+    shared.surfCustomdata3D = null;
+  }
+
+  // Day-line payload (optical-only). Bridge returns empty lists when optical
+  // is off; day_line_shape = [0, 0] in that case.
+  const dlShape = data.day_line_shape;
+  if (dlShape && dlShape.length === 2 && dlShape[0] > 0 && dlShape[1] > 0) {
+    const nd = dlShape[0], nn = dlShape[1];
+    shared.dayLine = {
+      days:     data.day_line_t_cad_days || [],
+      n_days:   nd,
+      n_N:      nn,
+      N2d:      reshape(data.day_line_N_flat,         nd, nn),
+      R2d:      reshape(data.day_line_R_flat,         nd, nn),
+      regime2d: data.day_line_regime_flat ? reshape(data.day_line_regime_flat, nd, nn) : null,
+      tExp2d:   reshape(data.day_line_t_exp_flat,     nd, nn),
+      qMed2d:   reshape(data.day_line_q_med_flat,     nd, nn),
+      dMed2d:   reshape(data.day_line_D_med_Gpc_flat, nd, nn),
+    };
+  } else {
+    shared.dayLine = null;
+  }
+  return shared;
+}
+
+// ── Standardized hovertemplates (ported verbatim from components/figures.py)
+const XYZ_HOVER =
+  'N<sub>exp</sub> = %{x:.4g}<br>' +
+  't<sub>cad</sub> = %{y:.4g} hr<br>' +
+  't<sub>exp</sub> = %{customdata[0]:.3g} s<br>' +
+  'q<sub>med</sub> = %{customdata[1]:.3g}<br>' +
+  'D<sub>med</sub> = %{customdata[2]:.3g} Gpc<br>' +
+  'R<sub>det</sub> = %{z:.4g} yr ⁻¹' +
+  '<extra></extra>';
+
+// N-slice: N_exp=x, R_det=y; customdata=[t_cad_hr, t_exp, q_med, D_med_Gpc]
+const N_HOVER =
+  'N<sub>exp</sub> = %{x:.4g}<br>' +
+  't<sub>cad</sub> = %{customdata[0]:.4g} hr<br>' +
+  't<sub>exp</sub> = %{customdata[1]:.3g} s<br>' +
+  'q<sub>med</sub> = %{customdata[2]:.3g}<br>' +
+  'D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>' +
+  'R<sub>det</sub> = %{y:.4g} yr ⁻¹' +
+  '<extra></extra>';
+
+// T-slice: t_cad=x, R_det=y; customdata=[N_exp, t_exp, q_med, D_med_Gpc]
+const T_HOVER =
+  'N<sub>exp</sub> = %{customdata[0]:.4g}<br>' +
+  't<sub>cad</sub> = %{x:.4g} hr<br>' +
+  't<sub>exp</sub> = %{customdata[1]:.3g} s<br>' +
+  'q<sub>med</sub> = %{customdata[2]:.3g}<br>' +
+  'D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>' +
+  'R<sub>det</sub> = %{y:.4g} yr ⁻¹' +
+  '<extra></extra>';
+
+// ── Regime-segmentation helper for 2D slice line traces ────────────────────
+// Mirrors components/figures.py::_draw_regime_segments_2d. Walks x/y/regime
+// arrays in lockstep, emitting one Plotly scatter trace per contiguous run of
+// equal regime IDs; optionally bridges to the first point of the next segment
+// so neighbouring segments visually connect. `customdata` is a parallel array
+// of per-point hover payloads (length == xArr.length).
+function segmentsByRegime(xArr, yArr, regimeArr, customdata, opts) {
+  opts = opts || {};
+  const lineWidth = opts.lineWidth != null ? opts.lineWidth : 2.5;
+  const opacity   = opts.opacity   != null ? opts.opacity   : 1.0;
+  const hovertemplate = opts.hovertemplate || null;
+  const hoverlabel    = opts.hoverlabel || null;
+  const n = xArr.length;
+  const out = [];
+  let i = 0;
+  while (i < n) {
+    const xi = xArr[i], yi = yArr[i], ri = regimeArr[i];
+    const finite = (v) => v != null && isFinite(v);
+    if (!(finite(xi) && finite(yi) && finite(ri))) { i++; continue; }
+    const cur = ri | 0;
+    let j = i;
+    while (j < n && finite(xArr[j]) && finite(yArr[j]) && finite(regimeArr[j]) && (regimeArr[j] | 0) === cur) j++;
+    const segX = xArr.slice(i, j);
+    const segY = yArr.slice(i, j);
+    const bridged = j < n && finite(xArr[j]) && finite(yArr[j]);
+    if (bridged) { segX.push(xArr[j]); segY.push(yArr[j]); }
+    const col = (cur >= 1 && cur <= 7)
+      ? hexToRgba(REGIME_HEX[cur - 1], opacity)
+      : ('rgba(128,128,128,' + opacity + ')');
+    const trace = {
+      type: 'scatter',
+      x: segX, y: segY,
+      mode: 'lines',
+      line: {color: col, width: lineWidth},
+      showlegend: false,
+    };
+    if (customdata) {
+      let segCd = customdata.slice(i, j);
+      if (bridged) segCd = segCd.concat([customdata[j]]);
+      trace.customdata = segCd;
+    }
+    if (hovertemplate) {
+      trace.hovertemplate = hovertemplate;
+      if (hoverlabel) trace.hoverlabel = hoverlabel;
+    } else {
+      trace.hoverinfo = 'skip';
+    }
+    out.push(trace);
+    i = j;
+  }
+  return out;
+}
+
+// ── Regime legend (2D phantom traces) ──────────────────────────────────────
+function regimeLegendTraces2D(colorOn) {
+  if (!colorOn) return [];
+  return REGIME_HEX.map((col, idx) => ({
+    type: 'scatter',
+    x: [null], y: [null],
+    mode: 'markers',
+    marker: {size: 8, color: col, symbol: 'square'},
+    name: REGIME_LABELS[idx],
+    showlegend: true,
+    hoverinfo: 'skip',
+  }));
+}
+
+// Match Dash's _marker_hover: only emit the optional lines when the scalar is finite.
+function markerHover3D(label, t_exp_s, q_med, D_med_Gpc) {
+  const okTexp = t_exp_s   != null && isFinite(t_exp_s);
+  const okQ    = q_med     != null && isFinite(q_med);
+  const okD    = D_med_Gpc != null && isFinite(D_med_Gpc);
+  const toG = (v) => {
+    // Python "%.3g" → JS toPrecision(3) with trailing-zero trim is close enough; the
+    // template actually formats at display time via Plotly, but here we need the number
+    // inline because these are scalar markers, not per-point customdata. Use Number.
+    const s = Number(v).toPrecision(3);
+    // Strip trailing zeros after decimal point, and trailing '.' if it ends with one.
+    return s.indexOf('.') >= 0 && s.indexOf('e') < 0 ? s.replace(/\.?0+$/, '') : s;
+  };
+  const texpStr = okTexp ? ('<br>t<sub>exp</sub> = ' + toG(t_exp_s) + ' s') : '';
+  const qStr    = okQ    ? ('<br>q<sub>med</sub> = ' + toG(q_med)) : '';
+  const dStr    = okD    ? ('<br>D<sub>med</sub> = ' + toG(D_med_Gpc) + ' Gpc') : '';
+  return (
+    label +
+    '<br>N<sub>exp</sub> = %{x:.4g}' +
+    '<br>t<sub>cad</sub> = %{y:.4g} hr' +
+    texpStr + qStr + dStr +
+    '<br>R<sub>det</sub> = %{z:.4g} yr ⁻¹<extra></extra>'
+  );
+}
+
+// ── Format helpers ─────────────────────────────────────────────────────────
+function fmtR(r) {
+  if (r == null || !isFinite(r)) return '—';
+  if (r >= 100) return r.toFixed(0);
+  if (r >= 10) return r.toFixed(1);
+  return r.toFixed(2);
+}
+// Emulate Python's `%.2g`: 2 significant figures, scientific notation when
+// exponent < -4 or >= 2 (matching CPython), otherwise fixed; trailing zeros
+// are stripped. Exponent is zero-padded to at least 2 digits to match Python.
+function fmt2g(x) {
+  if (x == null || !isFinite(x)) return '—';
+  if (x === 0) return '0';
+  const abs = Math.abs(x);
+  let e = Math.floor(Math.log10(abs));
+  let scientific = (e < -4 || e >= 2);
+  if (!scientific) {
+    // Fixed: (precision - 1 - e) decimals, clamped at 0.
+    const decimals = Math.max(0, 1 - e);
+    let s = x.toFixed(decimals);
+    // Rounding may have pushed the value into the scientific regime (e.g.
+    // 99.9 → "100" → exp 2). If so, re-emit as scientific.
+    const rounded = parseFloat(s);
+    if (rounded !== 0) {
+      const e2 = Math.floor(Math.log10(Math.abs(rounded)));
+      if (e2 >= 2) {
+        scientific = true;
+        e = e2;
+      }
+    }
+    if (!scientific) {
+      if (s.indexOf('.') >= 0) s = s.replace(/\.?0+$/, '');
+      return s;
+    }
+  }
+  // Scientific: mantissa rounded to 1 decimal (precision - 1 = 1).
+  let mantissa = x / Math.pow(10, e);
+  let mStr = mantissa.toFixed(1);
+  let mNum = parseFloat(mStr);
+  let finalExp = e;
+  if (Math.abs(mNum) >= 10) {
+    mNum = mNum / 10;
+    finalExp = e + 1;
+    mStr = mNum.toFixed(1);
+  }
+  if (mStr.indexOf('.') >= 0) mStr = mStr.replace(/\.?0+$/, '');
+  const sign = finalExp >= 0 ? '+' : '-';
+  const expAbs = Math.abs(finalExp);
+  const expStr = (expAbs < 10 ? '0' : '') + expAbs;
+  return mStr + 'e' + sign + expStr;
+}
+function fmtT(t_s) {
+  if (t_s == null || !isFinite(t_s)) return '—';
+  if (t_s >= DAY_S) return fmt2g(t_s / DAY_S) + ' day';
+  if (t_s >= 3600) return fmt2g(t_s / 3600) + ' hr';
+  if (t_s >= 60) return fmt2g(t_s / 60) + ' min';
+  return fmt2g(t_s) + ' sec';
+}
+function fmtN(n) { return n == null || !isFinite(n) ? '—' : n.toFixed(0); }
+
+// ── Layout helpers ─────────────────────────────────────────────────────────
+function darkMode() { return _currentTheme !== 'light'; }
+function gridCol() { return darkMode() ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'; }
+function gridColLight() { return darkMode() ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'; }
+function fontCol() { return darkMode() ? '#e2e8f0' : '#1e293b'; }
+function hoverBg() { return darkMode() ? '#1e2533' : '#e8f0f8'; }
+function hoverFontCol() { return darkMode() ? '#e2e8f0' : '#1e293b'; }
+function plotBg() { return 'rgba(0,0,0,0)'; }
+function annotCol() { return darkMode() ? '#8ba0c0' : '#4b6080'; }
+
+// ── Discrete-day overlay lines (3D, optical mode only) ────────────────────
+// Mirrors components/figures.py::_add_discrete_day_lines. Days with no valid
+// (unmasked) points are skipped. In regime-colour mode each consecutive run
+// of equal regime IDs becomes its own segment; in height-colour mode a
+// single light uniform line is drawn per day.
+function addDay3DLines(traces, shared, params) {
+  const dl = shared && shared.dayLine;
+  if (!dl || dl.n_days === 0) return;
+  const regimeMode = !!params.color_regimes;
+
+  // Height-colour mode: collect marker traces separately so they are appended
+  // AFTER every per-day line trace. Matches components/figures.py:L319-L337 —
+  // WebGL depth-sort ties break in favour of later draw calls, so deferring the
+  // markers keeps dots painted above the faint connecting lines regardless of
+  // camera angle.
+  const pendingMarkers = [];
+
+  for (let d = 0; d < dl.n_days; d++) {
+    const Nrow   = dl.N2d[d];
+    const Rrow   = dl.R2d[d];
+    const tErow  = dl.tExp2d[d];
+    const qErow  = dl.qMed2d[d];
+    const dErow  = dl.dMed2d[d];
+    const ridRow = dl.regime2d ? dl.regime2d[d] : null;
+
+    // Select "good" points: finite N and finite R (bridge set NaN→null for masked cells).
+    const good = [];
+    for (let j = 0; j < dl.n_N; j++) {
+      if (Nrow[j] != null && isFinite(Nrow[j]) && Rrow[j] != null && isFinite(Rrow[j])) good.push(j);
+    }
+    if (good.length < 2) continue;
+
+    const yHr = dl.days[d] * 24.0;  // constant y for this day (t_cad in hours)
+    const xG   = good.map(j => Nrow[j]);
+    const yG   = good.map(_ => yHr);
+    const zG   = good.map(j => Rrow[j]);
+    const cdG  = good.map(j => [tErow[j], qErow[j], dErow[j]]);
+
+    if (regimeMode && ridRow) {
+      const ridG = good.map(j => ridRow[j]);
+      let start = 0;
+      while (start < ridG.length) {
+        if (ridG[start] == null || !isFinite(ridG[start])) { start++; continue; }
+        const k = ridG[start] | 0;
+        let end = start + 1;
+        while (end < ridG.length && ridG[end] != null && isFinite(ridG[end]) && (ridG[end] | 0) === k) end++;
+        if (end - start >= 2 && k >= 1 && k <= 7) {
+          const col = hexToRgba(REGIME_HEX[k - 1], 0.80);
+          traces.push({
+            type: 'scatter3d',
+            x: xG.slice(start, end),
+            y: yG.slice(start, end),
+            z: zG.slice(start, end),
+            customdata: cdG.slice(start, end),
+            mode: 'lines+markers',
+            line: {color: col, width: 6},
+            marker: {size: 0, opacity: 0.001},
+            showlegend: false,
+            hovertemplate: XYZ_HOVER,
+          });
+        }
+        start = end;
+      }
+    } else {
+      // Height-colour mode: uniform faint line NOW, deferred marker trace LATER.
+      traces.push({
+        type: 'scatter3d',
+        x: xG, y: yG, z: zG,
+        customdata: cdG,
+        mode: 'lines',
+        line: {color: 'rgba(255,255,255,0.12)', width: 1.0},
+        showlegend: false,
+        hovertemplate: XYZ_HOVER,
+      });
+      pendingMarkers.push({
+        type: 'scatter3d',
+        x: xG, y: yG, z: zG,
+        customdata: cdG,
+        mode: 'markers',
+        marker: {
+          size: 2,
+          color: zG.map(v => Math.log10(Math.max(v, 1e-30))),
+          colorscale: PLASMA_SCALE,
+          cmin: -2.0,
+          cmax: 1.0,
+          opacity: 1.0,
+          showscale: false,
+        },
+        showlegend: false,
+        hovertemplate: XYZ_HOVER,
+      });
+    }
+  }
+
+  for (let i = 0; i < pendingMarkers.length; i++) traces.push(pendingMarkers[i]);
+}
+
+// ── 3D Surface render ──────────────────────────────────────────────────────
+function render3DSurface(data, params) {
+  const shared = data._shared || (data._shared = buildSharedData(data));
+  if (!shared) return;
+  const {ny, nx, X2d, Y2d, Z2d, Zlog2d, regime2d, surfCustomdata3D} = shared;
+  const traces = [];
+  const dark = darkMode();
+
+  // Discrete day-cadence overlay lines (optical only); Dash adds these BEFORE the
+  // main surface so the surface z-order wins on overlapping regions.
+  if (params.optical) addDay3DLines(traces, shared, params);
+
+  if (params.color_regimes && regime2d) {
+    for (let k = 1; k <= 7; k++) {
+      const Zk = Z2d.map((row, r) => row.map((v, c) => (regime2d[r][c] === k ? v : null)));
+      if (Zk.every(row => row.every(v => v === null))) continue;
+      const col = REGIME_HEX[k - 1];
+      const trace = {
+        type: 'surface', x: X2d, y: Y2d, z: Zk,
+        colorscale: [[0, col], [1, col]], cmin: 0, cmax: 1,
+        showscale: false, connectgaps: false, showlegend: false,
+        lighting: {ambient: 0.75, diffuse: 0.75, specular: 0.08, roughness: 0.95},
+        lightposition: {x: 100, y: 200, z: 0},
+        hovertemplate: XYZ_HOVER,
+      };
+      if (surfCustomdata3D) trace.customdata = surfCustomdata3D;
+      traces.push(trace);
+    }
+    REGIME_HEX.forEach((col, i) => traces.push({
+      type: 'scatter3d', x: [null], y: [null], z: [null],
+      mode: 'markers', marker: {size: 7, color: col},
+      name: REGIME_LABELS[i], showlegend: true, hoverinfo: 'skip',
+    }));
+  } else {
+    const zmax = data.zmax_log10 || 0;
+    const trace = {
+      type: 'surface', x: X2d, y: Y2d, z: Z2d,
+      surfacecolor: Zlog2d,
+      cmin: ZMIN_LOG, cmax: zmax,
+      colorscale: PLASMA_SCALE, showscale: true, connectgaps: false,
+      lighting: {ambient: 0.75, diffuse: 0.75, specular: 0.08, roughness: 0.95},
+      lightposition: {x: 100, y: 200, z: 0},
+      colorbar: {
+        title: {text: 'R<sub>det</sub> [yr ⁻¹]', side: 'top'},
+        x: 0.88, xanchor: 'left', thickness: 18, len: 0.80,
+        y: 0.5, yanchor: 'middle',
+        tickvals: [-2, -1, 0, 1, 2, 3, 4],
+        ticktext: ['0.01', '0.1', '1', '10', '100', '1k', '10k'],
+      },
+      hovertemplate: XYZ_HOVER,
+    };
+    if (surfCustomdata3D) trace.customdata = surfCustomdata3D;
+    traces.push(trace);
+  }
+
+  // Optimal marker
+  if (data.N_opt != null && data.R_opt != null && isFinite(data.R_opt)) {
+    traces.push({
+      type: 'scatter3d',
+      x: [data.N_opt], y: [data.t_cad_opt_h], z: [data.R_opt],
+      mode: 'markers+text',
+      marker: {size: 10, color: AMBER, symbol: 'diamond'},
+      text: ['Optimum'], textposition: 'top center',
+      name: 'Optimum',
+      hovertemplate: markerHover3D('Grid optimum', data.t_exp_opt_s, data.q_med_opt, data.D_med_Gpc_opt),
+    });
+  }
+
+  // ZTF marker
+  if (data.R_ztf != null && isFinite(data.R_ztf)) {
+    traces.push({
+      type: 'scatter3d',
+      x: [data.N_ztf], y: [data.t_cad_ztf_h], z: [data.R_ztf],
+      mode: 'markers+text',
+      marker: {size: 9, color: CORAL, symbol: 'circle'},
+      text: ['ZTF'], textposition: 'top center',
+      name: 'ZTF (2 day cadence)',
+      hovertemplate: markerHover3D('ZTF strategy', data.t_exp_ztf_s, data.q_med_ztf, data.D_med_Gpc_ztf),
+    });
+  }
+
+  const Rmax = data.R_opt != null ? Math.max(data.R_opt, data.R_ztf || 0, 0.11) : 0.11;
+
+  // Match Dash's 3D scene grid colour (slightly stronger than the 2D grids).
+  const grid3d = dark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.12)';
+
+  const layout = {
+    uirevision: 'keep-view-v1',
+    template: dark ? 'plotly_dark' : 'plotly_white',
+    paper_bgcolor: plotBg(),
+    hoverlabel: {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'},
+    scene: {
+      bgcolor: plotBg(),
+      xaxis: {title: 'N<sub>exp</sub>', type: 'log', gridcolor: grid3d, showbackground: false},
+      yaxis: {
+        title: 't<sub>cad</sub>', type: 'log',
+        tickvals: TCAD_TICKVALS_H, ticktext: TCAD_TICKTEXT,
+        gridcolor: grid3d, showbackground: false,
+      },
+      zaxis: {
+        title: 'R<sub>det</sub> [yr ⁻¹]', type: 'log',
+        range: [ZMIN_LOG, Math.log10(Math.max(Rmax, 0.11)) + 0.05],
+        gridcolor: grid3d, showbackground: false,
+      },
+      aspectmode: 'manual', aspectratio: {x: 1.2, y: 1.2, z: 0.9},
+      // Plotly.js uses scene.camera (not top-level scene_camera which is a Plotly.py convention).
+      // Must live inside `scene` for the initial view to actually apply.
+      camera: {eye: {x: -1.48, y: -1.48, z: 0.70}, up: {x: 0, y: 0, z: 1}, center: {x: 0, y: 0, z: -0.2}},
+    },
+    margin: {l: 0, r: 0, b: 0, t: 0},
+    legend: {orientation: 'v', x: 0.01, y: 0.98, xanchor: 'left', yanchor: 'top', font: {size: 11}, bgcolor: 'rgba(0,0,0,0)'},
+    font: {family: "'JetBrains Mono','Cascadia Code',monospace", color: fontCol(), size: 12},
+  };
+
+  Plotly.react('plot-3d', traces, layout, {responsive: true});
+}
+
+// ── N-slice render (R vs N_exp at user-chosen t_cad) ───────────────────────
+// Ports components/figures.py::build_nslice_figure. Slice position is driven
+// by the nslice-tfix-slider (payload t_cad_fix_h), so the render no longer
+// early-returns when the optimizer fails. The amber-diamond marker tracks the
+// optimizer's N_opt on the CURRENT curve (R value read at argmin|N_sweep - N_opt|);
+// when the slice is not near the optimum t_cad, an annotation calls that out.
+function renderNSlice(data) {
+  // Slice position comes from the bridge payload (falls back to optimum on
+  // first render if the slice-position slider has not yet been consulted).
+  const tCadRow = (data.t_cad_fix_h != null && isFinite(data.t_cad_fix_h))
+    ? data.t_cad_fix_h
+    : (data.t_cad_opt_h != null && isFinite(data.t_cad_opt_h) ? data.t_cad_opt_h : null);
+
+  // Chunk 7: consume dedicated high-res N-sweep (800 points, logspaced)
+  // computed by the bridge. Mirrors callbacks/surface.py:441-451.
+  const xArr  = data.N_sweep_flat          || [];
+  const zArr  = data.N_sweep_R_flat        || [];
+  const teArr = data.N_sweep_t_exp_flat    || [];
+  const qmArr = data.N_sweep_q_med_flat    || [];
+  const dmArr = data.N_sweep_D_med_Gpc_flat|| [];
+  const ridArr= data.N_sweep_regime_flat   || [];
+  const nSweep = xArr.length;
+
+  // Build parallel valid arrays (drop null/NaN R values)
+  const xv = [], zv = [], ridV = [], cdV = [];
+  for (let c = 0; c < nSweep; c++) {
+    const x = xArr[c], z = zArr[c];
+    if (x == null || !isFinite(x) || z == null || !isFinite(z) || !(z > 0)) continue;
+    xv.push(x);
+    zv.push(z);
+    ridV.push(ridArr.length ? ridArr[c] : null);
+    cdV.push([
+      tCadRow,
+      teArr.length ? teArr[c] : null,
+      qmArr.length ? qmArr[c] : null,
+      dmArr.length ? dmArr[c] : null,
+    ]);
+  }
+
+  const dark = darkMode();
+  const accent = dark ? '#6d9eff' : '#3b6fff';
+  const hl = {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'};
+  const traces = [];
+
+  // Regime legend first (so labels sort to top)
+  regimeLegendTraces2D(!!data.color_regimes).forEach(t => traces.push(t));
+
+  if (xv.length === 0) {
+    Plotly.react('plot-nslice', traces, {
+      template: dark ? 'plotly_dark' : 'plotly_white',
+      paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
+      annotations: [{text: 'No valid data in N-slice', xref: 'paper', yref: 'paper',
+                     x: 0.5, y: 0.5, showarrow: false,
+                     font: {size: 14, color: annotCol()}}],
+    }, {responsive: true});
+    return;
+  }
+
+  // Main rate curve — regime-coloured segments or single accent line
+  if (data.color_regimes && ridV.some(v => v != null && isFinite(v))) {
+    segmentsByRegime(xv, zv, ridV, cdV, {
+      lineWidth: 2.5, hovertemplate: N_HOVER, hoverlabel: hl,
+    }).forEach(t => traces.push(t));
+  } else {
+    traces.push({
+      type: 'scatter', x: xv, y: zv,
+      customdata: cdV,
+      mode: 'lines',
+      line: {color: accent, width: 2.5},
+      showlegend: false,
+      hovertemplate: N_HOVER,
+      hoverlabel: hl,
+    });
+  }
+
+  // Optimal N_exp marker (amber diamond) — placed on the CURRENT curve at
+  // argmin|N_sweep - N_opt|. Matches components/figures.py:L374-L392 (upstream).
+  if (data.N_opt != null && isFinite(data.N_opt) && xv.length > 0) {
+    let optIdx = 0, optDist = Infinity;
+    for (let k = 0; k < xv.length; k++) {
+      const d = Math.abs(xv[k] - data.N_opt);
+      if (d < optDist) { optDist = d; optIdx = k; }
+    }
+    const R_at_N_opt = zv[optIdx];
+    if (isFinite(R_at_N_opt) && R_at_N_opt > 0) {
+      const cd = cdV[optIdx] || [tCadRow, null, null, null];
+      traces.push({
+        type: 'scatter', x: [data.N_opt], y: [R_at_N_opt],
+        mode: 'markers',
+        marker: {size: 12, color: AMBER, symbol: 'diamond', line: {width: 1.5, color: 'white'}},
+        name: 'Opt. N<sub>exp</sub>',
+        customdata: [cd],
+        hovertemplate:
+          'N<sub>exp,opt</sub> = %{x:.4g}<br>' +
+          't<sub>cad</sub> = %{customdata[0]:.4g} hr<br>' +
+          't<sub>exp</sub> = %{customdata[1]:.3g} s<br>' +
+          'q<sub>med</sub> = %{customdata[2]:.3g}<br>' +
+          'D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>' +
+          'R<sub>det</sub> = %{y:.4g} yr ⁻¹' +
+          '<extra>Opt. N<sub>exp</sub></extra>',
+        hoverlabel: hl,
+      });
+    }
+  }
+
+  // Reference lines: ZTF horizontal (R_ztf) + ZTF vertical (N_ztf)
+  const shapes = [];
+  const annotations = [{
+    text: 'N<sub>exp</sub> slice  |  t<sub>cad</sub> = ' +
+          (tCadRow != null && isFinite(tCadRow) ? _fmtTcad(tCadRow * 3600) : '?'),
+    xref: 'paper', yref: 'paper', x: 0.01, y: 1.0,
+    showarrow: false, xanchor: 'left', yanchor: 'top',
+    font: {size: 12, color: annotCol()},
+  }];
+  // Dashed `Opt. t_cad` callout when the slice is not near the optimum.
+  if (data.t_cad_opt_h != null && isFinite(data.t_cad_opt_h) && tCadRow != null
+      && Math.abs(tCadRow - data.t_cad_opt_h) / (data.t_cad_opt_h + 1e-30) > 0.02) {
+    annotations.push({
+      text: 'Opt. t<sub>cad</sub> = ' + _fmtTcad(data.t_cad_opt_h * 3600),
+      xref: 'paper', yref: 'paper', x: 0.99, y: 0.98,
+      showarrow: false, xanchor: 'right', yanchor: 'top',
+      font: {size: 10, color: AMBER},
+    });
+  }
+  if (data.R_ztf != null && isFinite(data.R_ztf)) {
+    shapes.push({
+      type: 'line', xref: 'paper', x0: 0, x1: 1,
+      yref: 'y', y0: data.R_ztf, y1: data.R_ztf,
+      line: {color: CORAL, width: 1.5, dash: 'dot'},
+    });
+    annotations.push({
+      text: 'R<sub>ZTF</sub> = ' + (+data.R_ztf).toPrecision(2).replace(/\.?0+$/, '') + ' yr ⁻¹',
+      xref: 'paper', yref: 'y', x: 0.98, y: data.R_ztf,
+      xanchor: 'right', yanchor: 'bottom', showarrow: false,
+      font: {size: 11, color: CORAL},
+    });
+  }
+  if (data.N_ztf != null && isFinite(data.N_ztf)) {
+    shapes.push({
+      type: 'line', yref: 'paper', y0: 0, y1: 1,
+      xref: 'x', x0: data.N_ztf, x1: data.N_ztf,
+      line: {color: CORAL, width: 1.2, dash: 'dot'},
+    });
+    annotations.push({
+      text: 'N<sub>ZTF</sub>=' + Math.round(data.N_ztf),
+      xref: 'x', yref: 'paper', x: data.N_ztf, y: 0.04,
+      xanchor: 'center', yanchor: 'bottom', showarrow: false,
+      font: {size: 10, color: CORAL},
+    });
+  }
+
+  const layout = {
+    // Dash's build_nslice_figure intentionally omits uirevision so the 2D view
+    // resets on every update (matches Plotly.py default behaviour).
+    template: dark ? 'plotly_dark' : 'plotly_white',
+    paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
+    font: {family: "'JetBrains Mono','Cascadia Code',monospace", color: fontCol(), size: 12},
+    margin: {l: 64, r: 24, b: 48, t: 40},
+    xaxis: {title: 'N<sub>exp</sub>', type: 'log', showgrid: true, gridcolor: gridColLight()},
+    yaxis: {title: 'R<sub>det</sub> [yr ⁻¹]', type: 'log', showgrid: true, gridcolor: gridColLight()},
+    showlegend: true,
+    legend: {x: 0.01, y: 0.98, xanchor: 'left', yanchor: 'top', bgcolor: 'rgba(0,0,0,0)', font: {size: 11}},
+    annotations: annotations,
+    shapes: shapes,
+    hoverlabel: {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'},
+  };
+
+  Plotly.react('plot-nslice', traces, layout, {responsive: true});
+}
+
+// ── T-slice render (R vs t_cad at optimal N_exp) ───────────────────────────
+// Ports components/figures.py::build_tslice_figure. Builds two data regions:
+// (1) a continuous sub-night sweep (t_cad < gap_lo_h) taken from the 2-D grid
+//     column at N_opt, and (2) a discrete-day region (integer-day cadences)
+//     extracted from the shared `dayLine` payload. In optical mode an amber
+//     gap rectangle spans [gap_lo_h, gap_hi_h]. In regime-colour mode both
+//     regions use `segmentsByRegime`, and discrete days get per-day markers
+//     coloured by regime (matches Dash's overlay markers in figures.py).
+function renderTSlice(data) {
+  const opticalOn  = data.gap_lo_h != null && isFinite(data.gap_lo_h);
+  const gapLo      = data.gap_lo_h;
+  const gapHi      = data.gap_hi_h;
+  // Slice position (N_exp) comes from the tslice-nfix-slider payload, with
+  // optimum fallback for the initial render.
+  const N_fix      = (data.N_fix != null && isFinite(data.N_fix))
+    ? data.N_fix
+    : (data.N_opt != null && isFinite(data.N_opt) ? data.N_opt : null);
+  const N_opt_col  = N_fix;
+
+  // Chunk 7: consume dedicated high-res t-slice sweeps (600 cont / 500 disc
+  // for optical, or 1500 cont + 0 disc for non-optical) computed by the
+  // bridge. Mirrors callbacks/surface.py:471-513.
+  const tContArr = data.t_cont_h_flat         || [];
+  const rContArr = data.t_cont_R_flat         || [];
+  const tecContArr = data.t_cont_t_exp_flat   || [];
+  const qmContArr  = data.t_cont_q_med_flat   || [];
+  const dmContArr  = data.t_cont_D_med_Gpc_flat|| [];
+  const ridContArr = data.t_cont_regime_flat  || [];
+
+  // ── Continuous region ────────────────────────────────────────────────────
+  const tCont = [], rCont = [], ridCont = [], cdCont = [];
+  for (let i = 0; i < tContArr.length; i++) {
+    const y = tContArr[i], z = rContArr[i];
+    if (y == null || !isFinite(y) || z == null || !isFinite(z) || !(z > 0)) continue;
+    tCont.push(y);
+    rCont.push(z);
+    ridCont.push(ridContArr.length ? ridContArr[i] : null);
+    cdCont.push([
+      N_opt_col,
+      tecContArr.length ? tecContArr[i] : null,
+      qmContArr.length  ? qmContArr[i]  : null,
+      dmContArr.length  ? dmContArr[i]  : null,
+    ]);
+  }
+
+  // ── Discrete-day region (optical only; empty otherwise) ──────────────────
+  const tDiscArr   = data.t_disc_h_flat         || [];
+  const rDiscArr   = data.t_disc_R_flat         || [];
+  const tecDiscArr = data.t_disc_t_exp_flat     || [];
+  const qmDiscArr  = data.t_disc_q_med_flat     || [];
+  const dmDiscArr  = data.t_disc_D_med_Gpc_flat || [];
+  const ridDiscArr = data.t_disc_regime_flat    || [];
+
+  const tDisc = [], rDisc = [], ridDisc = [], cdDisc = [];
+  for (let i = 0; i < tDiscArr.length; i++) {
+    const y = tDiscArr[i], z = rDiscArr[i];
+    if (y == null || !isFinite(y) || z == null || !isFinite(z) || !(z > 0)) continue;
+    tDisc.push(y);
+    rDisc.push(z);
+    ridDisc.push(ridDiscArr.length ? ridDiscArr[i] : null);
+    cdDisc.push([
+      N_opt_col,
+      tecDiscArr.length ? tecDiscArr[i] : null,
+      qmDiscArr.length  ? qmDiscArr[i]  : null,
+      dmDiscArr.length  ? dmDiscArr[i]  : null,
+    ]);
+  }
+
+  const hasCont = tCont.length > 0;
+  const hasDisc = tDisc.length > 0;
+
+  const dark = darkMode();
+  const accent = dark ? '#6d9eff' : '#3b6fff';
+  const gapCol = dark ? 'rgba(255,200,100,0.07)' : 'rgba(200,140,0,0.07)';
+  const hl = {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'};
+  const colorOn = !!data.color_regimes;
+
+  const traces = [];
+  regimeLegendTraces2D(colorOn).forEach(t => traces.push(t));
+
+  if (!hasCont && !hasDisc) {
+    Plotly.react('plot-tslice', traces, {
+      template: dark ? 'plotly_dark' : 'plotly_white',
+      paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
+      annotations: [{text: 'No valid data in t-slice', xref: 'paper', yref: 'paper',
+                     x: 0.5, y: 0.5, showarrow: false,
+                     font: {size: 14, color: annotCol()}}],
+    }, {responsive: true});
+    return;
+  }
+
+  // ── Continuous region traces ─────────────────────────────────────────────
+  if (hasCont) {
+    const ridFinite = ridCont.some(v => v != null && isFinite(v));
+    if (colorOn && ridFinite) {
+      segmentsByRegime(tCont, rCont, ridCont, cdCont, {
+        lineWidth: 2.5, hovertemplate: T_HOVER, hoverlabel: hl,
+      }).forEach(t => traces.push(t));
+    } else {
+      traces.push({
+        type: 'scatter', x: tCont, y: rCont,
+        customdata: cdCont,
+        mode: 'lines',
+        line: {color: accent, width: 2.5},
+        showlegend: false,
+        hovertemplate: T_HOVER,
+        hoverlabel: hl,
+      });
+    }
+  }
+
+  // ── Discrete-day region: connecting lines + per-day markers ──────────────
+  if (hasDisc) {
+    const ridFinite = ridDisc.some(v => v != null && isFinite(v));
+    if (colorOn && ridFinite) {
+      // Regime-coloured connecting segments (thinner + slightly faded)
+      segmentsByRegime(tDisc, rDisc, ridDisc, cdDisc, {
+        lineWidth: 1.5, opacity: 0.9,
+        hovertemplate: T_HOVER, hoverlabel: hl,
+      }).forEach(t => traces.push(t));
+      // Per-day markers coloured by regime — matches Dash's overlay markers
+      // inside components/figures.py::build_tslice_figure L796-808.
+      for (let k = 0; k < tDisc.length; k++) {
+        const rv = ridDisc[k];
+        const col = (rv != null && isFinite(rv) && rv >= 1 && rv <= 7)
+          ? REGIME_HEX[(rv | 0) - 1] : '#888';
+        traces.push({
+          type: 'scatter',
+          x: [tDisc[k]], y: [rDisc[k]],
+          mode: 'markers',
+          marker: {size: 6, color: col, line: {width: 1, color: 'white'}},
+          showlegend: false,
+          customdata: [cdDisc[k]],
+          hovertemplate: T_HOVER,
+          hoverlabel: hl,
+        });
+      }
+    } else {
+      traces.push({
+        type: 'scatter', x: tDisc, y: rDisc,
+        customdata: cdDisc,
+        mode: 'markers+lines',
+        marker: {size: 5, color: accent, line: {width: 1, color: 'white'}},
+        line: {color: hexToRgba('#6d9eff', 0.4), width: 1.5},
+        showlegend: false,
+        hovertemplate: T_HOVER,
+        hoverlabel: hl,
+      });
+    }
+  }
+
+  // ── Optimal t_cad marker — find R on the CURRENT curve at t_cad_opt_h ───
+  // When the slice N_exp is off-optimum, the marker's R value differs from
+  // data.R_opt (which was taken at both optima). Mirrors Dash upstream.
+  const tOptH = data.t_cad_opt_h;
+  if (tOptH != null && isFinite(tOptH)) {
+    // Prefer whichever region contains t_cad_opt_h.
+    let tSrc = null, rSrc = null, cdSrc = null;
+    if (hasDisc) {
+      let bestI = 0, bestD = Infinity;
+      for (let k = 0; k < tDisc.length; k++) {
+        const d = Math.abs(tDisc[k] - tOptH);
+        if (d < bestD) { bestD = d; bestI = k; }
+      }
+      // Accept discrete match only when close (half-day tolerance).
+      if (bestD < 12.0) { tSrc = tDisc[bestI]; rSrc = rDisc[bestI]; cdSrc = cdDisc[bestI]; }
+    }
+    if (rSrc == null && hasCont) {
+      let bestI = 0, bestD = Infinity;
+      for (let k = 0; k < tCont.length; k++) {
+        const d = Math.abs(tCont[k] - tOptH);
+        if (d < bestD) { bestD = d; bestI = k; }
+      }
+      tSrc = tCont[bestI]; rSrc = rCont[bestI]; cdSrc = cdCont[bestI];
+    }
+    if (rSrc != null && isFinite(rSrc) && rSrc > 0) {
+      traces.push({
+        type: 'scatter', x: [tSrc], y: [rSrc],
+        mode: 'markers',
+        marker: {size: 12, color: AMBER, symbol: 'diamond', line: {width: 1.5, color: 'white'}},
+        name: 'Opt. t<sub>cad</sub>',
+        customdata: [cdSrc || [N_opt_col, null, null, null]],
+        hovertemplate:
+          'N<sub>exp</sub> = %{customdata[0]:.4g}<br>' +
+          't<sub>cad,opt</sub> = %{x:.4g} hr<br>' +
+          't<sub>exp</sub> = %{customdata[1]:.3g} s<br>' +
+          'q<sub>med</sub> = %{customdata[2]:.3g}<br>' +
+          'D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>' +
+          'R<sub>det</sub> = %{y:.4g} yr ⁻¹' +
+          '<extra>Opt. t<sub>cad</sub></extra>',
+        hoverlabel: hl,
+      });
+    }
+  }
+
+  // ── Shapes: gap rectangle + ZTF H-line + ZTF V-line + opt V-line ─────────
+  const shapes = [];
+  const annotations = [{
+    text: 't<sub>cad</sub> slice  |  N<sub>exp</sub> = ' +
+          (N_fix != null && isFinite(N_fix) ? _fmtNexp(N_fix) + ' fields' : '?'),
+    xref: 'paper', yref: 'paper', x: 0.01, y: 1.0,
+    showarrow: false, xanchor: 'left', yanchor: 'top',
+    font: {size: 12, color: annotCol()},
+  }];
+  // Dashed `Opt. N_exp` callout when the slice is not near the optimum.
+  if (data.N_opt != null && isFinite(data.N_opt) && N_fix != null
+      && Math.abs(N_fix - data.N_opt) / (data.N_opt + 1e-30) > 0.02) {
+    annotations.push({
+      text: 'Opt. N<sub>exp</sub> = ' + _fmtNexp(data.N_opt),
+      xref: 'paper', yref: 'paper', x: 0.99, y: 0.98,
+      showarrow: false, xanchor: 'right', yanchor: 'top',
+      font: {size: 10, color: AMBER},
+    });
+  }
+
+  if (opticalOn && gapLo != null && gapHi != null && gapLo < gapHi) {
+    shapes.push({
+      type: 'rect', xref: 'x', yref: 'paper',
+      x0: gapLo, x1: gapHi, y0: 0, y1: 1,
+      fillcolor: gapCol, line: {width: 0}, layer: 'below',
+    });
+    annotations.push({
+      text: 'gap',
+      xref: 'x', yref: 'paper',
+      x: Math.sqrt(gapLo * gapHi), y: 0.99,
+      xanchor: 'center', yanchor: 'top', showarrow: false,
+      font: {size: 10, color: AMBER},
+    });
+  }
+
+  if (data.R_ztf != null && isFinite(data.R_ztf)) {
+    shapes.push({
+      type: 'line', xref: 'paper', x0: 0, x1: 1,
+      yref: 'y', y0: data.R_ztf, y1: data.R_ztf,
+      line: {color: CORAL, width: 1.5, dash: 'dot'},
+    });
+    annotations.push({
+      text: 'R<sub>ZTF</sub> = ' + (+data.R_ztf).toPrecision(2).replace(/\.?0+$/, '') + ' yr ⁻¹',
+      xref: 'paper', yref: 'y', x: 0.98, y: data.R_ztf,
+      xanchor: 'right', yanchor: 'bottom', showarrow: false,
+      font: {size: 11, color: CORAL},
+    });
+  }
+
+  const tZtfH = data.t_cad_ztf_h;
+  if (tZtfH != null && isFinite(tZtfH)) {
+    shapes.push({
+      type: 'line', yref: 'paper', y0: 0, y1: 1,
+      xref: 'x', x0: tZtfH, x1: tZtfH,
+      line: {color: CORAL, width: 1.2, dash: 'dot'},
+    });
+  }
+
+  if (tOptH != null && isFinite(tOptH)) {
+    shapes.push({
+      type: 'line', yref: 'paper', y0: 0, y1: 1,
+      xref: 'x', x0: tOptH, x1: tOptH,
+      line: {color: AMBER, width: 1.8, dash: 'dash'},
+    });
+  }
+
+  const layout = {
+    // Dash's build_tslice_figure intentionally omits uirevision so the 2D view
+    // resets on every update (matches Plotly.py default behaviour).
+    template: dark ? 'plotly_dark' : 'plotly_white',
+    paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
+    font: {family: "'JetBrains Mono','Cascadia Code',monospace", color: fontCol(), size: 12},
+    margin: {l: 64, r: 24, b: 48, t: 40},
+    xaxis: {
+      title: 't<sub>cad</sub>', type: 'log',
+      tickvals: TCAD_TICKVALS_H, ticktext: TCAD_TICKTEXT,
+      showgrid: true, gridcolor: gridColLight(),
+    },
+    yaxis: {title: 'R<sub>det</sub> [yr ⁻¹]', type: 'log', showgrid: true, gridcolor: gridColLight()},
+    showlegend: true,
+    legend: {x: 0.01, y: 0.98, xanchor: 'left', yanchor: 'top', bgcolor: 'rgba(0,0,0,0)', font: {size: 11}},
+    annotations: annotations,
+    shapes: shapes,
+    hoverlabel: {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'},
+  };
+
+  Plotly.react('plot-tslice', traces, layout, {responsive: true});
+}
+
+// ── Re-render all visible plots (theme change) ────────────────────────────
+function rerenderAll(data) {
+  const params = readParams();
+  render3DSurface(data, params);
+  if (_currentTab === 'nslice') renderNSlice(data);
+  if (_currentTab === 'tslice') renderTSlice(data);
+}
+
+// ── Metrics bar update ─────────────────────────────────────────────────────
+function updateMetricsBar(data) {
+  document.getElementById('m-R-opt').textContent    = fmtR(data.R_opt) + (data.R_opt != null ? ' /yr' : '');
+  document.getElementById('m-tcad-opt').textContent  = fmtT(data.t_cad_opt_s);
+  document.getElementById('m-N-opt').textContent     = fmtN(data.N_opt);
+  document.getElementById('m-texp-opt').textContent  = fmtT(data.t_exp_opt_s);
+  document.getElementById('m-R-ztf').textContent     = fmtR(data.R_ztf) + (data.R_ztf != null ? ' /yr' : '');
+  document.getElementById('m-tcad-ztf').textContent  = fmtT(data.t_cad_ztf_s);
+  document.getElementById('m-N-ztf').textContent     = fmtN(data.N_ztf);
+  document.getElementById('m-texp-ztf').textContent  = fmtT(data.t_exp_ztf_s);
+
+  const gainEl = document.getElementById('m-gain');
+  if (data.R_opt != null && data.R_ztf != null && isFinite(data.R_opt) && isFinite(data.R_ztf) && data.R_ztf > 0) {
+    const gain = data.R_opt / data.R_ztf;
+    gainEl.textContent = '×' + gain.toFixed(2);
+    gainEl.className = 'metric-value metric-gain ' + (gain >= 1 ? 'positive' : 'negative');
+  } else {
+    gainEl.textContent = '—';
+    gainEl.className = 'metric-value metric-gain';
+  }
+}
+
+// ── Derived display update ─────────────────────────────────────────────────
+function updateDerivedDisplays(data) {
+  if (!data) return;
+  const fmt = x => x >= 1e6 ? (x/1e6).toFixed(1)+'M' : x >= 1e3 ? (x/1e3).toFixed(1)+'k' : x.toFixed(1);
+  document.getElementById('grb-ntotal-display').innerHTML  = 'R<sub>int</sub> = ' + fmt(data.R_int_yr) + ' yr⁻¹';
+  document.getElementById('grb-ntoward-display').innerHTML = 'f<sub>b</sub>R<sub>int</sub> = ' + fmt(data.R_toward_day) + ' day⁻¹';
+}
+
+// ── CSV export ─────────────────────────────────────────────────────────────
+document.getElementById('export-btn').addEventListener('click', () => {
+  if (!_lastData || !_lastData.X_flat) { alert('No data yet — run a computation first.'); return; }
+  const d = _lastData;
+  const [ny, nx] = d.shape;
+  const n = ny * nx;
+  const rows = ['N_exp,t_cad_s,t_cad_h,log10_R_det,regime_id'];
+  for (let i = 0; i < n; i++) {
+    const N = d.X_flat[i], t = d.Y_flat[i], z = d.Z_log_flat ? d.Z_log_flat[i] : null, r = d.regime_flat ? d.regime_flat[i] : null;
+    if (N == null || t == null) continue;
+    // d.Y_flat is in hours (t_cad_h); t_cad_s = t_cad_h * 3600 to match Dash column order
+    rows.push([
+      N.toExponential(4),
+      (t * 3600).toFixed(6),
+      t.toFixed(6),
+      z != null ? z.toFixed(4) : '',
+      r != null ? Math.round(r) : '',
+    ].join(','));
+  }
+  const blob = new Blob([rows.join('\n')], {type: 'text/csv'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'grb_detection_surface.csv'; a.click();
+  URL.revokeObjectURL(url);
+});
+
+// ── Pyodide initialization ─────────────────────────────────────────────────
+async function initPyodide() {
+  try {
+    setStatus('Loading Pyodide runtime…', true);
+    pyodide = await loadPyodide({
+      indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.0/full/',
+    });
+    window.pyodide = pyodide;
+
+    setStatus('Installing NumPy…', true);
+    await pyodide.loadPackage(['numpy']);
+
+    setStatus('Unpacking physics engine…', true);
+    const b64 = document.getElementById('physics-zip').textContent.trim();
+    const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+    await pyodide.unpackArchive(bin, 'zip');
+
+    setStatus('Importing bridge module…', true);
+    await pyodide.runPythonAsync('import standalone_bridge');
+
+    // Warm-up call primes the LRU cache with default parameters
+    setStatus('Warming up model cache…', true);
+    await pyodide.runPythonAsync(`
+import standalone_bridge as _b
+_b.compute_all({
+    'i_det':10,'A_log':-4.68,'f_live':0.2,'t_overhead_s':0.0,
+    'omega_exp_deg2':47.0,'omega_srv_deg2':27500.0,'t_night_h':10.0,
+    'p':2.5,'nu_log10':14.7,'E_kiso_log10':53.0,'n0_log10':0.0,
+    'epsilon_e_log10':-1.0,'epsilon_B_log10':-2.0,'theta_j_rad':0.1,
+    'gamma0_log10':2.5,'D_euc_gpc':5.28,'rho_grb_log10':2.415,
+    'optical_survey':False,'color_regimes':False,
+    'full_integral':False,'off_axis':False,'toh_approx':False,'nx':60,'ny':80,
+})
+print('Bridge ready')
+`);
+
+    const _sbMod = pyodide.globals.get('standalone_bridge');
+    pyComputeAll    = _sbMod.compute_all;
+    pyComputeNslice = _sbMod.compute_nslice;
+    pyComputeTslice = _sbMod.compute_tslice;
+    setStatus('Ready — rendering initial surface…', true);
+    updateGrbCounts();
+    updateNexpMaxDisplay();
+    updateSubnightLimitDisplay();
+    updateNsliceTfixDisplay();
+    updateTsliceNfixDisplay();
+    runUpdate();
+
+  } catch (e) {
+    setStatus('Initialization failed: ' + e.message);
+    console.error(e);
+  }
+}
+
+initPyodide();
+</script>
+</body>
+</html>
