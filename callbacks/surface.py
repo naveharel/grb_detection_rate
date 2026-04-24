@@ -98,6 +98,7 @@ def _compute_rate(
     f_live: float,
     t_overhead_s: float,
     color_on: bool,
+    off_axis: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute (R, t_exp, q_med, D_med_Gpc, rid) for a 1-D sweep.
 
@@ -122,7 +123,7 @@ def _compute_rate(
         masks = model.region_masks(i_det, N_arr, t_arr, include_unphysical=False)
         rid = _masks_1d(masks, len(N_arr))
 
-    q_med, D_med_cm = model.compute_medians(i_det, N_arr, t_arr, full_integral=full_integral)
+    q_med, D_med_cm = model.compute_medians(i_det, N_arr, t_arr, full_integral=full_integral, off_axis=off_axis)
     t_exp = model.t_exp_s(N_arr, t_arr)
     D_med_Gpc = D_med_cm / GPC_TO_CM
 
@@ -203,7 +204,7 @@ def _eval_point(
 
     # Medians — use model_day for consistency with compute_surface
     try:
-        qm, dm = model_day.compute_medians(i_det, N_arr, t_arr, full_integral=full_integral)
+        qm, dm = model_day.compute_medians(i_det, N_arr, t_arr, full_integral=full_integral, off_axis=off_axis)
         q_med     = float(qm[0])
         D_med_Gpc = float(dm[0]) / GPC_TO_CM
     except Exception:
@@ -245,7 +246,9 @@ def register(app: dash.Dash) -> None:
         Input("gamma0_log_slider", "value"),
         Input("deuc_slider", "value"),
         Input("rho_grb_log_slider", "value"),
-        State("view-store", "data"),
+        Input("nslice-tfix-slider", "value"),
+        Input("tslice-nfix-slider", "value"),
+        Input("view-store", "data"),
     )
     def update_all_visuals(
         i_det, A_log, omega_exp_deg2, f_live, t_overhead_s,
@@ -253,7 +256,7 @@ def register(app: dash.Dash) -> None:
         full_integral_switch, off_axis_switch,
         p_val, nu_log, ekiso_log, n0_log, epse_val, epsB_val,
         thetaj_val, gamma0_log, deuc_gpc, rho_grb_log,
-        view_mode,
+        nslice_tfix_log, tslice_nfix_log, view_mode,
     ):
         optical_on = bool(optical_switch)
         approx_on = bool(toh_approx_switch)
@@ -434,39 +437,43 @@ def register(app: dash.Dash) -> None:
                 Rmax=Rmax, theme=theme,
             )
 
-        # ── N-slice (R vs N_exp at optimal t_cad) ────────────────────────────
+        # ── N-slice (R vs N_exp at slider-controlled t_cad) ─────────────────
         if view_mode != "nslice":
             fig_nslice = dash.no_update
-        elif np.isfinite(N_opt) and np.isfinite(t_cad_opt_s):
+        else:
+            t_cad_fix_s  = 10 ** float(nslice_tfix_log)
+            t_cad_fix_hr = t_cad_fix_s / 3600.0
             N_sweep = np.logspace(0, np.log10(N_exp_max), 800)
-            t_fixed = np.full_like(N_sweep, t_cad_opt_s)
-            model_nslice = _pick_model(t_cad_opt_s, optical_on, model_day, model_night)
+            t_fixed = np.full_like(N_sweep, t_cad_fix_s)
+            model_nslice = _pick_model(t_cad_fix_s, optical_on, model_day, model_night)
             R_n, t_exp_n, q_med_n, D_med_Gpc_n, rid_n = _compute_rate(
                 model_nslice, int(i_det), N_sweep, t_fixed,
                 full_integral=full_integral_on,
                 optical_on=optical_on, model_night=model_night,
-                t_cad_scalar=t_cad_opt_s, f_night_val=f_night_val,
+                t_cad_scalar=t_cad_fix_s, f_night_val=f_night_val,
                 approx_on=approx_on, f_live=float(f_live),
                 t_overhead_s=float(t_overhead_s), color_on=color_on,
+                off_axis=off_axis_on,
             )
             fig_nslice = build_nslice_figure(
                 N_sweep=N_sweep, R_n=R_n, rid_n=rid_n,
                 t_exp_n=t_exp_n, q_med_n=q_med_n, D_med_Gpc_n=D_med_Gpc_n,
-                N_opt=N_opt, R_opt=R_opt, R_ztf=R_ztf, N_ztf=N_ztf,
-                t_cad_opt_hr=t_cad_opt_hr, color_on=color_on, theme=theme,
+                N_opt=N_opt, R_ztf=R_ztf, N_ztf=N_ztf,
+                t_cad_fix_hr=t_cad_fix_hr, t_cad_opt_hr=t_cad_opt_hr,
+                color_on=color_on, theme=theme,
             )
-        else:
-            fig_nslice = build_empty_figure("Optimization failed — no optimal point found", theme)
 
-        # ── t-slice (R vs t_cad at optimal N_exp) ────────────────────────────
+        # ── t-slice (R vs t_cad at slider-controlled N_exp) ─────────────────
         if view_mode != "tslice":
             fig_tslice = dash.no_update
-        elif np.isfinite(N_opt) and np.isfinite(t_cad_opt_s):
+        else:
+            N_fix = 10 ** float(tslice_nfix_log)
             _cr_kwargs = dict(
                 full_integral=full_integral_on,
                 optical_on=optical_on, model_night=model_night,
                 approx_on=approx_on, f_live=float(f_live),
                 t_overhead_s=float(t_overhead_s), color_on=color_on,
+                off_axis=off_axis_on,
             )
             if optical_on and model_night is not None:
                 # Continuous region (sub-night, uses model_night)
@@ -476,7 +483,7 @@ def register(app: dash.Dash) -> None:
                     np.log10(max(11.0, t_cont_max_s * 0.999)),
                     600,
                 )
-                N_cont = np.full_like(t_cont, float(N_opt))
+                N_cont = np.full_like(t_cont, N_fix)
                 R_cont, t_exp_cont, q_med_cont, D_med_Gpc_cont, rid_cont = _compute_rate(
                     model_night, int(i_det), N_cont, t_cont,
                     t_cad_scalar=0.0,  # always sub-day for cont region → force f_night scaling
@@ -486,7 +493,7 @@ def register(app: dash.Dash) -> None:
                 # Discrete region (integer days, uses model_day)
                 n_max_days = min(500, int(np.floor(1e8 / DAY_S)))
                 t_disc = np.arange(1, n_max_days + 1, dtype=float) * DAY_S
-                N_disc = np.full_like(t_disc, float(N_opt))
+                N_disc = np.full_like(t_disc, N_fix)
                 R_disc, t_exp_disc, q_med_disc, D_med_Gpc_disc, rid_disc = _compute_rate(
                     model_day, int(i_det), N_disc, t_disc,
                     t_cad_scalar=float(DAY_S),  # multi-day → no f_night scaling
@@ -500,12 +507,12 @@ def register(app: dash.Dash) -> None:
                     t_exp_disc=t_exp_disc, q_med_disc=q_med_disc, D_med_Gpc_disc=D_med_Gpc_disc,
                     gap_lo_h=t_cont_max_s / 3600.0, gap_hi_h=24.0,
                     t_opt_h=t_cad_opt_hr, t_ztf_h=t_cad_ztf_hr,
-                    R_ztf=R_ztf, R_opt=R_opt, N_opt=N_opt,
+                    R_ztf=R_ztf, R_opt=R_opt, N_fix=N_fix, N_opt=N_opt,
                     color_on=color_on, theme=theme, optical_on=True,
                 )
             else:
                 t_sweep = np.logspace(0, 8, 1500)
-                N_fixed = np.full_like(t_sweep, float(N_opt))
+                N_fixed = np.full_like(t_sweep, N_fix)
                 R_sweep, t_exp_sw, q_med_sw, D_med_Gpc_sw, rid_sweep = _compute_rate(
                     model_day, int(i_det), N_fixed, t_sweep,
                     t_cad_scalar=float(DAY_S),  # non-optical: no f_night scaling
@@ -519,11 +526,9 @@ def register(app: dash.Dash) -> None:
                     t_exp_disc=_empty_arr, q_med_disc=_empty_arr, D_med_Gpc_disc=_empty_arr,
                     gap_lo_h=None, gap_hi_h=None,
                     t_opt_h=t_cad_opt_hr, t_ztf_h=t_cad_ztf_hr,
-                    R_ztf=R_ztf, R_opt=R_opt, N_opt=N_opt,
+                    R_ztf=R_ztf, R_opt=R_opt, N_fix=N_fix, N_opt=N_opt,
                     color_on=color_on, theme=theme, optical_on=False,
                 )
-        else:
-            fig_tslice = build_empty_figure("Optimization failed — no optimal point found", theme)
 
         # ── Metrics strip ─────────────────────────────────────────────────────
         metrics_children = build_metrics_bar(

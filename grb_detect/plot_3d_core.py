@@ -378,13 +378,10 @@ def _on_axis_rate_linear(
     q_dec   = float(model.derived.q_dec)
     R_int   = model.phys.R_int_yr
 
-    # Cap D_dec at D_euc (Euclidean horizon).  We deliberately do NOT apply
-    # the cadence distance D_i here: the A7 piecewise formula uses D_dec alone,
-    # and mixing in D_i would cause a sign mismatch that leaves spurious positive
-    # R_off values in A7 (where R_off should be exactly zero).  In cadence-limited
-    # regimes (A4-A6) r_on is slightly over-estimated, giving a conservative
-    # (under-counted) off-axis rate — acceptable near the A7 boundary.
-    D_eff_on = np.minimum(D_dec / D_euc, 1.0)
+    # Apply both flux (D_dec) and cadence (D_i) constraints, then cap at D_euc.
+    # In A7 (D_i > D_dec since q_i < q_dec) this is a no-op.
+    # In A4-A6 (D_i < D_dec) it fixes R_on >> R_total which drove R_off negative.
+    D_eff_on = np.minimum(np.minimum(D_dec, D_i) / D_euc, 1.0)
     r_on = 0.5 * fO * (theta_j ** 2) * (q_dec ** 2) * (D_eff_on ** 3) * R_int
     return np.where(np.isfinite(t_exp) & (t_exp > 0), r_on, np.nan)
 
@@ -522,7 +519,7 @@ def compute_surface(
     # t_exp uses t_cad_eff (optical-corrected cadence) to match the rate computation.
     t_exp_grid      = model_day.t_exp_s(N_exp, t_cad_eff)
     q_med_grid, D_med_cm_grid = model_day.compute_medians(
-        i_det, N_exp, t_cad_eff, full_integral=full_integral,
+        i_det, N_exp, t_cad_eff, full_integral=full_integral, off_axis=off_axis,
     )
     D_med_Gpc_grid  = D_med_cm_grid / GPC_TO_CM
 

@@ -2,10 +2,16 @@
 """Top-level Dash app layout using DBC and custom CSS flexbox."""
 from __future__ import annotations
 
+import math
+
 import dash_bootstrap_components as dbc
 from dash import dcc, html
 
 from components.sidebar import create_sidebar
+
+# Default initial values for slice position sliders (log₁₀ units)
+_NSLICE_TFIX_DEFAULT = round(math.log10(86400), 3)   # 1 day
+_TSLICE_NFIX_DEFAULT = 2.0                             # 100 fields
 
 
 def create_layout() -> html.Div:
@@ -62,12 +68,18 @@ def create_layout() -> html.Div:
                                     html.Button("3D", id="btn-view-3d",
                                                 className="view-btn active", n_clicks=0,
                                                 title="3D surface view"),
-                                    html.Button("N-slice", id="btn-view-nslice",
-                                                className="view-btn", n_clicks=0,
-                                                title="R vs N_exp at optimal cadence"),
-                                    html.Button("t-slice", id="btn-view-tslice",
-                                                className="view-btn", n_clicks=0,
-                                                title="R vs t_cad at optimal N_exp"),
+                                    html.Button(
+                                        ["N", html.Sub("exp"), " slice"],
+                                        id="btn-view-nslice",
+                                        className="view-btn", n_clicks=0,
+                                        title="R vs N_exp at fixed t_cad",
+                                    ),
+                                    html.Button(
+                                        ["t", html.Sub("cad"), " slice"],
+                                        id="btn-view-tslice",
+                                        className="view-btn", n_clicks=0,
+                                        title="R vs t_cad at fixed N_exp",
+                                    ),
                                 ],
                             ),
                             # Theme toggle
@@ -108,26 +120,64 @@ def create_layout() -> html.Div:
                             html.Div(
                                 id="panel-nslice",
                                 className="view-panel",
-                                style={"display": "none"},
+                                style={"display": "none", "flexDirection": "column"},
                                 children=[
                                     dcc.Graph(
                                         id="graph-nslice",
                                         style={"flex": "1", "minHeight": "0"},
                                         config={"displayModeBar": True, "displaylogo": False},
                                     ),
+                                    html.Div(className="slice-ctrl", children=[
+                                        html.Span(
+                                            ["Fixed t", html.Sub("cad")],
+                                            className="slice-ctrl-label",
+                                        ),
+                                        dcc.Slider(
+                                            id="nslice-tfix-slider",
+                                            min=2, max=8, step=0.05,
+                                            value=_NSLICE_TFIX_DEFAULT,
+                                            marks={
+                                                2: "100 s",
+                                                3.56: "1 hr",
+                                                4.94: "1 day",
+                                                5.78: "1 wk",
+                                                7.5: "1 yr",
+                                            },
+                                            className="param-slider slice-pos-slider",
+                                        ),
+                                    ]),
                                 ],
                             ),
                             # t-slice view (hidden)
                             html.Div(
                                 id="panel-tslice",
                                 className="view-panel",
-                                style={"display": "none"},
+                                style={"display": "none", "flexDirection": "column"},
                                 children=[
                                     dcc.Graph(
                                         id="graph-tslice",
                                         style={"flex": "1", "minHeight": "0"},
                                         config={"displayModeBar": True, "displaylogo": False},
                                     ),
+                                    html.Div(className="slice-ctrl", children=[
+                                        html.Span(
+                                            ["Fixed N", html.Sub("exp")],
+                                            className="slice-ctrl-label",
+                                        ),
+                                        dcc.Slider(
+                                            id="tslice-nfix-slider",
+                                            min=0, max=4, step=0.05,
+                                            value=_TSLICE_NFIX_DEFAULT,
+                                            marks={
+                                                0: "1",
+                                                1: "10",
+                                                2: "100",
+                                                3: "1k",
+                                                4: "10k",
+                                            },
+                                            className="param-slider slice-pos-slider",
+                                        ),
+                                    ]),
                                 ],
                             ),
                             # Status / debug bar

@@ -76,7 +76,7 @@ def _param_block(
     ])
 
 
-def _toggle_block(switch_id: str, label: str, hint_children: list, default: bool = False) -> html.Div:
+def _toggle_block(switch_id: str, label, hint_children: list, default: bool = False) -> html.Div:
     """A switch with a descriptive hint line below it."""
     return html.Div([
         html.Div(className="param-switch-row", children=[
@@ -149,6 +149,7 @@ def _constraints_section() -> list:
             {100: "100", 10000: "10k", 27500: "27.5k", 41253: "41k"},
             input_step=100,
         ),
+        html.Div(id="nexpmax-display"),
         html.Div(
             id="tnight_container",
             style={"display": "none"},
@@ -161,6 +162,7 @@ def _constraints_section() -> list:
                     {4: "4", 6: "6", 8: "8", 10: "10", 12: "12", 14: "14"},
                     input_step=0.25,
                 ),
+                html.Div(id="subnight-limit-display"),
             ],
         ),
     ]
@@ -180,7 +182,7 @@ def _settings_section() -> list:
         ),
         _toggle_block(
             "toh-approx-switch",
-            "t_OH approximation",
+            ["t", html.Sub("OH"), " approximation"],
             [
                 "Uses the naive t", html.Sub("exp"), " = f", html.Sub("live"),
                 "·t", html.Sub("cad"), "/N", html.Sub("exp"),
@@ -248,13 +250,13 @@ def _physics_section() -> list:
         ),
         _param_block(
             ["log ν [Hz]"],
-            "log₁₀ of observing frequency in Hz. Range spans typical ν_m (lower end of "
-            "PLS G, ~10⁹ Hz at late Phase II) to just below typical ν_c (~10¹⁸ Hz). "
-            "Default 5×10¹⁴ Hz = optical V-band.",
+            "log₁₀ of observing frequency in Hz. Optical/near-IR window: "
+            "10^14.3 Hz (~1 μm, J-band) to 10^15.1 Hz (~80 nm, near-UV). "
+            "Default 5×10¹⁴ Hz = optical V-band (550 nm).",
             "nu_log_slider", "nu_log_input",
-            9.0, 18.0, 0.1, round(math.log10(_phys_defaults.nu_hz), 1),
-            {9: "9", 12: "12", 14.7: "14.7", 18: "18"},
-            input_step=0.1,
+            14.3, 15.1, 0.01, round(math.log10(_phys_defaults.nu_hz), 1),
+            {14.3: "14.3", 14.7: "14.7", 15.1: "15.1"},
+            input_step=0.01,
         ),
         _param_block(
             ["log E", html.Sub("k,iso"), " [erg]"],

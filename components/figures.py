@@ -312,10 +312,12 @@ def _add_discrete_day_lines(
         t_arr = np.full_like(N_cols, float(t_s))
         t_exp_arr = model_day.t_exp_s(N_cols, t_arr)
         q_med_arr, D_med_cm_arr = model_day.compute_medians(
-            int(i_det), N_cols, t_arr, full_integral=full_integral,
+            int(i_det), N_cols, t_arr, full_integral=full_integral, off_axis=off_axis,
         )
         D_med_Gpc_arr = D_med_cm_arr / _GPC
         return np.stack([t_exp_arr, q_med_arr, D_med_Gpc_arr], axis=-1)  # (nN, 3)
+
+    _pending_marker_traces: list[go.Scatter3d] = []
 
     for n in n_vals:
         t_s = float(n) * float(DAY_S)
@@ -360,11 +362,21 @@ def _add_discrete_day_lines(
                     ))
                 start = end
         else:
+            # Add line trace now; defer marker trace until after all lines so
+            # dots always render on top regardless of camera angle (WebGL depth-sort
+            # tie-breaks in favour of later draw calls).
             fig.add_trace(go.Scatter3d(
                 x=x, y=y, z=z,
                 customdata=_a2l(cd_good),
-                mode="lines+markers",
+                mode="lines",
                 line=dict(color="rgba(255,255,255,0.12)", width=_DL_WIDTH_HEIGHT),
+                showlegend=False,
+                hovertemplate=XYZ_HOVER,
+            ))
+            _pending_marker_traces.append(go.Scatter3d(
+                x=x, y=y, z=z,
+                customdata=_a2l(cd_good),
+                mode="markers",
                 marker=dict(
                     size=_DL_MARKER_HEIGHT,
                     color=_a2l(log10R[good]),
@@ -377,6 +389,9 @@ def _add_discrete_day_lines(
                 showlegend=False,
                 hovertemplate=XYZ_HOVER,
             ))
+
+    for trace in _pending_marker_traces:
+        fig.add_trace(trace)
 
 
 
@@ -602,9 +617,9 @@ def build_nslice_figure(
     q_med_n: np.ndarray,
     D_med_Gpc_n: np.ndarray,
     N_opt: float,
-    R_opt: float,
     R_ztf: float,
     N_ztf: float,
+    t_cad_fix_hr: float,
     t_cad_opt_hr: float,
     color_on: bool,
     theme: str,
@@ -623,7 +638,7 @@ def build_nslice_figure(
         return _empty_figure("No valid data in N-slice", theme)
 
     # customdata: [t_cad_hr (fixed), t_exp, q_med, D_med_Gpc]
-    t_cad_col = np.full(len(N_sweep), t_cad_opt_hr)
+    t_cad_col = np.full(len(N_sweep), t_cad_fix_hr)
     cd_n = np.stack([t_cad_col, t_exp_n, q_med_n, D_med_Gpc_n], axis=-1)
 
     # Main rate curve
@@ -657,32 +672,43 @@ def build_nslice_figure(
             font=dict(size=10, color=CORAL), xanchor="center",
         )
 
-    # Optimal marker — find customdata at closest N_sweep point
-    if N_opt is not None and R_opt is not None and np.isfinite(N_opt) and np.isfinite(R_opt):
+    # Optimal N_exp marker — drawn at the N_opt position on the current curve
+    if N_opt is not None and np.isfinite(N_opt):
         opt_idx = int(np.argmin(np.abs(N_sweep - N_opt)))
-        opt_cd  = cd_n[opt_idx : opt_idx + 1]
-        fig.add_trace(go.Scatter(
-            x=[N_opt], y=[R_opt],
-            mode="markers",
-            marker=dict(size=12, color=AMBER, symbol="diamond", line=dict(width=1.5, color="white")),
-            name="Optimum",
-            customdata=opt_cd,
-            hovertemplate=(
-                "N<sub>exp</sub> = %{x:.4g}<br>"
-                "t<sub>cad</sub> = %{customdata[0]:.4g} hr<br>"
-                "t<sub>exp</sub> = %{customdata[1]:.3g} s<br>"
-                "q<sub>med</sub> = %{customdata[2]:.3g}<br>"
-                "D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>"
-                "R<sub>det</sub> = %{y:.4g} yr ⁻¹"
-                "<extra>Optimum</extra>"
-            ),
-            hoverlabel=hl,
-        ))
+        R_at_N_opt = float(R_n[opt_idx]) if np.isfinite(R_n[opt_idx]) else np.nan
+        opt_cd = cd_n[opt_idx : opt_idx + 1]
+        if np.isfinite(R_at_N_opt) and R_at_N_opt > 0:
+            fig.add_trace(go.Scatter(
+                x=[N_opt], y=[R_at_N_opt],
+                mode="markers",
+                marker=dict(size=12, color=AMBER, symbol="diamond", line=dict(width=1.5, color="white")),
+                name="Opt. N<sub>exp</sub>",
+                customdata=opt_cd,
+                hovertemplate=(
+                    "N<sub>exp,opt</sub> = %{x:.4g}<br>"
+                    "t<sub>cad</sub> = %{customdata[0]:.4g} hr<br>"
+                    "t<sub>exp</sub> = %{customdata[1]:.3g} s<br>"
+                    "q<sub>med</sub> = %{customdata[2]:.3g}<br>"
+                    "D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>"
+                    "R<sub>det</sub> = %{y:.4g} yr ⁻¹"
+                    "<extra>Opt. N<sub>exp</sub></extra>"
+                ),
+                hoverlabel=hl,
+            ))
+
+    # Optimal t_cad indicator — dashed vertical line when slice is not at the optimum
+    if np.isfinite(t_cad_opt_hr) and abs(t_cad_fix_hr - t_cad_opt_hr) / (t_cad_opt_hr + 1e-30) > 0.02:
+        fig.add_annotation(
+            x=0.99, y=0.98, xref="paper", yref="paper",
+            text=f"Opt. t<sub>cad</sub> = {t_cad_opt_hr:.3g} hr",
+            showarrow=False, xanchor="right", yanchor="top",
+            font=dict(size=10, color=AMBER),
+        )
 
     # Title annotation (compact, top-left)
     title_txt = (
-        f"N-slice at t<sub>cad</sub> = {t_cad_opt_hr:.3g} hr"
-        if np.isfinite(t_cad_opt_hr) else "N-slice (optimal cadence)"
+        f"N<sub>exp</sub> slice  |  t<sub>cad</sub> = {t_cad_fix_hr:.3g} hr"
+        if np.isfinite(t_cad_fix_hr) else "N<sub>exp</sub> slice"
     )
 
     fig.update_layout(
@@ -734,6 +760,7 @@ def build_tslice_figure(
     t_ztf_h: float,
     R_ztf: float,
     R_opt: float,
+    N_fix: float,
     N_opt: float,
     color_on: bool,
     theme: str,
@@ -868,8 +895,8 @@ def build_tslice_figure(
                 ))
 
     title_txt = (
-        f"t-slice at N<sub>exp</sub> = {N_opt:.0f} fields"
-        if N_opt is not None and np.isfinite(N_opt) else "t-slice (optimal N<sub>exp</sub>)"
+        f"t<sub>cad</sub> slice  |  N<sub>exp</sub> = {N_fix:.0f} fields"
+        if N_fix is not None and np.isfinite(N_fix) else "t<sub>cad</sub> slice"
     )
 
     fig.update_layout(

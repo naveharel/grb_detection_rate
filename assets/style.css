@@ -534,3 +534,46 @@ html, body {
 
 /* ── Bootstrap overrides (prevent bleed into custom layout) ── */
 .accordion { --bs-accordion-bg: transparent; }
+
+/* ── Derived info displays (sidebar constraints / strategy) ─── */
+.derived-info {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-mid);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 3px 8px;
+  margin: 0 0 8px;
+}
+.derived-info.warning {
+  color: var(--amber);
+  border-color: rgba(251,191,36,0.30);
+  background: rgba(251,191,36,0.06);
+}
+
+/* ── Slice position controls (below N-slice / t-slice graphs) ── */
+.slice-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 20px 12px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-0);
+  flex-shrink: 0;
+}
+.slice-ctrl-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-mid);
+  white-space: nowrap;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+.slice-pos-slider {
+  flex: 1;
+  margin: 0 !important;
+  padding: 4px 12px 16px 12px !important;
+}
+

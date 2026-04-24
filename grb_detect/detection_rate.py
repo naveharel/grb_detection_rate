@@ -385,7 +385,8 @@ class DetectionRateModel:
         r4 = 0.5 * fO * (theta_j**2) * (self.derived.q_nr**2) * ((D_i / D_euc) ** 3) * R_int
         r5 = 0.5 * fO * (theta_j**2) * (qi**2) * ((D_i / D_euc) ** 3) * R_int
         r6 = r5
-        r7 = 0.5 * fO * (theta_j**2) * (self.derived.q_dec**2) * ((D_dec / D_euc) ** 3) * R_int
+        D_eff7 = np.minimum(D_dec, D_i) / D_euc
+        r7 = 0.5 * fO * (theta_j**2) * (self.derived.q_dec**2) * (D_eff7 ** 3) * R_int
 
         # Convert to log10 safely.
         R1 = _safe_log10(r1)
@@ -530,6 +531,8 @@ class DetectionRateModel:
         i_det: int,
         N_exp: np.ndarray,
         t_cad_s: np.ndarray,
+        *,
+        off_axis: bool = False,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Median q and D for the dominant-term (normal) mode.
 
@@ -577,11 +580,15 @@ class DetectionRateModel:
         D_eff_const = np.full(shape, np.nan, dtype=float)
         D_eff_const = np.where(masks["A1"] | masks["A2"] | masks["A3"], D_Euc,  D_eff_const)
         D_eff_const = np.where(masks["A4"] | masks["A5"] | masks["A6"], D_i,   D_eff_const)
-        D_eff_const = np.where(masks["A7"],                              D_dec, D_eff_const)
+        D_eff_const = np.where(masks["A7"], np.minimum(D_dec, D_i), D_eff_const)
 
-        # Analytic medians: p(q) ∝ q → q_med = q_max/√2
-        #                   p(D) ∝ D² → D_med = D_eff_const · 2^(-1/3)
-        q_med    = q_max / np.sqrt(2.0)
+        # p(q) ∝ q: normal → q_med = q_max/√2; off-axis (q∈[q_dec,q_max]) → √((q_max²+q_dec²)/2)
+        # A7 has no off-axis detections → NaN in off-axis mode.
+        # D distribution p(D) ∝ D² is unaffected by the q lower bound (constant D_eff).
+        if off_axis:
+            q_med = np.where(masks["A7"], np.nan, np.sqrt((q_max ** 2 + q_dec ** 2) / 2.0))
+        else:
+            q_med = q_max / np.sqrt(2.0)
         D_med_cm = D_eff_const * (2.0 ** (-1.0 / 3.0))
 
         invalid  = ~np.isfinite(t_exp) | (t_exp <= 0)
@@ -593,6 +600,8 @@ class DetectionRateModel:
         N_exp: np.ndarray,
         t_cad_s: np.ndarray,
         N_q: int = 200,
+        *,
+        off_axis: bool = False,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Median q and D for the full-integral mode, computed numerically.
 
@@ -648,20 +657,28 @@ class DetectionRateModel:
 
         D_eff = np.minimum(D_tilde_max, D_tilde_eff)   # (N_q, *shape), normalized
 
+        # In off-axis mode exclude on-axis angles (q < q_dec) from both medians.
+        if off_axis:
+            D_eff_med = np.where(q_g >= q_dec, D_eff, 0.0)
+        else:
+            D_eff_med = D_eff
+
         # ── Median q ──────────────────────────────────────────────────────────
         # w(q) = q · D_eff(q)³ is the marginal density (unnormalized)
-        w_q        = q_g * (D_eff ** 3)                # (N_q, *shape)
+        w_q        = q_g * (D_eff_med ** 3)            # (N_q, *shape)
         cumsum_q   = np.cumsum(w_q, axis=0)
         total_q    = cumsum_q[-1:] + 1e-300
         idx_q      = np.argmax(cumsum_q / total_q >= 0.5, axis=0)  # (*shape)
-        q_med      = q_vals[idx_q]
+        # No off-axis weight (A7) → total ≈ 0 → NaN
+        has_weight = (cumsum_q[-1] > 1e-290)
+        q_med      = np.where(has_weight, q_vals[idx_q], np.nan)
 
         # ── Median D ──────────────────────────────────────────────────────────
         # p(D) ∝ D² · Q(D)²  where  Q(D) = max{q : D_eff(q) ≥ D}.
         # D_eff is non-increasing in q, so Q(D) = q_vals[n_above(D) - 1]
         # where n_above(D) = #{q : D_eff(q) ≥ D}.
-        D_eff_max  = np.maximum(D_eff[0], 1e-30)       # (*shape), max detectable (normalized)
-        D_eff_norm = D_eff / D_eff_max[np.newaxis, ...]# (N_q, *shape), in [0, 1]
+        D_eff_max  = np.maximum(D_eff_med.max(axis=0), 1e-30)  # (*shape)
+        D_eff_norm = D_eff_med / D_eff_max[np.newaxis, ...]    # (N_q, *shape), in [0, 1]
 
         N_D    = 100
         d_grid = np.linspace(1.0 / N_D, 1.0, N_D)     # normalized D levels, (N_D,)
@@ -679,7 +696,7 @@ class DetectionRateModel:
         total_D  = cumsum_D[-1:] + 1e-300
         idx_D    = np.argmax(cumsum_D / total_D >= 0.5, axis=0)    # (*shape)
         d_med    = d_grid[idx_D]
-        D_med_cm = d_med * D_eff_max * D_Euc                       # (*shape) in cm
+        D_med_cm = np.where(has_weight, d_med * D_eff_max * D_Euc, np.nan)
 
         invalid  = ~np.isfinite(t_exp) | (t_exp <= 0)
         return np.where(invalid, np.nan, q_med), np.where(invalid, np.nan, D_med_cm)
@@ -692,11 +709,12 @@ class DetectionRateModel:
         *,
         full_integral: bool = False,
         N_q: int = 200,
+        off_axis: bool = False,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return (q_med, D_med_cm) using analytic (normal) or numerical (full-integral) formula."""
         if full_integral:
-            return self.compute_medians_numerical(i_det, N_exp, t_cad_s, N_q)
-        return self.compute_medians_analytic(i_det, N_exp, t_cad_s)
+            return self.compute_medians_numerical(i_det, N_exp, t_cad_s, N_q, off_axis=off_axis)
+        return self.compute_medians_analytic(i_det, N_exp, t_cad_s, off_axis=off_axis)
 
     # ---------- Analytic optimal strategy (from  ) ----------
     def analytic_optimum(self, i_det: int) -> Dict[str, float]:

@@ -2,7 +2,7 @@
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
 \usepackage{geometry}
-\usepackage{hyperref}
+\usepackage[hidelinks]{hyperref}
 \geometry{margin=2.5cm}
 
 \title{\textbf{GRB Afterglow Detection Rates: Implementation Reference}\\
@@ -51,15 +51,15 @@ $\varepsilon_B$ & 0.01 & -- & Magnetic field energy fraction \\
 \midrule
 \multicolumn{4}{l}{\textit{Cosmological model}} \\
 $\mathcal{R}$ & 260 & Gpc$^{-3}$\,yr$^{-1}$ & Volumetric GRB rate density \\
-$D_{\rm euc}$ & 1.63$\times10^{28}$\,cm $\approx$ 5.28\,Gpc & cm & Euclidean calibration distance \\
-$R_{\rm int}$ & $\frac{4\pi}{3}\mathcal{R}D_{\rm euc}^3\approx4.8\times10^4$ & yr$^{-1}$ & GRBs/yr in calibration volume \\
+$D_{\rm euc}$ & 1.63$\times10^{28}$\,cm $\approx$ 5.28\,Gpc & cm & Euclidean calibration distance ($z\approx2.0$) \\
+$R_{\rm int}$ & $\frac{4\pi}{3}\mathcal{R}D_{\rm euc}^3\approx4.8\times10^4$ & yr$^{-1}$ & Total GRBs/yr in calibration volume \\
 \midrule
 \multicolumn{4}{l}{\textit{Survey instrument} (\texttt{SurveyTelescopeParams}, \texttt{SurveyDesignParams})} \\
-$F_{\rm ref}$ & $10^{-4.68}\approx2.09\times10^{-5}$ & Jy & Limiting flux at $t_{\rm ref}=30$\,s \\
+$F_{\rm ref}$ & $10^{-4.68}\approx2.09\times10^{-5}$ & Jy & Limiting flux anchor at $t_{\rm ref}=30$\,s \\
 $\alpha$ & 0.5 & -- & Flux--exposure exponent (background-limited) \\
 $\Omega_{\rm exp}$ & 47 & deg$^2$ & Field of view per exposure \\
-$\Omega_{\rm srv,max}$ & 27500 & deg$^2$ & Maximum surveyable area \\
-$t_{\rm night}$ & 36000 & s & Astronomical night duration \\
+$\Omega_{\rm srv,max}$ & 27500 & deg$^2$ & Maximum surveyable sky area \\
+$t_{\rm night}$ & 36000\,s\,($=10$\,hr) & s & Astronomical night duration \\
 \midrule
 \multicolumn{4}{l}{\textit{Survey strategy} (free variables)} \\
 $N_{\rm exp}$ & -- & -- & Exposures per cadence cycle \\
@@ -71,10 +71,16 @@ $i$ & 1 & -- & Required detections per GRB \\
 \end{tabular}
 \end{table}
 
+\noindent\textbf{Note on $R_{\rm int}$:} The \texttt{AfterglowPhysicalParams} dataclass bakes $R_{\rm int}$ in at class-load time from the default $\mathcal{R}$ and $D_{\rm euc}$ values.
+When constructing the class with non-default $\mathcal{R}$ or $D_{\rm euc}$, always recompute $R_{\rm int}$ explicitly and pass it to the constructor:
+\[
+R_{\rm int} = \tfrac{4\pi}{3}\,\mathcal{R}\,D_{\rm euc,\,Gpc}^3
+\]
+
 % -------------------------------------------------------
 \section{Afterglow Model (ISM)}
 
-\subsection*{Deceleration and jet break times}
+\subsection{Deceleration and jet-break times}
 
 \noindent Blandford--McKee ISM dynamics (thesis Eq.~30):
 \begin{equation}
@@ -87,40 +93,75 @@ where $E_{52}=E_{k,{\rm iso}}/10^{52}$\,erg and $\Gamma_{2.5}=\Gamma_0/10^{2.5}$
 t_j = t_{\rm dec}\,(\Gamma_0\,\theta_j)^{8/3}
 \end{equation}
 
-\subsection*{Viewing-angle parameterisation}
+\subsection{Viewing-angle parameterisation}
 
 \noindent Define normalized viewing angle $q = \theta_{\rm obs}/\theta_j$ and $\tilde{q}=q-1$.
 Three characteristic boundaries separate the afterglow into phases:
 \begin{equation}
 q_{\rm dec} = 1 + (\Gamma_0\,\theta_j)^{-1}, \qquad q_j = 2, \qquad q_{\rm nr} = \frac{\sqrt{2}}{\theta_j}
 \end{equation}
-Phase~I ($t < t_{\rm dec}$) is excluded by design. Phase~II: $q\in[q_{\rm dec},q_j)$. Phase~III: $q\ge q_j$.
+Phase~I ($t < t_{\rm dec}$) is excluded by design. Phase~II: $q_{\rm dec}\le q<q_j$. Phase~III: $q\ge q_j$.
 
-\subsection*{On-axis reference flux}
+\noindent\textbf{Beaming identity.} The normalization $q_{\rm nr}=\sqrt{2}/\theta_j$ is chosen so that
+\[
+\frac{\theta_j^2}{2}\,q_{\rm nr}^2 = 1,
+\]
+i.e.\ the integral over all observable solid angles $\int_0^{q_{\rm nr}}\theta_j^2 q\,dq = 1$ exactly.
+This ensures that in regime A1 (saturation), $R_{\rm A1} = f_\Omega\,R_{\rm int}$ without any additional beaming prefactor.
+For all other regimes the factor $\frac{1}{2}\theta_j^2 q_{\rm max}^2 < 1$ represents the fraction of GRBs detectable at viewing angles $q\le q_{\rm max}$.
 
-\noindent PLS\,G ($\nu_m < \nu < \nu_c$, standard optical; thesis Eq.~24):
+\subsection{Off-axis peak flux (PLS~G, $\nu_m<\nu<\nu_c$)}
+
+\noindent On-axis reference flux at $t_{\rm dec}$ (thesis Eq.~24):
 \begin{equation}
-F_{\rm dec} = \frac{0.461}{1000}\,(p-0.04)\,e^{2.53p}\;
+F_{\rm dec}^{\rm G} = \frac{0.461}{1000}\,(p-0.04)\,e^{2.53p}\;
 \bar{\varepsilon}_e^{\,p-1}\,\varepsilon_B^{(p+1)/4}\,
 n_0^{1/2}\,E_{52}^{(p+3)/4}\,
 t_{\rm dec,d}^{-3(p-1)/4}\,D_{28}^{-2}\,\nu_{14}^{-(p-1)/2}
 \;[\text{Jy}]
 \end{equation}
-where $\bar{\varepsilon}_e=\varepsilon_e(p-2)/(p-1)$, $t_{\rm dec,d}$ is $t_{\rm dec}$ in days, $D_{28}=D_{\rm euc}/10^{28}$\,cm, $\nu_{14}=\nu/10^{14}$\,Hz.
-For PLS\,H ($\nu>\nu_c$) the coefficient is 0.855, the pre-exponential factor is $(p-0.98)$, the exponential coefficient is 1.95, and the $\varepsilon_B$ exponent changes to $(p-2)/4$ (thesis Eq.~25).
+where $\bar{\varepsilon}_e=\varepsilon_e(p-2)/(p-1)$, $t_{\rm dec,d}=t_{\rm dec}/{\rm day}$, $D_{28}=D_{\rm euc}/10^{28}$\,cm, $\nu_{14}=\nu/10^{14}$\,Hz. Valid for $p>2$.
 
-\subsection*{Off-axis peak flux scaling}
+\noindent Off-axis flux exponents (PLS~G):
+\[
+a_{\rm II}^{\rm G} = p-1, \qquad a_{\rm III}^{\rm G} = p.
+\]
+These follow from the afterglow temporal decay index $F\propto t^{-3(p-1)/4}$ in Phase~II (combined with $t_p\propto\tilde{q}^{8/3}$), and $F\propto t^{-p}$ after the jet break (Phase~III, with $t_p\propto\tilde{q}^{2}$).
 
-\noindent Exponents: PLS\,G: $a_{\rm II}=p-1$, $a_{\rm III}=p$.\quad PLS\,H: $a_{\rm II}=(3p-2)/3$, $a_{\rm III}=p$.
+\subsection{Off-axis reference flux (PLS~H, $\nu>\nu_c$)}
+
+\noindent For PLS~H (thesis Eq.~25), the on-axis reference flux is:
 \begin{equation}
-\frac{F_p}{F_{\rm dec}} = \begin{cases}
+F_{\rm dec}^{\rm H} = \frac{0.855}{1000}\,(p-0.98)\,e^{1.95p}\;
+\bar{\varepsilon}_e^{\,p-1}\,\varepsilon_B^{(p-2)/4}\,
+E_{52}^{(p+2)/4}\,
+t_{\rm dec,d}^{-(3p-2)/4}\,D_{28}^{-2}\,\nu_{14}^{-p/2}
+\;[\text{Jy}]
+\end{equation}
+Key differences from PLS~G: no $n_0$ dependence; $\varepsilon_B$ exponent $(p-2)/4$; $E_{52}$ exponent $(p+2)/4$; time exponent $-(3p-2)/4$; $\nu$ exponent $-p/2$.
+
+\noindent Off-axis flux exponents (PLS~H):
+\[
+a_{\rm II}^{\rm H} = \frac{3p-2}{3}, \qquad a_{\rm III}^{\rm H} = p.
+\]
+The Phase~II exponent follows from temporal slope $-(3p-2)/4$ combined with $t_p\propto\tilde{q}^{8/3}$ in Phase~II.
+
+\subsection{Off-axis peak flux scaling}
+
+\noindent The off-axis peak flux at viewing angle $q$ relative to the on-axis value $F_{\rm dec}$ is:
+\begin{equation}
+\frac{F_p(q)}{F_{\rm dec}} = \begin{cases}
 \left(\dfrac{\tilde{q}}{\tilde{q}_{\rm dec}}\right)^{-2a_{\rm II}} & q_{\rm dec}\le q<q_j\;\text{(Phase II)}\\[8pt]
 \tilde{q}_{\rm dec}^{-2}\left(\dfrac{\tilde{q}}{\tilde{q}_{\rm dec}}\right)^{-2a_{\rm III}} & q\ge q_j\;\text{(Phase III)}
 \end{cases}
 \end{equation}
-Reference fluxes at the boundaries:
-$F_j = F_{\rm dec}\,\tilde{q}_{\rm dec}^{2a_{\rm II}}$ and
-$F_{\rm nr} = F_{\rm dec}\,\tilde{q}_{\rm dec}^{-2}(\tilde{q}_{\rm nr}/\tilde{q}_{\rm dec})^{-2a_{\rm III}}$.
+Reference fluxes at the characteristic boundaries (used to select the $q_{\rm Euc}$ branch):
+\[
+F_j = F_{\rm dec}\,\tilde{q}_{\rm dec}^{\,2a_{\rm II}},
+\qquad
+F_{\rm nr} = F_{\rm dec}\,\tilde{q}_{\rm dec}^{-2}\!\left(\frac{\tilde{q}_{\rm nr}}{\tilde{q}_{\rm dec}}\right)^{-2a_{\rm III}}.
+\]
+At the boundary $q=q_j$ ($\tilde{q}=1$), the Phase~II and Phase~III expressions are continuous for PLS~G (since $a_{\rm III}^{\rm G}-1=a_{\rm II}^{\rm G}$) but not for PLS~H.
 
 % -------------------------------------------------------
 \section{Survey Model}
@@ -130,34 +171,46 @@ t_{\rm exp} = \frac{f_{\rm live}\,t_{\rm cad}}{N_{\rm exp}} - t_{\rm OH},\qquad
 F_{\rm lim} = F_{\rm ref}\!\left(\frac{t_{\rm exp}}{t_{\rm ref}}\right)^{-\alpha},\qquad
 f_\Omega = \frac{N_{\rm exp}\,\Omega_{\rm exp}}{4\pi}
 \end{equation}
-Valid only when $t_{\rm exp}>0$ and $N_{\rm exp}\le\Omega_{\rm srv,max}/\Omega_{\rm exp}$.
+A strategy point $(N_{\rm exp},t_{\rm cad})$ is in the valid region~A0 when $t_{\rm exp}>0$, $N_{\rm exp}\ge1$, and $N_{\rm exp}\le N_{\rm exp,max}\equiv\Omega_{\rm srv,max}/\Omega_{\rm exp}$.
 
 % -------------------------------------------------------
 \section{Detection Rate: Two Horizons and Seven Regimes}
 
-\subsection*{Distance and horizon angles}
+\subsection{Distance and horizon angles}
 
+\noindent The maximum detection distance for an on-axis burst (q=0):
 \begin{equation}
 D_{\rm dec} = D_{\rm euc}\!\left(\frac{F_{\rm lim}}{F_{\rm dec}}\right)^{-1/2}
 \end{equation}
 
-\noindent\textbf{Euclidean horizon angle} $q_{\rm Euc}$ (largest off-axis angle detectable at $D_{\rm euc}$):
+\noindent\textbf{Euclidean horizon angle} $q_{\rm Euc}$: the largest off-axis angle detectable at the calibration distance $D_{\rm euc}$:
 \begin{equation}
 \tilde{q}_{\rm Euc} = \begin{cases}
 \tilde{q}_{\rm dec}\!\left(\dfrac{F_{\rm lim}}{F_{\rm dec}}\right)^{-1/(2a_{\rm II})} & F_{\rm lim}\ge F_j\;\text{(Phase II)}\\[8pt]
 \tilde{q}_{\rm dec}^{(a_{\rm III}-1)/a_{\rm III}}\!\left(\dfrac{F_{\rm lim}}{F_{\rm dec}}\right)^{-1/(2a_{\rm III})} & F_{\rm lim}<F_j\;\text{(Phase III)}
 \end{cases}
 \end{equation}
+The two branches are continuous at $F_{\rm lim}=F_j$ (for PLS~G), where both give $\tilde{q}_{\rm Euc}=1$ (i.e.\ $q_{\rm Euc}=q_j$).
 
-\noindent\textbf{Cadence horizon angle} $q_i$ (largest off-axis angle whose peak arrives within $i\cdot t_{\rm cad}$):
+\noindent\textbf{Off-axis peak time.}
+A burst at viewing angle $q$ reaches its afterglow flux peak at time:
+\begin{equation}
+t_p(q) = \begin{cases}
+t_j\,\tilde{q}^{8/3} & q_{\rm dec}\le q<q_j\;\text{(Phase II)} \\[4pt]
+t_j\,\tilde{q}^{2}   & q\ge q_j\;\text{(Phase III)}
+\end{cases}
+\end{equation}
+Both expressions equal $t_j$ continuously at $\tilde{q}=1$ ($q=q_j$). At $q=q_{\rm dec}$ ($\tilde{q}=\tilde{q}_{\rm dec}$), Phase~II gives $t_p=t_{\rm dec}$ as expected.
+
+\noindent\textbf{Cadence horizon angle} $q_i$: largest off-axis angle whose peak arrives within $i$ cadence intervals ($t_p=i\,t_{\rm cad}$):
 \begin{equation}
 \tilde{q}_i = \begin{cases}
-(i\,t_{\rm cad}/t_j)^{3/8} & i\,t_{\rm cad}<t_j\\
-(i\,t_{\rm cad}/t_j)^{1/2} & i\,t_{\rm cad}\ge t_j
+(i\,t_{\rm cad}/t_j)^{3/8} & i\,t_{\rm cad}<t_j\;\text{(Phase II peak)}\\[4pt]
+(i\,t_{\rm cad}/t_j)^{1/2} & i\,t_{\rm cad}\ge t_j\;\text{(Phase III peak)}
 \end{cases}
 \end{equation}
 
-\noindent\textbf{Cadence distance} $D_i$ (max detection distance at angle $q_i$):
+\noindent\textbf{Cadence distance} $D_i$: maximum detection distance at angle $q_i$:
 \begin{equation}
 D_i = \begin{cases}
 D_{\rm dec}\,(\tilde{q}_i/\tilde{q}_{\rm dec})^{-a_{\rm II}} & i\,t_{\rm cad}<t_j\\[4pt]
@@ -165,7 +218,7 @@ D_{\rm dec}\,(\tilde{q}_i/\tilde{q}_{\rm dec})^{-a_{\rm II}} & i\,t_{\rm cad}<t_
 \end{cases}
 \end{equation}
 
-\subsection*{Piecewise rate formulas (dominant-term approximation)}
+\subsection{Piecewise rate formulas (dominant-term approximation)}
 
 \begin{table}[h]
 \centering
@@ -186,41 +239,123 @@ A7 & $q_{\rm Euc}<q_{\rm dec}$ \textbf{and} $q_i<q_{\rm dec}$ & $\tfrac{1}{2}f_\
 \end{tabular}
 \end{table}
 
-\noindent The output surface shows $\log_{10}R_{\rm det}$.
-Region A0 ($t_{\rm exp}\le0$ or $N_{\rm exp}$ out of range) is undefined.
+\noindent Regimes A2 and A3 share the same formula (both flux-limited); the distinction is only which afterglow phase $q_{\rm Euc}$ falls in. Similarly A5 and A6 share the same formula (both cadence-limited). The general structure is:
+\[
+R_k = \tfrac{1}{2}f_\Omega\,\theta_j^2\,q_{\rm max}^2\,(D_{\rm eff}/D_{\rm euc})^3\,R_{\rm int},
+\]
+where $q_{\rm max}$ is the relevant upper angular limit and $D_{\rm eff}$ is the corresponding detection distance. The output surface shows $\log_{10}R_{\rm det}$.
+
+\noindent Region~A0 ($t_{\rm exp}\le0$, $N_{\rm exp}<1$, or $N_{\rm exp}>N_{\rm exp,max}$) is undefined (NaN).
 Boundary comparisons use tolerance $\varepsilon=10^{-12}$.
 
 % -------------------------------------------------------
 \section{Full-Integral Mode (Optional)}
 
-Instead of the dominant-term formulas above, the rate is computed by numerically integrating over all viewing angles:
+Instead of the dominant-term formulas, the rate is computed by numerically integrating over all viewing angles using normalized (dimensionless) distances $\tilde{D}=D/D_{\rm euc}$:
 \begin{equation}
-R = f_\Omega\,\theta_j^2\,R_{\rm int}\int_0^{q_{\rm nr}} q\,\bigl[\min(D_{\rm max}(q),\,D_{\rm eff}\cdot D_{\rm euc})\bigr]^3\,dq
+\label{eq:full_integral}
+R = f_\Omega\,\theta_j^2\,R_{\rm int}\int_0^{q_{\rm nr}} q\,\bigl[\min\!\bigl(\tilde{D}_{\rm max}(q),\,\tilde{D}_{\rm eff}\bigr)\bigr]^3\,dq,
 \end{equation}
-where $D_{\rm eff}=\min(D_i/D_{\rm euc},1)$ and
+where $\tilde{D}_{\rm eff}=\min(D_i/D_{\rm euc},\,1)$ encodes the cadence constraint and the Euclidean horizon, and
 \begin{equation}
-D_{\rm max}(q) = \begin{cases}
-D_{\rm dec} & q<q_{\rm dec}\\
-D_{\rm dec}(\tilde{q}/\tilde{q}_{\rm dec})^{-a_{\rm II}} & q_{\rm dec}\le q<q_j\\
-(D_{\rm dec}/\tilde{q}_{\rm dec})(\tilde{q}/\tilde{q}_{\rm dec})^{-a_{\rm III}} & q\ge q_j
+\label{eq:Dmax_tilde}
+\tilde{D}_{\rm max}(q) = \begin{cases}
+\tilde{D}_{\rm dec} & q<q_{\rm dec}\\[2pt]
+\tilde{D}_{\rm dec}(\tilde{q}/\tilde{q}_{\rm dec})^{-a_{\rm II}} & q_{\rm dec}\le q<q_j\\[2pt]
+(\tilde{D}_{\rm dec}/\tilde{q}_{\rm dec})(\tilde{q}/\tilde{q}_{\rm dec})^{-a_{\rm III}} & q\ge q_j
 \end{cases}
 \end{equation}
-Evaluated with a trapezoidal rule over $N_q=500$ points ($<0.3\%$ error).
+with $\tilde{D}_{\rm dec}=(F_{\rm lim}/F_{\rm dec})^{-1/2}$ (dimensionless). Both integrands are dimensionless, so~\eqref{eq:full_integral} has units of $R_{\rm int}$ [yr$^{-1}$] as required.
+
+The dominant-term approximation (Sec.~4.2) is the leading term of~\eqref{eq:full_integral} evaluated at the boundary angle ($q_{\rm Euc}$ or $q_i$). The full integral adds contributions from all other angles.
+Evaluated with a trapezoidal rule over $N_q=500$ points ($<0.3\%$ error for typical parameters).
+
+\subsection{Off-axis-only mode}
+
+When the ``off-axis'' switch is enabled, the on-axis contribution ($q<q_{\rm dec}$, where all bursts are equally bright) is subtracted:
+\begin{equation}
+R_{\rm off} = R_{\rm total} - R_{\rm on},
+\qquad
+R_{\rm on} = \tfrac{1}{2}\,f_\Omega\,\theta_j^2\,q_{\rm dec}^2\,\min\!\bigl(D_{\rm dec}/D_{\rm euc},\,1\bigr)^3\,R_{\rm int}.
+\end{equation}
+$R_{\rm on}$ is evaluated from the dominant-term formula regardless of whether full-integral mode is active, and is deliberately conservative in cadence-limited regimes.
+
+% -------------------------------------------------------
+\section{Median Viewing Angle and Distance}
+
+The model computes the median viewing angle $q_{\rm med}$ and median detection distance $D_{\rm med}$ of the detected burst population at each grid point. Two computation modes are available, matching the rate mode.
+
+\subsection{Analytic medians (dominant-term mode)}
+
+In the dominant-term approximation, the effective detection volume is uniform within an angular cap $[0,q_{\rm max}]$ at constant distance $D_{\rm eff,\,const}$. The marginal distributions are:
+\[
+p(q)\propto q, \quad q\in[0,\,q_{\rm max}]\qquad\Longrightarrow\qquad q_{\rm med} = \frac{q_{\rm max}}{\sqrt{2}},
+\]
+\[
+p(D)\propto D^2, \quad D\in[0,\,D_{\rm eff,\,const}]\qquad\Longrightarrow\qquad D_{\rm med} = D_{\rm eff,\,const}\cdot 2^{-1/3}.
+\]
+The quantities $q_{\rm max}$ and $D_{\rm eff,\,const}$ depend on the active regime:
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{ccc}
+\toprule
+Regime & $q_{\rm max}$ & $D_{\rm eff,\,const}$ \\
+\midrule
+A1 & $q_{\rm nr}$ & $D_{\rm euc}$ \\
+A2, A3 & $q_{\rm Euc}$ & $D_{\rm euc}$ \\
+A4 & $q_{\rm nr}$ & $D_i$ \\
+A5, A6 & $q_i$ & $D_i$ \\
+A7 & $q_{\rm dec}$ & $D_{\rm dec}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The $p(q)\propto q$ distribution arises from the volume element $\theta_j^2\,q\,dq$ in the solid-angle integral. The $p(D)\propto D^2$ distribution reflects uniform 3-D number density at fixed angular slice.
+
+\subsection{Numerical medians (full-integral mode)}
+
+When full-integral mode is active, medians are computed from the same $\tilde{D}_{\rm eff}(q)$ profile used in Eq.~\eqref{eq:full_integral}.
+
+\medskip\noindent\textbf{Median $q$:}
+Define the unnormalized weight $w(q)=q\cdot\tilde{D}_{\rm eff}(q)^3$. Then $q_{\rm med}$ is found from the cumulative integral:
+\begin{equation}
+\frac{\int_0^{q_{\rm med}} w(q)\,dq}{\int_0^{q_{\rm nr}} w(q)\,dq} = \frac{1}{2}.
+\end{equation}
+Evaluated by cumulative trapezoidal sum over $N_q=200$ points.
+
+\medskip\noindent\textbf{Median $D$:}
+Define $Q(D)=\max\{q:\tilde{D}_{\rm eff}(q)\ge D/D_{\rm euc}\}$ (the largest angle still detectable at distance~$D$). Since $\tilde{D}_{\rm eff}(q)$ is non-increasing, $Q(D)$ is obtained by counting how many grid points satisfy the threshold. The marginal density is:
+\begin{equation}
+p(D)\propto D^2\,Q(D)^2,
+\end{equation}
+which reduces to $D^2$ for uniform density and constant $Q$. The median is found by cumulative summation over a grid of 100 normalized distance levels $D/D_{\rm euc,\,eff}\in[0,1]$, where $D_{\rm euc,\,eff}=\tilde{D}_{\rm eff}(0)\cdot D_{\rm euc}$.
 
 % -------------------------------------------------------
 \section{Optical Cadence Constraints}
 
 For optical surveys, only three cadence regions are physically valid:
 \begin{itemize}
-\item \textbf{Continuous} ($t_{\rm cad}<t_{\rm night}/i$): sub-night sampling.
-  Only nights contribute; rate weighted by night fraction:
+\item \textbf{Continuous} ($i\cdot t_{\rm cad}<t_{\rm night}$, equivalently $t_{\rm cad}<t_{\rm night}/i$): sub-night sampling.
+  The afterglow peak is required to occur within a single night.
+  Because only nighttime observations are possible, the effective sky coverage per day is reduced by the night fraction:
   \[
-  \log_{10}R_{\rm eff} = \log_{10}R_{\rm night} + \log_{10}\!\left(\frac{t_{\rm night}}{1\;\text{day}}\right)
+  \log_{10}R_{\rm eff} = \log_{10}R_{\rm night} + \log_{10}\!\left(\frac{t_{\rm night}}{1\;\text{day}}\right),
   \]
-\item \textbf{Gap} ($t_{\rm night}/i\le t_{\rm cad}<1\;\text{day}$): physically forbidden.
-  Cannot obtain $i$ detections within one night at this cadence.
+  where $R_{\rm night}$ is evaluated with the un-modified model (same $f_{\rm live}$), and the $\log_{10}(t_{\rm night}/\text{day})$ factor accounts for the fact that the survey can only operate during the nighttime fraction $f_{\rm night}=t_{\rm night}/86400$.
+
+\item \textbf{Gap} ($t_{\rm night}/i\le t_{\rm cad}<1\;\text{day}$): \emph{physically forbidden.}
+  At these cadences $i$ detections within one night are impossible, yet the cadence is sub-daily.
+  Grid points in this band are marked invalid (NaN).
+  \emph{Note:} for $i=1$ a single detection fits in any night, so the gap region does not apply and would extend only from $t_{\rm night}$ to 1\,day; this case is not yet fully handled in the current implementation.
+
 \item \textbf{Discrete} ($t_{\rm cad}=n\times1\;\text{day}$, $n\in\mathbb{Z}^+$): multi-night sampling.
-  No night-fraction penalty.
+  Only integer multiples of 1\,day are permitted (enforced as a validity mask, not by rounding).
+  No night-fraction penalty applies.
 \end{itemize}
+
+\noindent In continuous mode the code uses a separate model instance (\texttt{model\_night}) with the same $f_{\rm live}$ as the daytime model. The $\log_{10}(f_{\rm night})$ offset is applied post-hoc in log space.
 
 \end{document}

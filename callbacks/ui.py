@@ -2,8 +2,10 @@
 """UI-state callbacks: theme, sidebar, view-mode switching, presets, t_night visibility."""
 from __future__ import annotations
 
+import math
+
 import dash
-from dash import Input, Output, State
+from dash import Input, Output, State, html
 
 # Preset configurations (values for all sliders)
 _PRESETS: dict[str, dict] = {
@@ -41,6 +43,41 @@ def register(app: dash.Dash) -> None:
     )
     def toggle_tnight(is_optical):
         return {"display": "block"} if is_optical else {"display": "none"}
+
+    # ── N_exp_max derived display ────────────────────────────────────────────
+    @app.callback(
+        Output("nexpmax-display", "children"),
+        Input("omegaexp_slider", "value"),
+        Input("omega_srv_slider", "value"),
+    )
+    def update_nexpmax(omega_exp, omega_srv):
+        if omega_exp is None or omega_srv is None:
+            return []
+        omega_exp = float(omega_exp)
+        omega_srv = float(omega_srv)
+        if omega_exp > omega_srv:
+            return html.Span(
+                ["⚠ Ω", html.Sub("exp"), " > Ω", html.Sub("srv,max"), " — survey impossible"],
+                className="derived-info warning",
+            )
+        n_max = int(math.floor(omega_srv / omega_exp))
+        return html.Span(["Max N", html.Sub("exp"), f": {n_max}"], className="derived-info")
+
+    # ── Sub-night limit display (optical mode only) ──────────────────────────
+    @app.callback(
+        Output("subnight-limit-display", "children"),
+        Input("i_slider", "value"),
+        Input("tnight_slider", "value"),
+        Input("optical-switch", "value"),
+    )
+    def update_subnight_limit(i_val, tnight_h, optical):
+        if not optical or not i_val or not tnight_h:
+            return []
+        limit_h = float(tnight_h) / float(i_val)
+        return html.Span(
+            ["Sub-night limit: ", f"{limit_h:.2f} hr  (t", html.Sub("night"), " / i)"],
+            className="derived-info",
+        )
 
     # ── Theme: store → button label ──────────────────────────────────────────
     @app.callback(
