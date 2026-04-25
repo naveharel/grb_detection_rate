@@ -142,7 +142,7 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
 /* Dash-parity: filled accent track up to --value-pct, dots at each mark,
    labels below. Padding mirrors assets/style.css .param-slider rule:
    8px top + 16px bottom, 16px horizontal so edge marks aren't clipped. */
-.param-slider-wrap{position:relative;padding:8px 16px 16px}
+.param-slider-wrap{position:relative;padding:8px 16px 16px;z-index:0}
 input[type=range].param-slider{
   -webkit-appearance:none;appearance:none;
   width:100%;height:3px;display:block;
@@ -167,7 +167,7 @@ input[type=range].param-slider::-moz-range-thumb{
 input[type=range].param-slider::-moz-range-progress{background:var(--accent);height:3px;border-radius:2px}
 input[type=range].param-slider::-moz-range-track{background:var(--surface-3);height:3px;border-radius:2px}
 /* Tick dots overlaid on the track (mirrors rc-slider-dot at each mark). */
-.slider-dots{position:absolute;left:16px;right:16px;top:8px;height:3px;pointer-events:none}
+.slider-dots{position:absolute;left:16px;right:16px;top:8px;height:3px;pointer-events:none;z-index:-1}
 .slider-dots span{
   position:absolute;top:50%;transform:translate(-50%,-50%);
   width:6px;height:6px;border-radius:50%;
@@ -204,7 +204,7 @@ input[type=range].param-slider::-moz-range-track{background:var(--surface-3);hei
 /* ── Group labels ────────────────────────────────────────────────────────── */
 .param-group-label{font-size:10px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-lo);margin:6px 0 2px}
 /* ── Derived value display ───────────────────────────────────────────────── */
-.grb-derived-row{margin-top:4px;gap:6px;flex-wrap:wrap}
+.grb-derived-row{display:flex;align-items:baseline;margin-top:4px;gap:6px;flex-wrap:wrap}
 .grb-derived-val{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:2px 6px;white-space:nowrap}
 /* ── Main area ───────────────────────────────────────────────────────────── */
 .app-main{display:flex;flex-direction:column;flex:1;min-width:0;overflow:hidden;background:var(--bg)}
@@ -214,18 +214,21 @@ input[type=range].param-slider::-moz-range-track{background:var(--surface-3);hei
 /* ── Status bar ──────────────────────────────────────────────────────────── */
 .status-bar{flex-shrink:0;font-family:var(--font-mono);font-size:11px;color:var(--text-lo);padding:5px 16px;border-top:1px solid var(--border);background:var(--surface-0)}
 .status-bar.empty{padding:0;border-top:none}
+/* ── Graph loading dim ───────────────────────────────────────────────────── */
+.plot-div.loading{opacity:0.4;transition:opacity 0.15s ease;pointer-events:none}
 /* ── Spinner ─────────────────────────────────────────────────────────────── */
 @keyframes spin{to{transform:rotate(360deg)}}
 .spinner{display:inline-block;width:10px;height:10px;border:2px solid var(--accent-dim);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;margin-right:6px;vertical-align:middle}
+/* ── Metrics-strip computing indicator ──────────────────────────────────── */
+.metric-computing{display:none;align-items:center;gap:6px;margin-left:auto;padding:0 8px;white-space:nowrap}
+.metric-computing .spinner{margin-right:0}
 /* ── Derived info displays (sidebar constraints / strategy) ──────────────── */
 .derived-info{display:inline-block;font-family:var(--font-mono);font-size:11px;color:var(--text-mid);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:3px 8px;margin:0 0 8px}
 .derived-info.warning{color:var(--amber);border-color:rgba(251,191,36,0.30);background:rgba(251,191,36,0.06)}
 /* ── Slice position controls (below N-slice / t-slice graphs) ───────────── */
 .slice-ctrl{display:flex;align-items:center;gap:10px;padding:6px 20px 12px 20px;border-top:1px solid var(--border);background:var(--surface-0);flex-shrink:0}
 .slice-ctrl-label{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);white-space:nowrap;min-width:80px;flex-shrink:0}
-.slice-pos-slider{flex:1;display:flex;flex-direction:column;gap:2px}
-.slice-pos-slider input[type=range]{width:100%;margin:0}
-.slice-pos-marks{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-lo);pointer-events:none}
+.slice-pos-slider{flex:1;min-width:0}
 .slice-pos-value{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);min-width:70px;text-align:right;flex-shrink:0}
 </style>
 </head>
@@ -273,6 +276,10 @@ input[type=range].param-slider::-moz-range-track{background:var(--surface-3);hei
   <div class="metric-sep"></div>
   <div class="metric-sep-prominent"></div>
   <div class="metric-badge"><span class="metric-label">Gain</span><span class="metric-value metric-gain" id="m-gain">—</span></div>
+  <div class="metric-computing" id="metric-computing">
+    <span class="spinner"></span>
+    <span class="metric-label" id="metric-computing-label">Computing…</span>
+  </div>
 </div>
 
 <!-- ── App body ───────────────────────────────────────────────────────────── -->
@@ -634,9 +641,15 @@ input[type=range].param-slider::-moz-range-track{background:var(--surface-3);hei
     <div class="slice-ctrl">
       <span class="slice-ctrl-label">Fixed t<sub>cad</sub></span>
       <div class="slice-pos-slider">
-        <input type="range" id="nslice-tfix-slider" min="2" max="8" step="0.05" value="4.937">
-        <div class="slice-pos-marks">
-          <span>100 s</span><span>1 hr</span><span>1 day</span><span>1 wk</span><span>1 yr</span>
+        <div class="param-slider-wrap" style="padding:4px 16px 14px">
+          <input type="range" id="nslice-tfix-slider" class="param-slider" min="2" max="8" step="0.05" value="4.937">
+          <div class="slider-marks">
+            <span style="left:0%">100 s</span>
+            <span style="left:25.94%">1 hr</span>
+            <span style="left:48.94%">1 day</span>
+            <span style="left:63.03%">1 wk</span>
+            <span style="left:91.65%">1 yr</span>
+          </div>
         </div>
       </div>
       <span class="slice-pos-value" id="nslice-tfix-value">1 day</span>
@@ -647,9 +660,15 @@ input[type=range].param-slider::-moz-range-track{background:var(--surface-3);hei
     <div class="slice-ctrl">
       <span class="slice-ctrl-label">Fixed N<sub>exp</sub></span>
       <div class="slice-pos-slider">
-        <input type="range" id="tslice-nfix-slider" min="0" max="4" step="0.05" value="2.0">
-        <div class="slice-pos-marks">
-          <span>1</span><span>10</span><span>100</span><span>1k</span><span>10k</span>
+        <div class="param-slider-wrap" style="padding:4px 16px 14px">
+          <input type="range" id="tslice-nfix-slider" class="param-slider" min="0" max="4" step="0.05" value="2.0">
+          <div class="slider-marks">
+            <span style="left:0%">1</span>
+            <span style="left:25%">10</span>
+            <span style="left:50%">100</span>
+            <span style="left:75%">1k</span>
+            <span style="left:100%">10k</span>
+          </div>
         </div>
       </div>
       <span class="slice-pos-value" id="tslice-nfix-value">100</span>
@@ -731,13 +750,22 @@ let _lastData = null;
 let _currentTab = '3d';
 let _currentTheme = 'dark';
 
-// ── Status bar ─────────────────────────────────────────────────────────────
+// ── Status bar + metrics-strip spinner ────────────────────────────────────
 function setStatus(msg, spinning = false) {
+  // Metrics-strip spinner: show while computing, hide otherwise.
+  const mc = document.getElementById('metric-computing');
+  const ml = document.getElementById('metric-computing-label');
+  if (spinning) {
+    ml.textContent = msg;
+    mc.style.display = 'flex';
+  } else {
+    mc.style.display = 'none';
+  }
+  // Bottom bar: errors only. Hide when idle or computing (spinner moved to top).
   const bar = document.getElementById('status-bar');
-  bar.innerHTML = spinning
-    ? '<span class="spinner"></span>' + msg
-    : msg;
-  bar.className = 'status-bar' + (msg ? '' : ' empty');
+  const isError = !spinning && msg;
+  bar.innerHTML = isError ? msg : '';
+  bar.className = 'status-bar' + (isError ? '' : ' empty');
 }
 
 // ── Theme ──────────────────────────────────────────────────────────────────
@@ -770,6 +798,8 @@ document.querySelectorAll('.view-btn').forEach(btn => {
       if (tab === 'nslice') renderNSlice(_lastData);
       else if (tab === 'tslice') renderTSlice(_lastData);
     }
+    // Adjust slice-position slider marks now that the panel is visible.
+    requestAnimationFrame(_adjustSliderMarkPositions);
   });
 });
 
@@ -857,6 +887,32 @@ function _initSliderDecorations() {
   });
 }
 _initSliderDecorations();
+
+// Adjust mark/dot left% to account for browser's internal thumb-radius padding.
+// The track's effective travel is (sliderW - 2*thumbR), so a raw 0%→100% range
+// maps to thumbR→sliderW-thumbR in pixels. Without this, edge marks are offset.
+// We store the original (unadjusted) percentage in data-raw-pct on first call so
+// repeated resize events always compute from the source, never from a prior result.
+function _adjustSliderMarkPositions() {
+  const THUMB_R = 7; // half of 14px thumb
+  document.querySelectorAll('.param-slider-wrap').forEach(wrap => {
+    const sl = wrap.querySelector('input[type=range].param-slider');
+    if (!sl) return;
+    const w = sl.offsetWidth;
+    if (w <= 0) return; // hidden/collapsed — skip until visible
+    const scale = 1 - (2 * THUMB_R) / w;
+    const offset = (THUMB_R / w) * 100;
+    wrap.querySelectorAll('.slider-marks span, .slider-dots span').forEach(el => {
+      // Cache original % on first run; use it on all subsequent runs.
+      if (el.dataset.rawPct == null) el.dataset.rawPct = el.style.left;
+      const raw = parseFloat(el.dataset.rawPct);
+      if (!isFinite(raw)) return;
+      el.style.left = (raw * scale + offset).toFixed(3) + '%';
+    });
+  });
+}
+requestAnimationFrame(_adjustSliderMarkPositions);
+window.addEventListener('resize', _adjustSliderMarkPositions);
 
 SLIDER_IDS.forEach(id => {
   const sl = document.getElementById(id + '_slider');
@@ -1046,12 +1102,12 @@ function _fmtNexp(n) {
 function updateNsliceTfixDisplay() {
   const sl = document.getElementById('nslice-tfix-slider');
   const el = document.getElementById('nslice-tfix-value');
-  if (sl && el) el.textContent = _fmtTcad(Math.pow(10, parseFloat(sl.value)));
+  if (sl && el) { el.textContent = _fmtTcad(Math.pow(10, parseFloat(sl.value))); updateSliderVisual(sl); }
 }
 function updateTsliceNfixDisplay() {
   const sl = document.getElementById('tslice-nfix-slider');
   const el = document.getElementById('tslice-nfix-value');
-  if (sl && el) el.textContent = _fmtNexp(Math.pow(10, parseFloat(sl.value)));
+  if (sl && el) { el.textContent = _fmtNexp(Math.pow(10, parseFloat(sl.value))); updateSliderVisual(sl); }
 }
 
 // ── Derived sidebar displays (instant, no Python needed) ──────────────────
@@ -1110,6 +1166,7 @@ async function runUpdate() {
   _computing = true;
   _pendingUpdate = false;
   setStatus('Computing…', true);
+  document.querySelectorAll('.plot-div').forEach(el => el.classList.add('loading'));
 
   let data;
   try {
@@ -1119,12 +1176,14 @@ async function runUpdate() {
     pyResult.destroy();
     pyParams.destroy();
   } catch (e) {
+    document.querySelectorAll('.plot-div').forEach(el => el.classList.remove('loading'));
     setStatus('Error: ' + e.message);
     _computing = false;
     return;
   }
 
   if (data.error) {
+    document.querySelectorAll('.plot-div').forEach(el => el.classList.remove('loading'));
     setStatus('Python error: ' + String(data.error).slice(0, 300));
     _computing = false;
     return;
@@ -1141,9 +1200,8 @@ async function runUpdate() {
   if (_currentTab === 'nslice') renderNSlice(data);
   else if (_currentTab === 'tslice') renderTSlice(data);
 
-  const rStr = data.R_opt != null ? data.R_opt.toFixed(3) + ' yr⁻¹' : '—';
-  const tStr = data.t_cad_opt_h != null ? fmtT(data.t_cad_opt_s) : '—';
-  setStatus('Done · Opt: R=' + rStr + ', t_cad=' + tStr);
+  document.querySelectorAll('.plot-div').forEach(el => el.classList.remove('loading'));
+  setStatus('');
 
   _computing = false;
   if (_pendingUpdate) { _pendingUpdate = false; setTimeout(runUpdate, 0); }
@@ -1532,7 +1590,7 @@ function render3DSurface(data, params) {
 
   // Discrete day-cadence overlay lines (optical only); Dash adds these BEFORE the
   // main surface so the surface z-order wins on overlapping regions.
-  if (params.optical) addDay3DLines(traces, shared, params);
+  if (params.optical_survey) addDay3DLines(traces, shared, params);
 
   if (params.color_regimes && regime2d) {
     for (let k = 1; k <= 7; k++) {
@@ -1612,7 +1670,7 @@ function render3DSurface(data, params) {
     uirevision: 'keep-view-v1',
     template: dark ? 'plotly_dark' : 'plotly_white',
     paper_bgcolor: plotBg(),
-    hoverlabel: {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'},
+    hoverlabel: {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'},
     scene: {
       bgcolor: plotBg(),
       xaxis: {title: 'N<sub>exp</sub>', type: 'log', gridcolor: grid3d, showbackground: false},
@@ -1680,7 +1738,7 @@ function renderNSlice(data) {
 
   const dark = darkMode();
   const accent = dark ? '#6d9eff' : '#3b6fff';
-  const hl = {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'};
+  const hl = {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'};
   const traces = [];
 
   // Regime legend first (so labels sort to top)
@@ -1803,7 +1861,7 @@ function renderNSlice(data) {
     legend: {x: 0.01, y: 0.98, xanchor: 'left', yanchor: 'top', bgcolor: 'rgba(0,0,0,0)', font: {size: 11}},
     annotations: annotations,
     shapes: shapes,
-    hoverlabel: {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'},
+    hoverlabel: {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'},
   };
 
   Plotly.react('plot-nslice', traces, layout, {responsive: true});
@@ -1883,7 +1941,7 @@ function renderTSlice(data) {
   const dark = darkMode();
   const accent = dark ? '#6d9eff' : '#3b6fff';
   const gapCol = dark ? 'rgba(255,200,100,0.07)' : 'rgba(200,140,0,0.07)';
-  const hl = {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'};
+  const hl = {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'};
   const colorOn = !!data.color_regimes;
 
   const traces = [];
@@ -2087,7 +2145,7 @@ function renderTSlice(data) {
     legend: {x: 0.01, y: 0.98, xanchor: 'left', yanchor: 'top', bgcolor: 'rgba(0,0,0,0)', font: {size: 11}},
     annotations: annotations,
     shapes: shapes,
-    hoverlabel: {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'},
+    hoverlabel: {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'},
   };
 
   Plotly.react('plot-tslice', traces, layout, {responsive: true});
