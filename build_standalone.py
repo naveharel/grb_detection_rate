@@ -16,7 +16,76 @@ import zipfile
 ROOT = pathlib.Path(__file__).parent
 
 # ---------------------------------------------------------------------------
-# HTML template — %%PHYSICS_ZIP_B64%% is replaced with the base64 zip string
+# Custom slider helper — generates .cs-wrap HTML blocks
+# %%SLIDER_X%% placeholders in HTML_TEMPLATE are replaced in build()
+# ---------------------------------------------------------------------------
+
+def _cs_slider(sid: str, smin: float, smax: float, step: float,
+               default: float, marks: list) -> str:
+    """Generate a .cs-wrap custom slider block with correct thumb/fill alignment."""
+    def pct(v: float) -> float:
+        return (v - smin) / (smax - smin)
+
+    def align(p: float) -> float:
+        return 0 if p < 1e-6 else (1 if p > 1 - 1e-6 else 0.5)
+
+    def fmt(v: float) -> str:
+        return f'{v:g}'
+
+    ticks: list = []
+    mark_spans: list = []
+    for val, lbl in marks:
+        p = pct(val)
+        is_dflt = abs(val - default) < step * 0.5
+        cls = ' cs-mark-dflt' if is_dflt else ''
+        a = align(p)
+        mark_spans.append(
+            f'<span class="cs-mark{cls}" style="--mpct:{p:.4f};--align:{a}">{lbl}</span>')
+        if 1e-6 < p < 1 - 1e-6:
+            ticks.append(
+                f'<div class="cs-tick" data-pct="{p:.4f}" style="--tick-pct:{p:.4f}"></div>')
+
+    dflt_pct = pct(default)
+    return (
+        f'<div class="cs-wrap" data-id="{sid}" style="--val-pct:{dflt_pct:.4f}">'
+        f'<div class="cs-track-area">'
+        f'<div class="cs-track-bg"></div>'
+        f'<div class="cs-track-fill"></div>'
+        + ''.join(ticks)
+        + f'<div class="cs-thumb" tabindex="0" role="slider"'
+        f' aria-valuemin="{fmt(smin)}" aria-valuemax="{fmt(smax)}"'
+        f' aria-valuenow="{fmt(default)}"></div>'
+        f'</div>'
+        f'<div class="cs-marks">{"".join(mark_spans)}</div>'
+        f'<input type="range" id="{sid}_slider" class="cs-hidden" tabindex="-1"'
+        f' min="{fmt(smin)}" max="{fmt(smax)}" step="{fmt(step)}"'
+        f' value="{fmt(default)}">'
+        f'</div>'
+    )
+
+_SLIDERS = [
+    # (KEY, sid, min, max, step, default, marks)
+    ('I',           'i',           2,      100,     1,      10,      [(2,'2'),(10,'10'),(30,'30'),(100,'100')]),
+    ('FLIVE',       'flive',       0.01,   1,       0.01,   0.2,     [(0.01,'0.01'),(0.2,'0.2'),(0.5,'0.5'),(1,'1')]),
+    ('ALOG',        'Alog',        -12,    -2,      0.01,   -4.68,   [(-12,'-12'),(-8,'-8'),(-4.68,'-4.68'),(-2,'-2')]),
+    ('OMEGAEXP',    'omegaexp',    1,      200,     1,      47,      [(1,'1'),(47,'47'),(100,'100'),(200,'200')]),
+    ('TOH',         'toh',         0,      30,      0.5,    0,       [(0,'0'),(15,'15'),(30,'30')]),
+    ('OMEGA_SRV',   'omega_srv',   100,    41253,   100,    27500,   [(100,'100'),(10000,'10k'),(27500,'27.5k'),(41253,'41k')]),
+    ('TNIGHT',      'tnight',      4,      14,      0.25,   10,      [(4,'4'),(6,'6'),(8,'8'),(10,'10'),(12,'12'),(14,'14')]),
+    ('P',           'p',           2.01,   3,       0.01,   2.5,     [(2.01,'2'),(2.5,'2.5'),(3,'3')]),
+    ('NU_LOG',      'nu_log',      14.3,   15.1,    0.01,   14.7,    [(14.3,'14.3'),(14.7,'14.7'),(15.1,'15.1')]),
+    ('EKISO_LOG',   'Ekiso_log',   51,     55,      0.1,    53,      [(51,'51'),(52,'52'),(53,'53'),(54,'54'),(55,'55')]),
+    ('N0_LOG',      'n0_log',      -3,     2,       0.1,    0,       [(-3,'-3'),(-2,'-2'),(-1,'-1'),(0,'0'),(1,'1'),(2,'2')]),
+    ('GAMMA0_LOG',  'gamma0_log',  2,      3.5,     0.05,   2.5,     [(2,'2'),(2.5,'2.5'),(3,'3'),(3.5,'3.5')]),
+    ('THETAJ',      'thetaj',      0.01,   0.5,     0.01,   0.1,     [(0.01,'0.01'),(0.1,'0.1'),(0.3,'0.3'),(0.5,'0.5')]),
+    ('EPSE',        'epse',        -2,     -0.3,    0.05,   -1,      [(-2,'-2'),(-1,'-1'),(-0.3,'-0.3')]),
+    ('EPSB',        'epsB',        -3,     -1,      0.05,   -2,      [(-3,'-3'),(-2,'-2'),(-1,'-1')]),
+    ('DEUC',        'deuc',        1,      12,      0.01,   5.28,    [(1,'1'),(5.28,'5.28'),(8,'8'),(12,'12')]),
+    ('RHO_GRB_LOG', 'rho_grb_log', 1,      3.3,     0.005,  2.415,   [(1,'10'),(2,'100'),(2.415,'260'),(3,'1k'),(3.3,'2k')]),
+]
+
+# ---------------------------------------------------------------------------
+# HTML template — %%PHYSICS_ZIP_B64%% and %%SLIDER_*%% are replaced in build()
 # ---------------------------------------------------------------------------
 
 HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -159,50 +228,59 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
   transition:border-color var(--t-fast),box-shadow var(--t-fast);
 }
 .param-input:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-glow);outline:none}
-/* ── Sliders ─────────────────────────────────────────────────────────────── */
-/* Dash-parity: filled accent track up to --value-pct, dots at each mark,
-   labels below. Padding mirrors assets/style.css .param-slider rule:
-   8px top + 16px bottom, 16px horizontal so edge marks aren't clipped. */
-.param-slider-wrap{position:relative;padding:8px 16px 16px}
-input[type=range].param-slider{
-  -webkit-appearance:none;appearance:none;
-  width:100%;height:3px;display:block;
-  background:linear-gradient(to right,
-    var(--accent) 0%,
-    var(--accent) var(--value-pct,0%),
-    var(--surface-3) var(--value-pct,0%),
-    var(--surface-3) 100%);
-  border-radius:2px;outline:none;cursor:pointer;
+/* ── Custom sliders (cs-*) ───────────────────────────────────────────────── */
+/* All positions use calc(--cs-r + val * (100% - 2*--cs-r)) so thumb, fill,
+   ticks and labels share one coordinate system — no browser thumb-offset hacks. */
+:root{--cs-r:8px;--cs-track-h:4px;--cs-thumb-sz:16px}
+.cs-wrap{position:relative;padding:4px 0 20px}
+.cs-track-area{
+  position:relative;height:var(--cs-thumb-sz);cursor:pointer;
 }
-input[type=range].param-slider::-webkit-slider-thumb{
-  -webkit-appearance:none;width:14px;height:14px;border-radius:50%;
-  background:var(--accent);border:2px solid var(--surface-1);
-  box-shadow:0 0 0 2px var(--accent-glow);cursor:pointer;
-  transition:box-shadow var(--t-fast);
+.cs-track-bg{
+  position:absolute;
+  left:var(--cs-r);right:var(--cs-r);
+  top:50%;height:var(--cs-track-h);transform:translateY(-50%);
+  background:var(--surface-3);border-radius:2px;pointer-events:none;
 }
-input[type=range].param-slider::-webkit-slider-thumb:hover{box-shadow:0 0 0 4px var(--accent-glow)}
-input[type=range].param-slider::-moz-range-thumb{
-  width:14px;height:14px;border-radius:50%;
-  background:var(--accent);border:2px solid var(--surface-1);cursor:pointer;
+.cs-track-fill{
+  position:absolute;
+  left:var(--cs-r);top:50%;
+  width:calc(var(--val-pct,0) * (100% - 2*var(--cs-r)));
+  height:var(--cs-track-h);transform:translateY(-50%);
+  background:var(--accent);border-radius:2px;pointer-events:none;
 }
-input[type=range].param-slider::-moz-range-progress{background:var(--accent);height:3px;border-radius:2px}
-input[type=range].param-slider::-moz-range-track{background:var(--surface-3);height:3px;border-radius:2px}
-/* Tick dots overlaid on the track (mirrors rc-slider-dot at each mark). */
-.slider-dots{position:absolute;left:16px;right:16px;top:8px;height:3px;pointer-events:none}
-.slider-dots span{
-  position:absolute;top:50%;transform:translate(-50%,-50%);
+.cs-tick{
+  position:absolute;
+  left:calc(var(--cs-r) + var(--tick-pct,0) * (100% - 2*var(--cs-r)));
+  top:50%;transform:translate(-50%,-50%);
   width:6px;height:6px;border-radius:50%;
   background:var(--surface-2);border:1px solid var(--surface-3);
+  pointer-events:none;transition:border-color var(--t-fast);
 }
-.slider-dots span.active{border-color:var(--accent)}
-/* Slider mark labels — mimic Dash's rc-slider-mark layout */
-.slider-marks{position:relative;height:14px;margin-top:2px}
-.slider-marks span{
-  position:absolute;top:0;transform:translateX(-50%);
+.cs-tick.active{border-color:var(--accent)}
+.cs-thumb{
+  position:absolute;
+  left:calc(var(--cs-r) + var(--val-pct,0) * (100% - 2*var(--cs-r)));
+  top:50%;transform:translate(-50%,-50%);
+  width:var(--cs-thumb-sz);height:var(--cs-thumb-sz);border-radius:50%;
+  background:var(--accent);border:2px solid var(--surface-1);
+  box-shadow:0 0 0 3px var(--accent-glow);cursor:grab;z-index:1;
+  transition:box-shadow var(--t-fast);outline:none;
+}
+.cs-thumb:hover,.cs-wrap.cs-dragging .cs-thumb{box-shadow:0 0 0 6px var(--accent-glow)}
+.cs-wrap.cs-dragging .cs-thumb{cursor:grabbing}
+.cs-thumb:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cs-marks{position:relative;height:14px;margin-top:1px}
+.cs-mark{
+  position:absolute;
+  left:calc(var(--cs-r) + var(--mpct,0) * (100% - 2*var(--cs-r)));
+  top:0;transform:translateX(calc(-1 * var(--align,0.5) * 100%));
   font-family:var(--font-mono);font-size:10px;color:var(--text-mid);
-  white-space:nowrap;pointer-events:none;
+  white-space:nowrap;pointer-events:none;line-height:14px;
 }
-.slider-mark-default{font-weight:700 !important;font-size:11px !important;color:var(--text-hi) !important}
+.cs-mark-dflt{font-weight:700;font-size:11px;color:var(--text-hi)}
+.cs-hidden{position:absolute;width:1px;height:1px;opacity:0;
+           pointer-events:none;overflow:hidden;clip:rect(0,0,0,0)}
 /* ── Switches ────────────────────────────────────────────────────────────── */
 .param-switch-row{display:flex;align-items:center;gap:8px;margin:6px 0}
 .toggle-switch{position:relative;display:inline-block;width:34px;height:18px;flex-shrink:0}
@@ -246,7 +324,7 @@ input[type=range].param-slider::-moz-range-track{background:var(--surface-3);hei
 .slice-ctrl-label{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);white-space:nowrap;min-width:80px;flex-shrink:0}
 .slice-pos-slider{flex:1;display:flex;flex-direction:column;gap:2px}
 .slice-pos-slider input[type=range]{width:100%;margin:0}
-.slice-pos-marks{display:flex;justify-content:space-between;font-family:var(--font-mono);font-size:10px;color:var(--text-lo);pointer-events:none}
+.slice-pos-marks{display:flex;justify-content:space-between;padding:0 var(--cs-r);font-family:var(--font-mono);font-size:10px;color:var(--text-lo);pointer-events:none}
 .slice-pos-value{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);min-width:70px;text-align:right;flex-shrink:0}
 </style>
 </head>
@@ -312,30 +390,14 @@ input[type=range].param-slider::-moz-range-track{background:var(--surface-3);hei
       <label class="param-label" for="i_slider" title="Number of detections required per GRB to count as a detection event">i</label>
       <input type="number" id="i_input" class="param-input" min="2" max="100" step="1" value="10">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="i_slider" class="param-slider" min="2" max="100" step="1" value="10">
-      <div class="slider-marks">
-        <span style="left:0%">2</span>
-        <span class="slider-mark-default" style="left:8.163%">10</span>
-        <span style="left:28.571%">30</span>
-        <span style="left:100%">100</span>
-      </div>
-    </div>
+    %%SLIDER_I%%
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="flive_slider" title="Fraction of total time the telescope is actually observing (0=never, 1=always)">f<sub>live</sub></label>
       <input type="number" id="flive_input" class="param-input" min="0.01" max="1" step="0.01" value="0.2">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="flive_slider" class="param-slider" min="0.01" max="1" step="0.01" value="0.2">
-      <div class="slider-marks">
-        <span style="left:0%">0.01</span>
-        <span class="slider-mark-default" style="left:19.192%">0.2</span>
-        <span style="left:49.495%">0.5</span>
-        <span style="left:100%">1</span>
-      </div>
-    </div>
+    %%SLIDER_FLIVE%%
   </div>
 </div>
 </details>
@@ -349,44 +411,21 @@ input[type=range].param-slider::-moz-range-track{background:var(--surface-3);hei
       <label class="param-label" for="Alog_slider" title="log₁₀ of reference limiting flux in Jansky at t_exp_ref = 30 s">log A [Jy]</label>
       <input type="number" id="Alog_input" class="param-input" min="-12" max="-2" step="0.01" value="-4.68">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="Alog_slider" class="param-slider" min="-12" max="-2" step="0.01" value="-4.68">
-      <div class="slider-marks">
-        <span style="left:0%">-12</span>
-        <span style="left:40%">-8</span>
-        <span class="slider-mark-default" style="left:73.2%">-4.68</span>
-        <span style="left:100%">-2</span>
-      </div>
-    </div>
+    %%SLIDER_ALOG%%
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="omegaexp_slider" title="Single-exposure field of view of the instrument in square degrees">Ω<sub>exp</sub> [deg²]</label>
       <input type="number" id="omegaexp_input" class="param-input" min="1" max="200" step="1" value="47">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="omegaexp_slider" class="param-slider" min="1" max="200" step="1" value="47">
-      <div class="slider-marks">
-        <span style="left:0%">1</span>
-        <span class="slider-mark-default" style="left:23.116%">47</span>
-        <span style="left:49.749%">100</span>
-        <span style="left:100%">200</span>
-      </div>
-    </div>
+    %%SLIDER_OMEGAEXP%%
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="toh_slider" title="Per-exposure overhead (readout, slew, settle) in seconds">t<sub>OH</sub> [sec]</label>
       <input type="number" id="toh_input" class="param-input" min="0" max="30" step="0.5" value="0">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="toh_slider" class="param-slider" min="0" max="30" step="0.5" value="0">
-      <div class="slider-marks">
-        <span class="slider-mark-default" style="left:0%">0</span>
-        <span style="left:50%">15</span>
-        <span style="left:100%">30</span>
-      </div>
-    </div>
+    %%SLIDER_TOH%%
   </div>
 </div>
 </details>
@@ -400,15 +439,7 @@ input[type=range].param-slider::-moz-range-track{background:var(--surface-3);hei
       <label class="param-label" for="omega_srv_slider" title="Maximum surveyable sky area per cadence cycle in square degrees">Ω<sub>srv,max</sub> [deg²]</label>
       <input type="number" id="omega_srv_input" class="param-input" min="100" max="41253" step="100" value="27500">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="omega_srv_slider" class="param-slider" min="100" max="41253" step="100" value="27500">
-      <div class="slider-marks">
-        <span style="left:0%">100</span>
-        <span style="left:24.057%">10k</span>
-        <span class="slider-mark-default" style="left:66.649%">27.5k</span>
-        <span style="left:100%">41k</span>
-      </div>
-    </div>
+    %%SLIDER_OMEGA_SRV%%
     <div id="nexpmax-display"></div>
   </div>
   <div class="param-block" id="tnight-block" style="display:none">
@@ -416,17 +447,7 @@ input[type=range].param-slider::-moz-range-track{background:var(--surface-3);hei
       <label class="param-label" for="tnight_slider" title="Length of the observable astronomical night in hours">t<sub>night</sub> [hr]</label>
       <input type="number" id="tnight_input" class="param-input" min="4" max="14" step="0.25" value="10">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="tnight_slider" class="param-slider" min="4" max="14" step="0.25" value="10">
-      <div class="slider-marks">
-        <span style="left:0%">4</span>
-        <span style="left:20%">6</span>
-        <span style="left:40%">8</span>
-        <span class="slider-mark-default" style="left:60%">10</span>
-        <span style="left:80%">12</span>
-        <span style="left:100%">14</span>
-      </div>
-    </div>
+    %%SLIDER_TNIGHT%%
     <div id="subnight-limit-display"></div>
   </div>
 </div>
@@ -442,119 +463,56 @@ input[type=range].param-slider::-moz-range-track{background:var(--surface-3);hei
       <label class="param-label" for="p_slider" title="Electron power-law index (must be > 2). Exponentially amplified in flux; strongly affects spectral slope and all detection ranges.">p</label>
       <input type="number" id="p_input" class="param-input" min="2.01" max="3" step="0.01" value="2.5">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="p_slider" class="param-slider" min="2.01" max="3" step="0.01" value="2.5">
-      <div class="slider-marks">
-        <span style="left:0%">2</span>
-        <span class="slider-mark-default" style="left:49.495%">2.5</span>
-        <span style="left:100%">3</span>
-      </div>
-    </div>
+    %%SLIDER_P%%
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="nu_log_slider" title="log₁₀ of observing frequency in Hz. Optical/near-IR window: 10^14.3 Hz (~1 µm, J-band) to 10^15.1 Hz (~80 nm, near-UV). Default 5×10¹⁴ Hz = optical V-band (550 nm).">log ν [Hz]</label>
       <input type="number" id="nu_log_input" class="param-input" min="14.3" max="15.1" step="0.01" value="14.7">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="nu_log_slider" class="param-slider" min="14.3" max="15.1" step="0.01" value="14.7">
-      <div class="slider-marks">
-        <span style="left:0%">14.3</span>
-        <span class="slider-mark-default" style="left:50%">14.7</span>
-        <span style="left:100%">15.1</span>
-      </div>
-    </div>
+    %%SLIDER_NU_LOG%%
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="Ekiso_log_slider" title="log₁₀ of isotropic-equivalent kinetic energy in erg. Scales flux as E^{(p+3)/4} and deceleration time as E^{1/3}.">log E<sub>k,iso</sub> [erg]</label>
       <input type="number" id="Ekiso_log_input" class="param-input" min="51" max="55" step="0.1" value="53">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="Ekiso_log_slider" class="param-slider" min="51" max="55" step="0.1" value="53">
-      <div class="slider-marks">
-        <span style="left:0%">51</span>
-        <span style="left:25%">52</span>
-        <span class="slider-mark-default" style="left:50%">53</span>
-        <span style="left:75%">54</span>
-        <span style="left:100%">55</span>
-      </div>
-    </div>
+    %%SLIDER_EKISO_LOG%%
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="n0_log_slider" title="log₁₀ of ISM number density in cm⁻³. Affects flux (∝ n^{1/2}) and deceleration time (∝ n^{-1/3}).">log n<sub>0</sub> [cm⁻³]</label>
       <input type="number" id="n0_log_input" class="param-input" min="-3" max="2" step="0.1" value="0">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="n0_log_slider" class="param-slider" min="-3" max="2" step="0.1" value="0">
-      <div class="slider-marks">
-        <span style="left:0%">-3</span>
-        <span style="left:20%">-2</span>
-        <span style="left:40%">-1</span>
-        <span class="slider-mark-default" style="left:60%">0</span>
-        <span style="left:80%">1</span>
-        <span style="left:100%">2</span>
-      </div>
-    </div>
+    %%SLIDER_N0_LOG%%
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="gamma0_log_slider" title="log₁₀ of initial bulk Lorentz factor. Affects deceleration time (∝ Γ₀^{-8/3}) and the on-axis beaming cone angle.">log Γ<sub>0</sub></label>
       <input type="number" id="gamma0_log_input" class="param-input" min="2" max="3.5" step="0.05" value="2.5">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="gamma0_log_slider" class="param-slider" min="2" max="3.5" step="0.05" value="2.5">
-      <div class="slider-marks">
-        <span style="left:0%">2</span>
-        <span class="slider-mark-default" style="left:33.333%">2.5</span>
-        <span style="left:66.667%">3</span>
-        <span style="left:100%">3.5</span>
-      </div>
-    </div>
+    %%SLIDER_GAMMA0_LOG%%
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="thetaj_slider" title="Jet half-opening angle in radians. Sets the jet-break time and the beaming fraction f_b = θ_j²/2.">θ<sub>j</sub> [rad]</label>
       <input type="number" id="thetaj_input" class="param-input" min="0.01" max="0.5" step="0.01" value="0.1">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="thetaj_slider" class="param-slider" min="0.01" max="0.5" step="0.01" value="0.1">
-      <div class="slider-marks">
-        <span style="left:0%">0.01</span>
-        <span class="slider-mark-default" style="left:18.367%">0.1</span>
-        <span style="left:59.184%">0.3</span>
-        <span style="left:100%">0.5</span>
-      </div>
-    </div>
+    %%SLIDER_THETAJ%%
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="epse_slider" title="log₁₀ of electron energy fraction. Enters flux as (ε_e·(p−2)/(p−1))^{p−1}.">log ε<sub>e</sub></label>
       <input type="number" id="epse_input" class="param-input" min="-2" max="-0.3" step="0.05" value="-1">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="epse_slider" class="param-slider" min="-2" max="-0.3" step="0.05" value="-1">
-      <div class="slider-marks">
-        <span style="left:0%">-2</span>
-        <span class="slider-mark-default" style="left:58.824%">-1</span>
-        <span style="left:100%">-0.3</span>
-      </div>
-    </div>
+    %%SLIDER_EPSE%%
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="epsB_slider" title="log₁₀ of magnetic energy fraction. Enters flux as ε_B^{(p+1)/4}.">log ε<sub>B</sub></label>
       <input type="number" id="epsB_input" class="param-input" min="-3" max="-1" step="0.05" value="-2">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="epsB_slider" class="param-slider" min="-3" max="-1" step="0.05" value="-2">
-      <div class="slider-marks">
-        <span style="left:0%">-3</span>
-        <span class="slider-mark-default" style="left:50%">-2</span>
-        <span style="left:100%">-1</span>
-      </div>
-    </div>
+    %%SLIDER_EPSB%%
   </div>
   <div class="param-group-label" style="margin-top:10px">Cosmological model</div>
   <div class="param-block">
@@ -562,31 +520,14 @@ input[type=range].param-slider::-moz-range-track{background:var(--surface-3);hei
       <label class="param-label" for="deuc_slider" title="Euclidean calibration distance in Gpc. Sets the volume for the rate integral. Default 5.28 Gpc ≈ z = 2 in flat ΛCDM.">D<sub>Euc</sub> [Gpc]</label>
       <input type="number" id="deuc_input" class="param-input" min="1" max="12" step="0.01" value="5.28">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="deuc_slider" class="param-slider" min="1" max="12" step="0.01" value="5.28">
-      <div class="slider-marks">
-        <span style="left:0%">1</span>
-        <span class="slider-mark-default" style="left:38.909%">5.28</span>
-        <span style="left:63.636%">8</span>
-        <span style="left:100%">12</span>
-      </div>
-    </div>
+    %%SLIDER_DEUC%%
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="rho_grb_log_slider" title="log₁₀ of GRB volumetric rate density. Scales the total detection rate linearly.">log ℛ [Gpc⁻³ yr⁻¹]</label>
       <input type="number" id="rho_grb_log_input" class="param-input" min="1" max="3.3" step="0.005" value="2.415">
     </div>
-    <div class="param-slider-wrap">
-      <input type="range" id="rho_grb_log_slider" class="param-slider" min="1" max="3.3" step="0.005" value="2.415">
-      <div class="slider-marks">
-        <span style="left:0%">10</span>
-        <span style="left:43.478%">100</span>
-        <span class="slider-mark-default" style="left:61.522%">260</span>
-        <span style="left:86.957%">1k</span>
-        <span style="left:100%">2k</span>
-      </div>
-    </div>
+    %%SLIDER_RHO_GRB_LOG%%
   </div>
   <div class="param-row grb-derived-row">
     <span id="grb-ntotal-display" class="grb-derived-val">R<sub>int</sub> = —</span>
@@ -809,14 +750,14 @@ function _sliderPct(sl) {
 }
 function updateSliderVisual(sl) {
   if (!sl) return;
-  const pct = _sliderPct(sl);
-  sl.style.setProperty('--value-pct', pct.toFixed(3) + '%');
-  const wrap = sl.parentElement;
+  const pct = _sliderPct(sl) / 100;  // 0–1
+  const wrap = sl.closest('.cs-wrap');
   if (!wrap) return;
-  const dots = wrap.querySelectorAll('.slider-dots span');
-  dots.forEach(d => {
-    const lp = parseFloat(d.dataset.pct);
-    d.classList.toggle('active', isFinite(lp) && lp <= pct + 1e-6);
+  wrap.style.setProperty('--val-pct', pct.toFixed(4));
+  wrap.querySelector('.cs-thumb')?.setAttribute('aria-valuenow', sl.value);
+  wrap.querySelectorAll('.cs-tick').forEach(t => {
+    const tp = parseFloat(t.dataset.pct);
+    t.classList.toggle('active', isFinite(tp) && tp <= pct + 1e-6);
   });
 }
 
@@ -852,32 +793,60 @@ function syncFromInput(id) {
   triggerUpdate();
 }
 
-// Build a `.slider-dots` overlay per `.param-slider-wrap` using the positions
-// declared on the adjacent `.slider-marks span` elements. Then prime each
-// slider's `--value-pct` + active-dot state to match its initial value.
-function _initSliderDecorations() {
-  document.querySelectorAll('.param-slider-wrap').forEach(wrap => {
-    const marks = wrap.querySelector('.slider-marks');
-    const sl = wrap.querySelector('input[type=range].param-slider');
-    if (!sl) return;
-    if (marks && !wrap.querySelector('.slider-dots')) {
-      const dots = document.createElement('div');
-      dots.className = 'slider-dots';
-      marks.querySelectorAll('span').forEach(s => {
-        const left = s.style.left; // e.g. "8.163%"
-        if (!left) return;
-        const dot = document.createElement('span');
-        dot.style.left = left;
-        dot.dataset.pct = parseFloat(left);
-        dots.appendChild(dot);
-      });
-      // Insert dots BEFORE the slider so they sit behind the thumb visually.
-      wrap.insertBefore(dots, sl);
+// Wire drag/click/touch/keyboard on every .cs-wrap, then prime initial visuals.
+function _initCustomSliders() {
+  const CS_R = 8; // px — must match --cs-r CSS variable
+  document.querySelectorAll('.cs-wrap').forEach(wrap => {
+    const sl    = wrap.querySelector('.cs-hidden');
+    const area  = wrap.querySelector('.cs-track-area');
+    const thumb = wrap.querySelector('.cs-thumb');
+    if (!sl || !area) return;
+    updateSliderVisual(sl); // prime fill + ticks to initial value
+
+    function valFromX(clientX) {
+      const rect = area.getBoundingClientRect();
+      const p = Math.min(1, Math.max(0, (clientX - rect.left - CS_R) / (rect.width - 2 * CS_R)));
+      const mn = parseFloat(sl.min), mx = parseFloat(sl.max), st = parseFloat(sl.step) || 1;
+      let v = mn + p * (mx - mn);
+      if (st > 0) v = Math.round((v - mn) / st) * st + mn;
+      return Math.min(mx, Math.max(mn, v));
     }
-    updateSliderVisual(sl);
+    function applyVal(v) {
+      sl.value = v;
+      sl.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    let dragging = false;
+    area.addEventListener('mousedown', e => {
+      dragging = true; wrap.classList.add('cs-dragging');
+      applyVal(valFromX(e.clientX)); e.preventDefault();
+    });
+    window.addEventListener('mousemove', e => { if (dragging) applyVal(valFromX(e.clientX)); });
+    window.addEventListener('mouseup',   () => { dragging = false; wrap.classList.remove('cs-dragging'); });
+
+    area.addEventListener('touchstart', e => {
+      dragging = true; wrap.classList.add('cs-dragging');
+      applyVal(valFromX(e.touches[0].clientX)); e.preventDefault();
+    }, { passive: false });
+    window.addEventListener('touchmove', e => {
+      if (dragging) { applyVal(valFromX(e.touches[0].clientX)); e.preventDefault(); }
+    }, { passive: false });
+    window.addEventListener('touchend', () => { dragging = false; wrap.classList.remove('cs-dragging'); });
+
+    if (thumb) thumb.addEventListener('keydown', e => {
+      const mn = parseFloat(sl.min), mx = parseFloat(sl.max), st = parseFloat(sl.step) || 1;
+      let v = parseFloat(sl.value);
+      if      (e.key === 'ArrowRight' || e.key === 'ArrowUp')   v += st;
+      else if (e.key === 'ArrowLeft'  || e.key === 'ArrowDown') v -= st;
+      else if (e.key === 'Home') v = mn;
+      else if (e.key === 'End')  v = mx;
+      else return;
+      e.preventDefault();
+      applyVal(Math.min(mx, Math.max(mn, v)));
+    });
   });
 }
-_initSliderDecorations();
+_initCustomSliders();
 
 SLIDER_IDS.forEach(id => {
   const sl = document.getElementById(id + '_slider');
@@ -1451,10 +1420,11 @@ function annotCol() { return darkMode() ? '#8ba0c0' : '#4b6080'; }
 // (unmasked) points are skipped. In regime-colour mode each consecutive run
 // of equal regime IDs becomes its own segment; in height-colour mode a
 // single light uniform line is drawn per day.
-function addDay3DLines(traces, shared, params) {
+function addDay3DLines(traces, shared, params, zmaxLog) {
   const dl = shared && shared.dayLine;
   if (!dl || dl.n_days === 0) return;
   const regimeMode = !!params.color_regimes;
+  const heightCmax = (zmaxLog != null && isFinite(zmaxLog)) ? zmaxLog : 1.0;
 
   // Height-colour mode: collect marker traces separately so they are appended
   // AFTER every per-day line trace. Matches components/figures.py:L319-L337 —
@@ -1530,7 +1500,7 @@ function addDay3DLines(traces, shared, params) {
           color: zG.map(v => Math.log10(Math.max(v, 1e-30))),
           colorscale: PLASMA_SCALE,
           cmin: -2.0,
-          cmax: 1.0,
+          cmax: heightCmax,
           opacity: 1.0,
           showscale: false,
         },
@@ -1553,11 +1523,24 @@ function render3DSurface(data, params) {
 
   // Discrete day-cadence overlay lines (optical only); Dash adds these BEFORE the
   // main surface so the surface z-order wins on overlapping regions.
-  if (params.optical) addDay3DLines(traces, shared, params);
+  if (params.optical_survey) addDay3DLines(traces, shared, params, data.zmax_log10);
+
+  // Optical mode: exclude discrete-day rows (y ≥ 24 h) from the surface — they
+  // are rendered as 1D scatter3d lines by addDay3DLines instead.
+  // Mirrors callbacks/surface.py:385-398 where Dash keeps only rows with y_s < DAY_S.
+  let Z2dSurf = Z2d, Zlog2dSurf = Zlog2d, regime2dSurf = regime2d;
+  if (params.optical_survey) {
+    const nullRow = new Array(nx).fill(null);
+    Z2dSurf      = Y2d.map((row, r) => (row[0] != null && row[0] >= 24.0) ? nullRow : Z2d[r]);
+    Zlog2dSurf   = Y2d.map((row, r) => (row[0] != null && row[0] >= 24.0) ? nullRow : Zlog2d[r]);
+    regime2dSurf = regime2d
+      ? Y2d.map((row, r) => (row[0] != null && row[0] >= 24.0) ? nullRow : regime2d[r])
+      : null;
+  }
 
   if (params.color_regimes && regime2d) {
     for (let k = 1; k <= 7; k++) {
-      const Zk = Z2d.map((row, r) => row.map((v, c) => (regime2d[r][c] === k ? v : null)));
+      const Zk = Z2dSurf.map((row, r) => row.map((v, c) => (regime2dSurf[r][c] === k ? v : null)));
       if (Zk.every(row => row.every(v => v === null))) continue;
       const col = REGIME_HEX[k - 1];
       const trace = {
@@ -1579,8 +1562,8 @@ function render3DSurface(data, params) {
   } else {
     const zmax = data.zmax_log10 || 0;
     const trace = {
-      type: 'surface', x: X2d, y: Y2d, z: Z2d,
-      surfacecolor: Zlog2d,
+      type: 'surface', x: X2d, y: Y2d, z: Z2dSurf,
+      surfacecolor: Zlog2dSurf,
       cmin: ZMIN_LOG, cmax: zmax,
       colorscale: PLASMA_SCALE, showscale: true, connectgaps: false,
       lighting: {ambient: 0.75, diffuse: 0.75, specular: 0.08, roughness: 0.95},
@@ -1633,7 +1616,7 @@ function render3DSurface(data, params) {
     uirevision: 'keep-view-v1',
     template: dark ? 'plotly_dark' : 'plotly_white',
     paper_bgcolor: plotBg(),
-    hoverlabel: {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'},
+    hoverlabel: {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'},
     scene: {
       bgcolor: plotBg(),
       xaxis: {title: 'N<sub>exp</sub>', type: 'log', gridcolor: grid3d, showbackground: false},
@@ -1701,7 +1684,7 @@ function renderNSlice(data) {
 
   const dark = darkMode();
   const accent = dark ? '#6d9eff' : '#3b6fff';
-  const hl = {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'};
+  const hl = {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'};
   const traces = [];
 
   // Regime legend first (so labels sort to top)
@@ -1824,7 +1807,7 @@ function renderNSlice(data) {
     legend: {x: 0.01, y: 0.98, xanchor: 'left', yanchor: 'top', bgcolor: 'rgba(0,0,0,0)', font: {size: 11}},
     annotations: annotations,
     shapes: shapes,
-    hoverlabel: {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'},
+    hoverlabel: {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'},
   };
 
   Plotly.react('plot-nslice', traces, layout, {responsive: true});
@@ -1904,7 +1887,7 @@ function renderTSlice(data) {
   const dark = darkMode();
   const accent = dark ? '#6d9eff' : '#3b6fff';
   const gapCol = dark ? 'rgba(255,200,100,0.07)' : 'rgba(200,140,0,0.07)';
-  const hl = {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'};
+  const hl = {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'};
   const colorOn = !!data.color_regimes;
 
   const traces = [];
@@ -2108,7 +2091,7 @@ function renderTSlice(data) {
     legend: {x: 0.01, y: 0.98, xanchor: 'left', yanchor: 'top', bgcolor: 'rgba(0,0,0,0)', font: {size: 11}},
     annotations: annotations,
     shapes: shapes,
-    hoverlabel: {bgcolor: hoverBg(), font_color: hoverFontCol(), bordercolor: 'rgba(0,0,0,0)'},
+    hoverlabel: {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'},
   };
 
   Plotly.react('plot-tslice', traces, layout, {responsive: true});
@@ -2256,6 +2239,8 @@ def build() -> None:
     zip_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
     html = HTML_TEMPLATE.replace("%%PHYSICS_ZIP_B64%%", zip_b64)
+    for key, sid, smin, smax, step, default, marks in _SLIDERS:
+        html = html.replace(f"%%SLIDER_{key}%%", _cs_slider(sid, smin, smax, step, default, marks))
     out = ROOT / "grb_detection_rate.html"
     out.write_text(html, encoding="utf-8")
     size_kb = out.stat().st_size // 1024
