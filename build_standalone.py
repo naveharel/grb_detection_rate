@@ -21,8 +21,11 @@ ROOT = pathlib.Path(__file__).parent
 # ---------------------------------------------------------------------------
 
 def _cs_slider(sid: str, smin: float, smax: float, step: float,
-               default: float, marks: list) -> str:
+               default: float, marks: list, slider_id: str | None = None) -> str:
     """Generate a .cs-wrap custom slider block with correct thumb/fill alignment."""
+    if slider_id is None:
+        slider_id = f"{sid}_slider"
+
     def pct(v: float) -> float:
         return (v - smin) / (smax - smin)
 
@@ -41,9 +44,8 @@ def _cs_slider(sid: str, smin: float, smax: float, step: float,
         a = align(p)
         mark_spans.append(
             f'<span class="cs-mark{cls}" style="--mpct:{p:.4f};--align:{a}">{lbl}</span>')
-        if 1e-6 < p < 1 - 1e-6:
-            ticks.append(
-                f'<div class="cs-tick" data-pct="{p:.4f}" style="--tick-pct:{p:.4f}"></div>')
+        ticks.append(
+            f'<div class="cs-tick" data-pct="{p:.4f}" style="--tick-pct:{p:.4f}"></div>')
 
     dflt_pct = pct(default)
     return (
@@ -57,14 +59,14 @@ def _cs_slider(sid: str, smin: float, smax: float, step: float,
         f' aria-valuenow="{fmt(default)}"></div>'
         f'</div>'
         f'<div class="cs-marks">{"".join(mark_spans)}</div>'
-        f'<input type="range" id="{sid}_slider" class="cs-hidden" tabindex="-1"'
+        f'<input type="range" id="{slider_id}" class="cs-hidden" tabindex="-1"'
         f' min="{fmt(smin)}" max="{fmt(smax)}" step="{fmt(step)}"'
         f' value="{fmt(default)}">'
         f'</div>'
     )
 
 _SLIDERS = [
-    # (KEY, sid, min, max, step, default, marks)
+    # (KEY, sid, min, max, step, default, marks, slider_id_override?)
     ('I',           'i',           2,      100,     1,      10,      [(2,'2'),(10,'10'),(30,'30'),(100,'100')]),
     ('FLIVE',       'flive',       0.01,   1,       0.01,   0.2,     [(0.01,'0.01'),(0.2,'0.2'),(0.5,'0.5'),(1,'1')]),
     ('ALOG',        'Alog',        -12,    -2,      0.01,   -4.68,   [(-12,'-12'),(-8,'-8'),(-4.68,'-4.68'),(-2,'-2')]),
@@ -82,6 +84,14 @@ _SLIDERS = [
     ('EPSB',        'epsB',        -3,     -1,      0.05,   -2,      [(-3,'-3'),(-2,'-2'),(-1,'-1')]),
     ('DEUC',        'deuc',        1,      12,      0.01,   5.28,    [(1,'1'),(5.28,'5.28'),(8,'8'),(12,'12')]),
     ('RHO_GRB_LOG', 'rho_grb_log', 1,      3.3,     0.005,  2.415,   [(1,'10'),(2,'100'),(2.415,'260'),(3,'1k'),(3.3,'2k')]),
+    # Slice-position sliders (under N-slice / t-slice plots). Hyphen IDs preserved
+    # so existing JS selectors (e.g. 'nslice-tfix-slider') keep working.
+    ('NSLICE_TFIX', 'nslice-tfix', 2,      8,       0.05,   4.937,
+        [(2,'100 s'),(3.556,'1 hr'),(4.937,'1 day'),(5.781,'1 wk'),(7.499,'1 yr')],
+        'nslice-tfix-slider'),
+    ('TSLICE_NFIX', 'tslice-nfix', 0,      4,       0.05,   2.0,
+        [(0,'1'),(1,'10'),(2,'100'),(3,'1k'),(4,'10k')],
+        'tslice-nfix-slider'),
 ]
 
 # ---------------------------------------------------------------------------
@@ -188,6 +198,8 @@ input{font-family:inherit}
 .metric-gain{color:var(--text-mid)}
 .metric-gain.positive{color:var(--green)}
 .metric-gain.negative{color:var(--coral)}
+.metric-status{margin-left:auto;display:flex;align-items:center;gap:6px;padding:0 16px;font-family:var(--font-mono);font-size:11px;color:var(--text-lo);white-space:nowrap}
+.metric-status.error{color:var(--coral)}
 /* ── Body area ───────────────────────────────────────────────────────────── */
 .app-body{display:flex;flex:1;min-height:0;overflow:hidden}
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
@@ -310,9 +322,6 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
 .view-panel{flex:1;min-height:0;display:flex;flex-direction:column}
 .view-panel.hidden{display:none}
 .plot-div{flex:1;min-height:0}
-/* ── Status bar ──────────────────────────────────────────────────────────── */
-.status-bar{flex-shrink:0;font-family:var(--font-mono);font-size:11px;color:var(--text-lo);padding:5px 16px;border-top:1px solid var(--border);background:var(--surface-0)}
-.status-bar.empty{padding:0;border-top:none}
 /* ── Spinner ─────────────────────────────────────────────────────────────── */
 @keyframes spin{to{transform:rotate(360deg)}}
 .spinner{display:inline-block;width:10px;height:10px;border:2px solid var(--accent-dim);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;margin-right:6px;vertical-align:middle}
@@ -322,9 +331,7 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
 /* ── Slice position controls (below N-slice / t-slice graphs) ───────────── */
 .slice-ctrl{display:flex;align-items:center;gap:10px;padding:6px 20px 12px 20px;border-top:1px solid var(--border);background:var(--surface-0);flex-shrink:0}
 .slice-ctrl-label{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);white-space:nowrap;min-width:80px;flex-shrink:0}
-.slice-pos-slider{flex:1;display:flex;flex-direction:column;gap:2px}
-.slice-pos-slider input[type=range]{width:100%;margin:0}
-.slice-pos-marks{display:flex;justify-content:space-between;padding:0 var(--cs-r);font-family:var(--font-mono);font-size:10px;color:var(--text-lo);pointer-events:none}
+.slice-pos-slider{flex:1;min-width:0}
 .slice-pos-value{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);min-width:70px;text-align:right;flex-shrink:0}
 </style>
 </head>
@@ -372,6 +379,7 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
   <div class="metric-sep"></div>
   <div class="metric-sep-prominent"></div>
   <div class="metric-badge"><span class="metric-label">Gain</span><span class="metric-value metric-gain" id="m-gain">—</span></div>
+  <div class="metric-status" id="metric-status"></div>
 </div>
 
 <!-- ── App body ───────────────────────────────────────────────────────────── -->
@@ -595,12 +603,7 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
     <div id="plot-nslice" class="plot-div"></div>
     <div class="slice-ctrl">
       <span class="slice-ctrl-label">Fixed t<sub>cad</sub></span>
-      <div class="slice-pos-slider">
-        <input type="range" id="nslice-tfix-slider" min="2" max="8" step="0.05" value="4.937">
-        <div class="slice-pos-marks">
-          <span>100 s</span><span>1 hr</span><span>1 day</span><span>1 wk</span><span>1 yr</span>
-        </div>
-      </div>
+      <div class="slice-pos-slider">%%SLIDER_NSLICE_TFIX%%</div>
       <span class="slice-pos-value" id="nslice-tfix-value">1 day</span>
     </div>
   </div>
@@ -608,16 +611,10 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
     <div id="plot-tslice" class="plot-div"></div>
     <div class="slice-ctrl">
       <span class="slice-ctrl-label">Fixed N<sub>exp</sub></span>
-      <div class="slice-pos-slider">
-        <input type="range" id="tslice-nfix-slider" min="0" max="4" step="0.05" value="2.0">
-        <div class="slice-pos-marks">
-          <span>1</span><span>10</span><span>100</span><span>1k</span><span>10k</span>
-        </div>
-      </div>
+      <div class="slice-pos-slider">%%SLIDER_TSLICE_NFIX%%</div>
       <span class="slice-pos-value" id="tslice-nfix-value">100</span>
     </div>
   </div>
-  <div class="status-bar" id="status-bar">Initializing Pyodide…</div>
 </main>
 
 </div><!-- app-body -->
@@ -693,13 +690,13 @@ let _lastData = null;
 let _currentTab = '3d';
 let _currentTheme = 'dark';
 
-// ── Status bar ─────────────────────────────────────────────────────────────
-function setStatus(msg, spinning = false) {
-  const bar = document.getElementById('status-bar');
-  bar.innerHTML = spinning
-    ? '<span class="spinner"></span>' + msg
-    : msg;
-  bar.className = 'status-bar' + (msg ? '' : ' empty');
+// ── Status indicator (top-right of metrics strip) ─────────────────────────
+function setStatus(msg, spinning = false, isError = false) {
+  const el = document.getElementById('metric-status');
+  if (!el) return;
+  if (!msg && !spinning) { el.innerHTML = ''; el.classList.remove('error'); return; }
+  el.innerHTML = (spinning ? '<span class="spinner"></span>' : '') + (msg || '');
+  el.classList.toggle('error', !!isError);
 }
 
 // ── Theme ──────────────────────────────────────────────────────────────────
@@ -802,6 +799,9 @@ function _initCustomSliders() {
     const thumb = wrap.querySelector('.cs-thumb');
     if (!sl || !area) return;
     updateSliderVisual(sl); // prime fill + ticks to initial value
+    // Generic visual refresh on every input event — needed for sliders not in
+    // SLIDER_IDS (e.g. slice-position sliders); idempotent for sidebar sliders.
+    sl.addEventListener('input', () => updateSliderVisual(sl));
 
     function valFromX(clientX) {
       const rect = area.getBoundingClientRect();
@@ -890,6 +890,7 @@ async function runSliceUpdate(which) {
   if (_sliceComputing[which]) { _sliceQueued[which] = true; return; }
   _sliceComputing[which] = true;
   _sliceQueued[which] = false;
+  setStatus('Computing…', true);
   try {
     const params = readParams();
     const pyParams = pyodide.toPy(params);
@@ -905,15 +906,16 @@ async function runSliceUpdate(which) {
     pyResult.destroy();
     pyParams.destroy();
     if (payload.error) {
-      setStatus('Slice error: ' + String(payload.error).slice(0, 200));
+      setStatus('Slice error: ' + String(payload.error).slice(0, 200), false, true);
     } else {
       // Merge slice payload into _lastData so renderers use fresh values.
       Object.assign(_lastData, payload);
       if (which === 'nslice' && _currentTab === 'nslice') renderNSlice(_lastData);
       if (which === 'tslice' && _currentTab === 'tslice') renderTSlice(_lastData);
+      setStatus('');
     }
   } catch (e) {
-    setStatus('Slice compute failed: ' + e.message);
+    setStatus('Slice compute failed: ' + e.message, false, true);
     console.error(e);
   }
   _sliceComputing[which] = false;
@@ -1109,13 +1111,13 @@ async function runUpdate() {
     pyResult.destroy();
     pyParams.destroy();
   } catch (e) {
-    setStatus('Error: ' + e.message);
+    setStatus('Error: ' + e.message, false, true);
     _computing = false;
     return;
   }
 
   if (data.error) {
-    setStatus('Python error: ' + String(data.error).slice(0, 300));
+    setStatus('Python error: ' + String(data.error).slice(0, 300), false, true);
     _computing = false;
     return;
   }
@@ -1131,9 +1133,7 @@ async function runUpdate() {
   if (_currentTab === 'nslice') renderNSlice(data);
   else if (_currentTab === 'tslice') renderTSlice(data);
 
-  const rStr = data.R_opt != null ? data.R_opt.toFixed(3) + ' yr⁻¹' : '—';
-  const tStr = data.t_cad_opt_h != null ? fmtT(data.t_cad_opt_s) : '—';
-  setStatus('Done · Opt: R=' + rStr + ', t_cad=' + tStr);
+  setStatus('');
 
   _computing = false;
   if (_pendingUpdate) { _pendingUpdate = false; setTimeout(runUpdate, 0); }
@@ -2210,7 +2210,7 @@ print('Bridge ready')
     runUpdate();
 
   } catch (e) {
-    setStatus('Initialization failed: ' + e.message);
+    setStatus('Initialization failed: ' + e.message, false, true);
     console.error(e);
   }
 }
@@ -2239,8 +2239,11 @@ def build() -> None:
     zip_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
     html = HTML_TEMPLATE.replace("%%PHYSICS_ZIP_B64%%", zip_b64)
-    for key, sid, smin, smax, step, default, marks in _SLIDERS:
-        html = html.replace(f"%%SLIDER_{key}%%", _cs_slider(sid, smin, smax, step, default, marks))
+    for entry in _SLIDERS:
+        key, sid, smin, smax, step, default, marks = entry[:7]
+        slider_id = entry[7] if len(entry) > 7 else None
+        html = html.replace(f"%%SLIDER_{key}%%",
+                            _cs_slider(sid, smin, smax, step, default, marks, slider_id))
     out = ROOT / "grb_detection_rate.html"
     out.write_text(html, encoding="utf-8")
     size_kb = out.stat().st_size // 1024

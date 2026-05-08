@@ -98,6 +98,8 @@ input{font-family:inherit}
 .metric-gain{color:var(--text-mid)}
 .metric-gain.positive{color:var(--green)}
 .metric-gain.negative{color:var(--coral)}
+.metric-status{margin-left:auto;display:flex;align-items:center;gap:6px;padding:0 16px;font-family:var(--font-mono);font-size:11px;color:var(--text-lo);white-space:nowrap}
+.metric-status.error{color:var(--coral)}
 /* ── Body area ───────────────────────────────────────────────────────────── */
 .app-body{display:flex;flex:1;min-height:0;overflow:hidden}
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
@@ -142,8 +144,8 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
 /* All positions use calc(--cs-r + val * (100% - 2*--cs-r)) so thumb, fill,
    ticks and labels share one coordinate system — no browser thumb-offset hacks. */
 :root{--cs-r:8px;--cs-track-h:4px;--cs-thumb-sz:16px}
+.cs-wrap{position:relative;padding:4px 0 20px}
 .cs-track-area{
-  .cs-wrap{position:relative;padding:4px 0 20px}
   position:relative;height:var(--cs-thumb-sz);cursor:pointer;
 }
 .cs-track-bg{
@@ -220,9 +222,6 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
 .view-panel{flex:1;min-height:0;display:flex;flex-direction:column}
 .view-panel.hidden{display:none}
 .plot-div{flex:1;min-height:0}
-/* ── Status bar ──────────────────────────────────────────────────────────── */
-.status-bar{flex-shrink:0;font-family:var(--font-mono);font-size:11px;color:var(--text-lo);padding:5px 16px;border-top:1px solid var(--border);background:var(--surface-0)}
-.status-bar.empty{padding:0;border-top:none}
 /* ── Spinner ─────────────────────────────────────────────────────────────── */
 @keyframes spin{to{transform:rotate(360deg)}}
 .spinner{display:inline-block;width:10px;height:10px;border:2px solid var(--accent-dim);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite;margin-right:6px;vertical-align:middle}
@@ -232,9 +231,7 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
 /* ── Slice position controls (below N-slice / t-slice graphs) ───────────── */
 .slice-ctrl{display:flex;align-items:center;gap:10px;padding:6px 20px 12px 20px;border-top:1px solid var(--border);background:var(--surface-0);flex-shrink:0}
 .slice-ctrl-label{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);white-space:nowrap;min-width:80px;flex-shrink:0}
-.slice-pos-slider{flex:1;display:flex;flex-direction:column;gap:2px}
-.slice-pos-slider input[type=range]{width:100%;margin:0}
-.slice-pos-marks{display:flex;justify-content:space-between;padding:0 var(--cs-r);font-family:var(--font-mono);font-size:10px;color:var(--text-lo);pointer-events:none}
+.slice-pos-slider{flex:1;min-width:0}
 .slice-pos-value{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);min-width:70px;text-align:right;flex-shrink:0}
 </style>
 </head>
@@ -282,6 +279,7 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
   <div class="metric-sep"></div>
   <div class="metric-sep-prominent"></div>
   <div class="metric-badge"><span class="metric-label">Gain</span><span class="metric-value metric-gain" id="m-gain">—</span></div>
+  <div class="metric-status" id="metric-status"></div>
 </div>
 
 <!-- ── App body ───────────────────────────────────────────────────────────── -->
@@ -300,14 +298,14 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
       <label class="param-label" for="i_slider" title="Number of detections required per GRB to count as a detection event">i</label>
       <input type="number" id="i_input" class="param-input" min="2" max="100" step="1" value="10">
     </div>
-    <div class="cs-wrap" data-id="i" style="--val-pct:0.0816"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0816" style="--tick-pct:0.0816"></div><div class="cs-tick" data-pct="0.2857" style="--tick-pct:0.2857"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="2" aria-valuemax="100" aria-valuenow="10"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">2</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.0816;--align:0.5">10</span><span class="cs-mark" style="--mpct:0.2857;--align:0.5">30</span><span class="cs-mark" style="--mpct:1.0000;--align:1">100</span></div><input type="range" id="i_slider" class="cs-hidden" tabindex="-1" min="2" max="100" step="1" value="10"></div>
+    <div class="cs-wrap" data-id="i" style="--val-pct:0.0816"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.0816" style="--tick-pct:0.0816"></div><div class="cs-tick" data-pct="0.2857" style="--tick-pct:0.2857"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="2" aria-valuemax="100" aria-valuenow="10"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">2</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.0816;--align:0.5">10</span><span class="cs-mark" style="--mpct:0.2857;--align:0.5">30</span><span class="cs-mark" style="--mpct:1.0000;--align:1">100</span></div><input type="range" id="i_slider" class="cs-hidden" tabindex="-1" min="2" max="100" step="1" value="10"></div>
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="flive_slider" title="Fraction of total time the telescope is actually observing (0=never, 1=always)">f<sub>live</sub></label>
       <input type="number" id="flive_input" class="param-input" min="0.01" max="1" step="0.01" value="0.2">
     </div>
-    <div class="cs-wrap" data-id="flive" style="--val-pct:0.1919"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.1919" style="--tick-pct:0.1919"></div><div class="cs-tick" data-pct="0.4949" style="--tick-pct:0.4949"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="0.01" aria-valuemax="1" aria-valuenow="0.2"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">0.01</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.1919;--align:0.5">0.2</span><span class="cs-mark" style="--mpct:0.4949;--align:0.5">0.5</span><span class="cs-mark" style="--mpct:1.0000;--align:1">1</span></div><input type="range" id="flive_slider" class="cs-hidden" tabindex="-1" min="0.01" max="1" step="0.01" value="0.2"></div>
+    <div class="cs-wrap" data-id="flive" style="--val-pct:0.1919"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.1919" style="--tick-pct:0.1919"></div><div class="cs-tick" data-pct="0.4949" style="--tick-pct:0.4949"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="0.01" aria-valuemax="1" aria-valuenow="0.2"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">0.01</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.1919;--align:0.5">0.2</span><span class="cs-mark" style="--mpct:0.4949;--align:0.5">0.5</span><span class="cs-mark" style="--mpct:1.0000;--align:1">1</span></div><input type="range" id="flive_slider" class="cs-hidden" tabindex="-1" min="0.01" max="1" step="0.01" value="0.2"></div>
   </div>
 </div>
 </details>
@@ -321,21 +319,21 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
       <label class="param-label" for="Alog_slider" title="log₁₀ of reference limiting flux in Jansky at t_exp_ref = 30 s">log A [Jy]</label>
       <input type="number" id="Alog_input" class="param-input" min="-12" max="-2" step="0.01" value="-4.68">
     </div>
-    <div class="cs-wrap" data-id="Alog" style="--val-pct:0.7320"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.4000" style="--tick-pct:0.4000"></div><div class="cs-tick" data-pct="0.7320" style="--tick-pct:0.7320"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="-12" aria-valuemax="-2" aria-valuenow="-4.68"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">-12</span><span class="cs-mark" style="--mpct:0.4000;--align:0.5">-8</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.7320;--align:0.5">-4.68</span><span class="cs-mark" style="--mpct:1.0000;--align:1">-2</span></div><input type="range" id="Alog_slider" class="cs-hidden" tabindex="-1" min="-12" max="-2" step="0.01" value="-4.68"></div>
+    <div class="cs-wrap" data-id="Alog" style="--val-pct:0.7320"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.4000" style="--tick-pct:0.4000"></div><div class="cs-tick" data-pct="0.7320" style="--tick-pct:0.7320"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="-12" aria-valuemax="-2" aria-valuenow="-4.68"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">-12</span><span class="cs-mark" style="--mpct:0.4000;--align:0.5">-8</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.7320;--align:0.5">-4.68</span><span class="cs-mark" style="--mpct:1.0000;--align:1">-2</span></div><input type="range" id="Alog_slider" class="cs-hidden" tabindex="-1" min="-12" max="-2" step="0.01" value="-4.68"></div>
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="omegaexp_slider" title="Single-exposure field of view of the instrument in square degrees">Ω<sub>exp</sub> [deg²]</label>
       <input type="number" id="omegaexp_input" class="param-input" min="1" max="200" step="1" value="47">
     </div>
-    <div class="cs-wrap" data-id="omegaexp" style="--val-pct:0.2312"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.2312" style="--tick-pct:0.2312"></div><div class="cs-tick" data-pct="0.4975" style="--tick-pct:0.4975"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="1" aria-valuemax="200" aria-valuenow="47"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">1</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.2312;--align:0.5">47</span><span class="cs-mark" style="--mpct:0.4975;--align:0.5">100</span><span class="cs-mark" style="--mpct:1.0000;--align:1">200</span></div><input type="range" id="omegaexp_slider" class="cs-hidden" tabindex="-1" min="1" max="200" step="1" value="47"></div>
+    <div class="cs-wrap" data-id="omegaexp" style="--val-pct:0.2312"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.2312" style="--tick-pct:0.2312"></div><div class="cs-tick" data-pct="0.4975" style="--tick-pct:0.4975"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="1" aria-valuemax="200" aria-valuenow="47"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">1</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.2312;--align:0.5">47</span><span class="cs-mark" style="--mpct:0.4975;--align:0.5">100</span><span class="cs-mark" style="--mpct:1.0000;--align:1">200</span></div><input type="range" id="omegaexp_slider" class="cs-hidden" tabindex="-1" min="1" max="200" step="1" value="47"></div>
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="toh_slider" title="Per-exposure overhead (readout, slew, settle) in seconds">t<sub>OH</sub> [sec]</label>
       <input type="number" id="toh_input" class="param-input" min="0" max="30" step="0.5" value="0">
     </div>
-    <div class="cs-wrap" data-id="toh" style="--val-pct:0.0000"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.5000" style="--tick-pct:0.5000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="30" aria-valuenow="0"></div></div><div class="cs-marks"><span class="cs-mark cs-mark-dflt" style="--mpct:0.0000;--align:0">0</span><span class="cs-mark" style="--mpct:0.5000;--align:0.5">15</span><span class="cs-mark" style="--mpct:1.0000;--align:1">30</span></div><input type="range" id="toh_slider" class="cs-hidden" tabindex="-1" min="0" max="30" step="0.5" value="0"></div>
+    <div class="cs-wrap" data-id="toh" style="--val-pct:0.0000"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.5000" style="--tick-pct:0.5000"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="30" aria-valuenow="0"></div></div><div class="cs-marks"><span class="cs-mark cs-mark-dflt" style="--mpct:0.0000;--align:0">0</span><span class="cs-mark" style="--mpct:0.5000;--align:0.5">15</span><span class="cs-mark" style="--mpct:1.0000;--align:1">30</span></div><input type="range" id="toh_slider" class="cs-hidden" tabindex="-1" min="0" max="30" step="0.5" value="0"></div>
   </div>
 </div>
 </details>
@@ -349,7 +347,7 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
       <label class="param-label" for="omega_srv_slider" title="Maximum surveyable sky area per cadence cycle in square degrees">Ω<sub>srv,max</sub> [deg²]</label>
       <input type="number" id="omega_srv_input" class="param-input" min="100" max="41253" step="100" value="27500">
     </div>
-    <div class="cs-wrap" data-id="omega_srv" style="--val-pct:0.6658"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.2406" style="--tick-pct:0.2406"></div><div class="cs-tick" data-pct="0.6658" style="--tick-pct:0.6658"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="100" aria-valuemax="41253" aria-valuenow="27500"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">100</span><span class="cs-mark" style="--mpct:0.2406;--align:0.5">10k</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.6658;--align:0.5">27.5k</span><span class="cs-mark" style="--mpct:1.0000;--align:1">41k</span></div><input type="range" id="omega_srv_slider" class="cs-hidden" tabindex="-1" min="100" max="41253" step="100" value="27500"></div>
+    <div class="cs-wrap" data-id="omega_srv" style="--val-pct:0.6658"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.2406" style="--tick-pct:0.2406"></div><div class="cs-tick" data-pct="0.6658" style="--tick-pct:0.6658"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="100" aria-valuemax="41253" aria-valuenow="27500"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">100</span><span class="cs-mark" style="--mpct:0.2406;--align:0.5">10k</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.6658;--align:0.5">27.5k</span><span class="cs-mark" style="--mpct:1.0000;--align:1">41k</span></div><input type="range" id="omega_srv_slider" class="cs-hidden" tabindex="-1" min="100" max="41253" step="100" value="27500"></div>
     <div id="nexpmax-display"></div>
   </div>
   <div class="param-block" id="tnight-block" style="display:none">
@@ -357,7 +355,7 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
       <label class="param-label" for="tnight_slider" title="Length of the observable astronomical night in hours">t<sub>night</sub> [hr]</label>
       <input type="number" id="tnight_input" class="param-input" min="4" max="14" step="0.25" value="10">
     </div>
-    <div class="cs-wrap" data-id="tnight" style="--val-pct:0.6000"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.2000" style="--tick-pct:0.2000"></div><div class="cs-tick" data-pct="0.4000" style="--tick-pct:0.4000"></div><div class="cs-tick" data-pct="0.6000" style="--tick-pct:0.6000"></div><div class="cs-tick" data-pct="0.8000" style="--tick-pct:0.8000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="4" aria-valuemax="14" aria-valuenow="10"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">4</span><span class="cs-mark" style="--mpct:0.2000;--align:0.5">6</span><span class="cs-mark" style="--mpct:0.4000;--align:0.5">8</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.6000;--align:0.5">10</span><span class="cs-mark" style="--mpct:0.8000;--align:0.5">12</span><span class="cs-mark" style="--mpct:1.0000;--align:1">14</span></div><input type="range" id="tnight_slider" class="cs-hidden" tabindex="-1" min="4" max="14" step="0.25" value="10"></div>
+    <div class="cs-wrap" data-id="tnight" style="--val-pct:0.6000"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.2000" style="--tick-pct:0.2000"></div><div class="cs-tick" data-pct="0.4000" style="--tick-pct:0.4000"></div><div class="cs-tick" data-pct="0.6000" style="--tick-pct:0.6000"></div><div class="cs-tick" data-pct="0.8000" style="--tick-pct:0.8000"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="4" aria-valuemax="14" aria-valuenow="10"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">4</span><span class="cs-mark" style="--mpct:0.2000;--align:0.5">6</span><span class="cs-mark" style="--mpct:0.4000;--align:0.5">8</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.6000;--align:0.5">10</span><span class="cs-mark" style="--mpct:0.8000;--align:0.5">12</span><span class="cs-mark" style="--mpct:1.0000;--align:1">14</span></div><input type="range" id="tnight_slider" class="cs-hidden" tabindex="-1" min="4" max="14" step="0.25" value="10"></div>
     <div id="subnight-limit-display"></div>
   </div>
 </div>
@@ -373,56 +371,56 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
       <label class="param-label" for="p_slider" title="Electron power-law index (must be > 2). Exponentially amplified in flux; strongly affects spectral slope and all detection ranges.">p</label>
       <input type="number" id="p_input" class="param-input" min="2.01" max="3" step="0.01" value="2.5">
     </div>
-    <div class="cs-wrap" data-id="p" style="--val-pct:0.4949"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.4949" style="--tick-pct:0.4949"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="2.01" aria-valuemax="3" aria-valuenow="2.5"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">2</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.4949;--align:0.5">2.5</span><span class="cs-mark" style="--mpct:1.0000;--align:1">3</span></div><input type="range" id="p_slider" class="cs-hidden" tabindex="-1" min="2.01" max="3" step="0.01" value="2.5"></div>
+    <div class="cs-wrap" data-id="p" style="--val-pct:0.4949"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.4949" style="--tick-pct:0.4949"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="2.01" aria-valuemax="3" aria-valuenow="2.5"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">2</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.4949;--align:0.5">2.5</span><span class="cs-mark" style="--mpct:1.0000;--align:1">3</span></div><input type="range" id="p_slider" class="cs-hidden" tabindex="-1" min="2.01" max="3" step="0.01" value="2.5"></div>
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="nu_log_slider" title="log₁₀ of observing frequency in Hz. Optical/near-IR window: 10^14.3 Hz (~1 µm, J-band) to 10^15.1 Hz (~80 nm, near-UV). Default 5×10¹⁴ Hz = optical V-band (550 nm).">log ν [Hz]</label>
       <input type="number" id="nu_log_input" class="param-input" min="14.3" max="15.1" step="0.01" value="14.7">
     </div>
-    <div class="cs-wrap" data-id="nu_log" style="--val-pct:0.5000"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.5000" style="--tick-pct:0.5000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="14.3" aria-valuemax="15.1" aria-valuenow="14.7"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">14.3</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.5000;--align:0.5">14.7</span><span class="cs-mark" style="--mpct:1.0000;--align:1">15.1</span></div><input type="range" id="nu_log_slider" class="cs-hidden" tabindex="-1" min="14.3" max="15.1" step="0.01" value="14.7"></div>
+    <div class="cs-wrap" data-id="nu_log" style="--val-pct:0.5000"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.5000" style="--tick-pct:0.5000"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="14.3" aria-valuemax="15.1" aria-valuenow="14.7"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">14.3</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.5000;--align:0.5">14.7</span><span class="cs-mark" style="--mpct:1.0000;--align:1">15.1</span></div><input type="range" id="nu_log_slider" class="cs-hidden" tabindex="-1" min="14.3" max="15.1" step="0.01" value="14.7"></div>
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="Ekiso_log_slider" title="log₁₀ of isotropic-equivalent kinetic energy in erg. Scales flux as E^{(p+3)/4} and deceleration time as E^{1/3}.">log E<sub>k,iso</sub> [erg]</label>
       <input type="number" id="Ekiso_log_input" class="param-input" min="51" max="55" step="0.1" value="53">
     </div>
-    <div class="cs-wrap" data-id="Ekiso_log" style="--val-pct:0.5000"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.2500" style="--tick-pct:0.2500"></div><div class="cs-tick" data-pct="0.5000" style="--tick-pct:0.5000"></div><div class="cs-tick" data-pct="0.7500" style="--tick-pct:0.7500"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="51" aria-valuemax="55" aria-valuenow="53"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">51</span><span class="cs-mark" style="--mpct:0.2500;--align:0.5">52</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.5000;--align:0.5">53</span><span class="cs-mark" style="--mpct:0.7500;--align:0.5">54</span><span class="cs-mark" style="--mpct:1.0000;--align:1">55</span></div><input type="range" id="Ekiso_log_slider" class="cs-hidden" tabindex="-1" min="51" max="55" step="0.1" value="53"></div>
+    <div class="cs-wrap" data-id="Ekiso_log" style="--val-pct:0.5000"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.2500" style="--tick-pct:0.2500"></div><div class="cs-tick" data-pct="0.5000" style="--tick-pct:0.5000"></div><div class="cs-tick" data-pct="0.7500" style="--tick-pct:0.7500"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="51" aria-valuemax="55" aria-valuenow="53"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">51</span><span class="cs-mark" style="--mpct:0.2500;--align:0.5">52</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.5000;--align:0.5">53</span><span class="cs-mark" style="--mpct:0.7500;--align:0.5">54</span><span class="cs-mark" style="--mpct:1.0000;--align:1">55</span></div><input type="range" id="Ekiso_log_slider" class="cs-hidden" tabindex="-1" min="51" max="55" step="0.1" value="53"></div>
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="n0_log_slider" title="log₁₀ of ISM number density in cm⁻³. Affects flux (∝ n^{1/2}) and deceleration time (∝ n^{-1/3}).">log n<sub>0</sub> [cm⁻³]</label>
       <input type="number" id="n0_log_input" class="param-input" min="-3" max="2" step="0.1" value="0">
     </div>
-    <div class="cs-wrap" data-id="n0_log" style="--val-pct:0.6000"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.2000" style="--tick-pct:0.2000"></div><div class="cs-tick" data-pct="0.4000" style="--tick-pct:0.4000"></div><div class="cs-tick" data-pct="0.6000" style="--tick-pct:0.6000"></div><div class="cs-tick" data-pct="0.8000" style="--tick-pct:0.8000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="-3" aria-valuemax="2" aria-valuenow="0"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">-3</span><span class="cs-mark" style="--mpct:0.2000;--align:0.5">-2</span><span class="cs-mark" style="--mpct:0.4000;--align:0.5">-1</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.6000;--align:0.5">0</span><span class="cs-mark" style="--mpct:0.8000;--align:0.5">1</span><span class="cs-mark" style="--mpct:1.0000;--align:1">2</span></div><input type="range" id="n0_log_slider" class="cs-hidden" tabindex="-1" min="-3" max="2" step="0.1" value="0"></div>
+    <div class="cs-wrap" data-id="n0_log" style="--val-pct:0.6000"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.2000" style="--tick-pct:0.2000"></div><div class="cs-tick" data-pct="0.4000" style="--tick-pct:0.4000"></div><div class="cs-tick" data-pct="0.6000" style="--tick-pct:0.6000"></div><div class="cs-tick" data-pct="0.8000" style="--tick-pct:0.8000"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="-3" aria-valuemax="2" aria-valuenow="0"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">-3</span><span class="cs-mark" style="--mpct:0.2000;--align:0.5">-2</span><span class="cs-mark" style="--mpct:0.4000;--align:0.5">-1</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.6000;--align:0.5">0</span><span class="cs-mark" style="--mpct:0.8000;--align:0.5">1</span><span class="cs-mark" style="--mpct:1.0000;--align:1">2</span></div><input type="range" id="n0_log_slider" class="cs-hidden" tabindex="-1" min="-3" max="2" step="0.1" value="0"></div>
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="gamma0_log_slider" title="log₁₀ of initial bulk Lorentz factor. Affects deceleration time (∝ Γ₀^{-8/3}) and the on-axis beaming cone angle.">log Γ<sub>0</sub></label>
       <input type="number" id="gamma0_log_input" class="param-input" min="2" max="3.5" step="0.05" value="2.5">
     </div>
-    <div class="cs-wrap" data-id="gamma0_log" style="--val-pct:0.3333"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.3333" style="--tick-pct:0.3333"></div><div class="cs-tick" data-pct="0.6667" style="--tick-pct:0.6667"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="2" aria-valuemax="3.5" aria-valuenow="2.5"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">2</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.3333;--align:0.5">2.5</span><span class="cs-mark" style="--mpct:0.6667;--align:0.5">3</span><span class="cs-mark" style="--mpct:1.0000;--align:1">3.5</span></div><input type="range" id="gamma0_log_slider" class="cs-hidden" tabindex="-1" min="2" max="3.5" step="0.05" value="2.5"></div>
+    <div class="cs-wrap" data-id="gamma0_log" style="--val-pct:0.3333"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.3333" style="--tick-pct:0.3333"></div><div class="cs-tick" data-pct="0.6667" style="--tick-pct:0.6667"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="2" aria-valuemax="3.5" aria-valuenow="2.5"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">2</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.3333;--align:0.5">2.5</span><span class="cs-mark" style="--mpct:0.6667;--align:0.5">3</span><span class="cs-mark" style="--mpct:1.0000;--align:1">3.5</span></div><input type="range" id="gamma0_log_slider" class="cs-hidden" tabindex="-1" min="2" max="3.5" step="0.05" value="2.5"></div>
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="thetaj_slider" title="Jet half-opening angle in radians. Sets the jet-break time and the beaming fraction f_b = θ_j²/2.">θ<sub>j</sub> [rad]</label>
       <input type="number" id="thetaj_input" class="param-input" min="0.01" max="0.5" step="0.01" value="0.1">
     </div>
-    <div class="cs-wrap" data-id="thetaj" style="--val-pct:0.1837"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.1837" style="--tick-pct:0.1837"></div><div class="cs-tick" data-pct="0.5918" style="--tick-pct:0.5918"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="0.01" aria-valuemax="0.5" aria-valuenow="0.1"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">0.01</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.1837;--align:0.5">0.1</span><span class="cs-mark" style="--mpct:0.5918;--align:0.5">0.3</span><span class="cs-mark" style="--mpct:1.0000;--align:1">0.5</span></div><input type="range" id="thetaj_slider" class="cs-hidden" tabindex="-1" min="0.01" max="0.5" step="0.01" value="0.1"></div>
+    <div class="cs-wrap" data-id="thetaj" style="--val-pct:0.1837"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.1837" style="--tick-pct:0.1837"></div><div class="cs-tick" data-pct="0.5918" style="--tick-pct:0.5918"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="0.01" aria-valuemax="0.5" aria-valuenow="0.1"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">0.01</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.1837;--align:0.5">0.1</span><span class="cs-mark" style="--mpct:0.5918;--align:0.5">0.3</span><span class="cs-mark" style="--mpct:1.0000;--align:1">0.5</span></div><input type="range" id="thetaj_slider" class="cs-hidden" tabindex="-1" min="0.01" max="0.5" step="0.01" value="0.1"></div>
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="epse_slider" title="log₁₀ of electron energy fraction. Enters flux as (ε_e·(p−2)/(p−1))^{p−1}.">log ε<sub>e</sub></label>
       <input type="number" id="epse_input" class="param-input" min="-2" max="-0.3" step="0.05" value="-1">
     </div>
-    <div class="cs-wrap" data-id="epse" style="--val-pct:0.5882"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.5882" style="--tick-pct:0.5882"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="-2" aria-valuemax="-0.3" aria-valuenow="-1"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">-2</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.5882;--align:0.5">-1</span><span class="cs-mark" style="--mpct:1.0000;--align:1">-0.3</span></div><input type="range" id="epse_slider" class="cs-hidden" tabindex="-1" min="-2" max="-0.3" step="0.05" value="-1"></div>
+    <div class="cs-wrap" data-id="epse" style="--val-pct:0.5882"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.5882" style="--tick-pct:0.5882"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="-2" aria-valuemax="-0.3" aria-valuenow="-1"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">-2</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.5882;--align:0.5">-1</span><span class="cs-mark" style="--mpct:1.0000;--align:1">-0.3</span></div><input type="range" id="epse_slider" class="cs-hidden" tabindex="-1" min="-2" max="-0.3" step="0.05" value="-1"></div>
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="epsB_slider" title="log₁₀ of magnetic energy fraction. Enters flux as ε_B^{(p+1)/4}.">log ε<sub>B</sub></label>
       <input type="number" id="epsB_input" class="param-input" min="-3" max="-1" step="0.05" value="-2">
     </div>
-    <div class="cs-wrap" data-id="epsB" style="--val-pct:0.5000"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.5000" style="--tick-pct:0.5000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="-3" aria-valuemax="-1" aria-valuenow="-2"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">-3</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.5000;--align:0.5">-2</span><span class="cs-mark" style="--mpct:1.0000;--align:1">-1</span></div><input type="range" id="epsB_slider" class="cs-hidden" tabindex="-1" min="-3" max="-1" step="0.05" value="-2"></div>
+    <div class="cs-wrap" data-id="epsB" style="--val-pct:0.5000"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.5000" style="--tick-pct:0.5000"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="-3" aria-valuemax="-1" aria-valuenow="-2"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">-3</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.5000;--align:0.5">-2</span><span class="cs-mark" style="--mpct:1.0000;--align:1">-1</span></div><input type="range" id="epsB_slider" class="cs-hidden" tabindex="-1" min="-3" max="-1" step="0.05" value="-2"></div>
   </div>
   <div class="param-group-label" style="margin-top:10px">Cosmological model</div>
   <div class="param-block">
@@ -430,14 +428,14 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
       <label class="param-label" for="deuc_slider" title="Euclidean calibration distance in Gpc. Sets the volume for the rate integral. Default 5.28 Gpc ≈ z = 2 in flat ΛCDM.">D<sub>Euc</sub> [Gpc]</label>
       <input type="number" id="deuc_input" class="param-input" min="1" max="12" step="0.01" value="5.28">
     </div>
-    <div class="cs-wrap" data-id="deuc" style="--val-pct:0.3891"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.3891" style="--tick-pct:0.3891"></div><div class="cs-tick" data-pct="0.6364" style="--tick-pct:0.6364"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="1" aria-valuemax="12" aria-valuenow="5.28"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">1</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.3891;--align:0.5">5.28</span><span class="cs-mark" style="--mpct:0.6364;--align:0.5">8</span><span class="cs-mark" style="--mpct:1.0000;--align:1">12</span></div><input type="range" id="deuc_slider" class="cs-hidden" tabindex="-1" min="1" max="12" step="0.01" value="5.28"></div>
+    <div class="cs-wrap" data-id="deuc" style="--val-pct:0.3891"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.3891" style="--tick-pct:0.3891"></div><div class="cs-tick" data-pct="0.6364" style="--tick-pct:0.6364"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="1" aria-valuemax="12" aria-valuenow="5.28"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">1</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.3891;--align:0.5">5.28</span><span class="cs-mark" style="--mpct:0.6364;--align:0.5">8</span><span class="cs-mark" style="--mpct:1.0000;--align:1">12</span></div><input type="range" id="deuc_slider" class="cs-hidden" tabindex="-1" min="1" max="12" step="0.01" value="5.28"></div>
   </div>
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="rho_grb_log_slider" title="log₁₀ of GRB volumetric rate density. Scales the total detection rate linearly.">log ℛ [Gpc⁻³ yr⁻¹]</label>
       <input type="number" id="rho_grb_log_input" class="param-input" min="1" max="3.3" step="0.005" value="2.415">
     </div>
-    <div class="cs-wrap" data-id="rho_grb_log" style="--val-pct:0.6152"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.4348" style="--tick-pct:0.4348"></div><div class="cs-tick" data-pct="0.6152" style="--tick-pct:0.6152"></div><div class="cs-tick" data-pct="0.8696" style="--tick-pct:0.8696"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="1" aria-valuemax="3.3" aria-valuenow="2.415"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">10</span><span class="cs-mark" style="--mpct:0.4348;--align:0.5">100</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.6152;--align:0.5">260</span><span class="cs-mark" style="--mpct:0.8696;--align:0.5">1k</span><span class="cs-mark" style="--mpct:1.0000;--align:1">2k</span></div><input type="range" id="rho_grb_log_slider" class="cs-hidden" tabindex="-1" min="1" max="3.3" step="0.005" value="2.415"></div>
+    <div class="cs-wrap" data-id="rho_grb_log" style="--val-pct:0.6152"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.4348" style="--tick-pct:0.4348"></div><div class="cs-tick" data-pct="0.6152" style="--tick-pct:0.6152"></div><div class="cs-tick" data-pct="0.8696" style="--tick-pct:0.8696"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="1" aria-valuemax="3.3" aria-valuenow="2.415"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">10</span><span class="cs-mark" style="--mpct:0.4348;--align:0.5">100</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.6152;--align:0.5">260</span><span class="cs-mark" style="--mpct:0.8696;--align:0.5">1k</span><span class="cs-mark" style="--mpct:1.0000;--align:1">2k</span></div><input type="range" id="rho_grb_log_slider" class="cs-hidden" tabindex="-1" min="1" max="3.3" step="0.005" value="2.415"></div>
   </div>
   <div class="param-row grb-derived-row">
     <span id="grb-ntotal-display" class="grb-derived-val">R<sub>int</sub> = —</span>
@@ -505,12 +503,7 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
     <div id="plot-nslice" class="plot-div"></div>
     <div class="slice-ctrl">
       <span class="slice-ctrl-label">Fixed t<sub>cad</sub></span>
-      <div class="slice-pos-slider">
-        <input type="range" id="nslice-tfix-slider" min="2" max="8" step="0.05" value="4.937">
-        <div class="slice-pos-marks">
-          <span>100 s</span><span>1 hr</span><span>1 day</span><span>1 wk</span><span>1 yr</span>
-        </div>
-      </div>
+      <div class="slice-pos-slider"><div class="cs-wrap" data-id="nslice-tfix" style="--val-pct:0.4895"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.2593" style="--tick-pct:0.2593"></div><div class="cs-tick" data-pct="0.4895" style="--tick-pct:0.4895"></div><div class="cs-tick" data-pct="0.6302" style="--tick-pct:0.6302"></div><div class="cs-tick" data-pct="0.9165" style="--tick-pct:0.9165"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="2" aria-valuemax="8" aria-valuenow="4.937"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">100 s</span><span class="cs-mark" style="--mpct:0.2593;--align:0.5">1 hr</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.4895;--align:0.5">1 day</span><span class="cs-mark" style="--mpct:0.6302;--align:0.5">1 wk</span><span class="cs-mark" style="--mpct:0.9165;--align:0.5">1 yr</span></div><input type="range" id="nslice-tfix-slider" class="cs-hidden" tabindex="-1" min="2" max="8" step="0.05" value="4.937"></div></div>
       <span class="slice-pos-value" id="nslice-tfix-value">1 day</span>
     </div>
   </div>
@@ -518,16 +511,10 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
     <div id="plot-tslice" class="plot-div"></div>
     <div class="slice-ctrl">
       <span class="slice-ctrl-label">Fixed N<sub>exp</sub></span>
-      <div class="slice-pos-slider">
-        <input type="range" id="tslice-nfix-slider" min="0" max="4" step="0.05" value="2.0">
-        <div class="slice-pos-marks">
-          <span>1</span><span>10</span><span>100</span><span>1k</span><span>10k</span>
-        </div>
-      </div>
+      <div class="slice-pos-slider"><div class="cs-wrap" data-id="tslice-nfix" style="--val-pct:0.5000"><div class="cs-track-area"><div class="cs-track-bg"></div><div class="cs-track-fill"></div><div class="cs-tick" data-pct="0.0000" style="--tick-pct:0.0000"></div><div class="cs-tick" data-pct="0.2500" style="--tick-pct:0.2500"></div><div class="cs-tick" data-pct="0.5000" style="--tick-pct:0.5000"></div><div class="cs-tick" data-pct="0.7500" style="--tick-pct:0.7500"></div><div class="cs-tick" data-pct="1.0000" style="--tick-pct:1.0000"></div><div class="cs-thumb" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="4" aria-valuenow="2"></div></div><div class="cs-marks"><span class="cs-mark" style="--mpct:0.0000;--align:0">1</span><span class="cs-mark" style="--mpct:0.2500;--align:0.5">10</span><span class="cs-mark cs-mark-dflt" style="--mpct:0.5000;--align:0.5">100</span><span class="cs-mark" style="--mpct:0.7500;--align:0.5">1k</span><span class="cs-mark" style="--mpct:1.0000;--align:1">10k</span></div><input type="range" id="tslice-nfix-slider" class="cs-hidden" tabindex="-1" min="0" max="4" step="0.05" value="2"></div></div>
       <span class="slice-pos-value" id="tslice-nfix-value">100</span>
     </div>
   </div>
-  <div class="status-bar" id="status-bar">Initializing Pyodide…</div>
 </main>
 
 </div><!-- app-body -->
@@ -603,13 +590,13 @@ let _lastData = null;
 let _currentTab = '3d';
 let _currentTheme = 'dark';
 
-// ── Status bar ─────────────────────────────────────────────────────────────
-function setStatus(msg, spinning = false) {
-  const bar = document.getElementById('status-bar');
-  bar.innerHTML = spinning
-    ? '<span class="spinner"></span>' + msg
-    : msg;
-  bar.className = 'status-bar' + (msg ? '' : ' empty');
+// ── Status indicator (top-right of metrics strip) ─────────────────────────
+function setStatus(msg, spinning = false, isError = false) {
+  const el = document.getElementById('metric-status');
+  if (!el) return;
+  if (!msg && !spinning) { el.innerHTML = ''; el.classList.remove('error'); return; }
+  el.innerHTML = (spinning ? '<span class="spinner"></span>' : '') + (msg || '');
+  el.classList.toggle('error', !!isError);
 }
 
 // ── Theme ──────────────────────────────────────────────────────────────────
@@ -712,6 +699,9 @@ function _initCustomSliders() {
     const thumb = wrap.querySelector('.cs-thumb');
     if (!sl || !area) return;
     updateSliderVisual(sl); // prime fill + ticks to initial value
+    // Generic visual refresh on every input event — needed for sliders not in
+    // SLIDER_IDS (e.g. slice-position sliders); idempotent for sidebar sliders.
+    sl.addEventListener('input', () => updateSliderVisual(sl));
 
     function valFromX(clientX) {
       const rect = area.getBoundingClientRect();
@@ -800,6 +790,7 @@ async function runSliceUpdate(which) {
   if (_sliceComputing[which]) { _sliceQueued[which] = true; return; }
   _sliceComputing[which] = true;
   _sliceQueued[which] = false;
+  setStatus('Computing…', true);
   try {
     const params = readParams();
     const pyParams = pyodide.toPy(params);
@@ -815,15 +806,16 @@ async function runSliceUpdate(which) {
     pyResult.destroy();
     pyParams.destroy();
     if (payload.error) {
-      setStatus('Slice error: ' + String(payload.error).slice(0, 200));
+      setStatus('Slice error: ' + String(payload.error).slice(0, 200), false, true);
     } else {
       // Merge slice payload into _lastData so renderers use fresh values.
       Object.assign(_lastData, payload);
       if (which === 'nslice' && _currentTab === 'nslice') renderNSlice(_lastData);
       if (which === 'tslice' && _currentTab === 'tslice') renderTSlice(_lastData);
+      setStatus('');
     }
   } catch (e) {
-    setStatus('Slice compute failed: ' + e.message);
+    setStatus('Slice compute failed: ' + e.message, false, true);
     console.error(e);
   }
   _sliceComputing[which] = false;
@@ -1019,13 +1011,13 @@ async function runUpdate() {
     pyResult.destroy();
     pyParams.destroy();
   } catch (e) {
-    setStatus('Error: ' + e.message);
+    setStatus('Error: ' + e.message, false, true);
     _computing = false;
     return;
   }
 
   if (data.error) {
-    setStatus('Python error: ' + String(data.error).slice(0, 300));
+    setStatus('Python error: ' + String(data.error).slice(0, 300), false, true);
     _computing = false;
     return;
   }
@@ -1041,9 +1033,7 @@ async function runUpdate() {
   if (_currentTab === 'nslice') renderNSlice(data);
   else if (_currentTab === 'tslice') renderTSlice(data);
 
-  const rStr = data.R_opt != null ? data.R_opt.toFixed(3) + ' yr⁻¹' : '—';
-  const tStr = data.t_cad_opt_h != null ? fmtT(data.t_cad_opt_s) : '—';
-  setStatus('Done · Opt: R=' + rStr + ', t_cad=' + tStr);
+  setStatus('');
 
   _computing = false;
   if (_pendingUpdate) { _pendingUpdate = false; setTimeout(runUpdate, 0); }
@@ -1334,7 +1324,7 @@ function addDay3DLines(traces, shared, params, zmaxLog) {
   const dl = shared && shared.dayLine;
   if (!dl || dl.n_days === 0) return;
   const regimeMode = !!params.color_regimes;
-  const heightCmax = (zmaxLog != null && isFinite(zmaxLog)) ? zmaxLog : 0;
+  const heightCmax = (zmaxLog != null && isFinite(zmaxLog)) ? zmaxLog : 1.0;
 
   // Height-colour mode: collect marker traces separately so they are appended
   // AFTER every per-day line trace. Matches components/figures.py:L319-L337 —
@@ -1431,34 +1421,22 @@ function render3DSurface(data, params) {
   const traces = [];
   const dark = darkMode();
 
-  // Compute zmax early — shared by the surface trace AND addDay3DLines markers
-  // so both use an identical color scale.
-  const zmax = (data.zmax_log10 != null && isFinite(data.zmax_log10)) ? data.zmax_log10 : 0;
+  // Discrete day-cadence overlay lines (optical only); Dash adds these BEFORE the
+  // main surface so the surface z-order wins on overlapping regions.
+  if (params.optical_survey) addDay3DLines(traces, shared, params, data.zmax_log10);
 
-  // Optical mode: trim discrete-day rows (y ≥ 24 h) out of the surface entirely.
-  // Mirrors callbacks/surface.py:385-398. Plotly surface traces don't support
-  // connectgaps, so null-filling rows still renders interpolated mesh across them;
-  // actual row removal is the only reliable fix.
-  let X2dSurf = X2d, Y2dSurf = Y2d;
+  // Optical mode: exclude discrete-day rows (y ≥ 24 h) from the surface — they
+  // are rendered as 1D scatter3d lines by addDay3DLines instead.
+  // Mirrors callbacks/surface.py:385-398 where Dash keeps only rows with y_s < DAY_S.
   let Z2dSurf = Z2d, Zlog2dSurf = Zlog2d, regime2dSurf = regime2d;
-  let surfCdSurf = surfCustomdata3D;
   if (params.optical_survey) {
-    const keepRows = [];
-    for (let r = 0; r < ny; r++) {
-      if (Y2d[r][0] == null || Y2d[r][0] < 24.0) keepRows.push(r);
-    }
-    X2dSurf      = keepRows.map(r => X2d[r]);
-    Y2dSurf      = keepRows.map(r => Y2d[r]);
-    Z2dSurf      = keepRows.map(r => Z2d[r]);
-    Zlog2dSurf   = keepRows.map(r => Zlog2d[r]);
-    regime2dSurf = regime2d ? keepRows.map(r => regime2d[r]) : null;
-    // surfCustomdata3D is (nx, ny, 3); filter the inner (row) dimension.
-    if (surfCustomdata3D) surfCdSurf = surfCustomdata3D.map(col => keepRows.map(r => col[r]));
+    const nullRow = new Array(nx).fill(null);
+    Z2dSurf      = Y2d.map((row, r) => (row[0] != null && row[0] >= 24.0) ? nullRow : Z2d[r]);
+    Zlog2dSurf   = Y2d.map((row, r) => (row[0] != null && row[0] >= 24.0) ? nullRow : Zlog2d[r]);
+    regime2dSurf = regime2d
+      ? Y2d.map((row, r) => (row[0] != null && row[0] >= 24.0) ? nullRow : regime2d[r])
+      : null;
   }
-
-  // Discrete day-cadence overlay lines (optical only); added BEFORE the main
-  // surface so the surface z-order wins on overlapping regions.
-  if (params.optical_survey) addDay3DLines(traces, shared, params, zmax);
 
   if (params.color_regimes && regime2d) {
     for (let k = 1; k <= 7; k++) {
@@ -1466,14 +1444,14 @@ function render3DSurface(data, params) {
       if (Zk.every(row => row.every(v => v === null))) continue;
       const col = REGIME_HEX[k - 1];
       const trace = {
-        type: 'surface', x: X2dSurf, y: Y2dSurf, z: Zk,
+        type: 'surface', x: X2d, y: Y2d, z: Zk,
         colorscale: [[0, col], [1, col]], cmin: 0, cmax: 1,
-        showscale: false, showlegend: false,
+        showscale: false, connectgaps: false, showlegend: false,
         lighting: {ambient: 0.75, diffuse: 0.75, specular: 0.08, roughness: 0.95},
         lightposition: {x: 100, y: 200, z: 0},
         hovertemplate: XYZ_HOVER,
       };
-      if (surfCdSurf) trace.customdata = surfCdSurf;
+      if (surfCustomdata3D) trace.customdata = surfCustomdata3D;
       traces.push(trace);
     }
     REGIME_HEX.forEach((col, i) => traces.push({
@@ -1482,11 +1460,12 @@ function render3DSurface(data, params) {
       name: REGIME_LABELS[i], showlegend: true, hoverinfo: 'skip',
     }));
   } else {
+    const zmax = data.zmax_log10 || 0;
     const trace = {
-      type: 'surface', x: X2dSurf, y: Y2dSurf, z: Z2dSurf,
+      type: 'surface', x: X2d, y: Y2d, z: Z2dSurf,
       surfacecolor: Zlog2dSurf,
       cmin: ZMIN_LOG, cmax: zmax,
-      colorscale: PLASMA_SCALE, showscale: true,
+      colorscale: PLASMA_SCALE, showscale: true, connectgaps: false,
       lighting: {ambient: 0.75, diffuse: 0.75, specular: 0.08, roughness: 0.95},
       lightposition: {x: 100, y: 200, z: 0},
       colorbar: {
@@ -1498,7 +1477,7 @@ function render3DSurface(data, params) {
       },
       hovertemplate: XYZ_HOVER,
     };
-    if (surfCdSurf) trace.customdata = surfCdSurf;
+    if (surfCustomdata3D) trace.customdata = surfCustomdata3D;
     traces.push(trace);
   }
 
@@ -2131,7 +2110,7 @@ print('Bridge ready')
     runUpdate();
 
   } catch (e) {
-    setStatus('Initialization failed: ' + e.message);
+    setStatus('Initialization failed: ' + e.message, false, true);
     console.error(e);
   }
 }
