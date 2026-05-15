@@ -13,7 +13,6 @@ from dash import Input, Output, State, html
 from grb_detect.constants import DAY_S, DEG2_TO_SR
 from grb_detect.params import GPC_TO_CM, SurveyDesignParams, SurveyStrategy
 from grb_detect.plot_3d_core import (
-    _on_axis_rate_linear,
     compute_surface,
     make_rate_model,
     maximize_log_surface_iterative,
@@ -98,7 +97,8 @@ def _compute_rate(
     f_live: float,
     t_overhead_s: float,
     color_on: bool,
-    off_axis: bool = False,
+    q_min: float = 0.0,
+    D_min_cm: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute (R, t_exp, q_med, D_med_Gpc, rid) for a 1-D sweep.
 
@@ -107,9 +107,11 @@ def _compute_rate(
     as N_arr / t_arr.
     """
     if full_integral:
-        Z = model.rate_log10_full_integral(i_det, N_arr, t_arr)
+        Z = model.rate_log10_full_integral(i_det, N_arr, t_arr,
+                                            q_min=q_min, D_min_cm=D_min_cm)
     else:
-        Z = model.rate_log10(i_det, N_arr, t_arr)
+        Z = model.rate_log10(i_det, N_arr, t_arr,
+                             q_min=q_min, D_min_cm=D_min_cm)
     R = np.where(np.isfinite(Z), 10.0 ** Z, np.nan)
 
     if optical_on and model_night is not None and t_cad_scalar < DAY_S:
@@ -123,7 +125,10 @@ def _compute_rate(
         masks = model.region_masks(i_det, N_arr, t_arr, include_unphysical=False)
         rid = _masks_1d(masks, len(N_arr))
 
-    q_med, D_med_cm = model.compute_medians(i_det, N_arr, t_arr, full_integral=full_integral, off_axis=off_axis)
+    q_med, D_med_cm = model.compute_medians(
+        i_det, N_arr, t_arr, full_integral=full_integral,
+        q_min=q_min, D_min_cm=D_min_cm,
+    )
     t_exp = model.t_exp_s(N_arr, t_arr)
     D_med_Gpc = D_med_cm / GPC_TO_CM
 
@@ -150,7 +155,8 @@ def _eval_point(
     approx_on: bool,
     t_overhead_s: float,
     full_integral: bool = False,
-    off_axis: bool = False,
+    q_min: float = 0.0,
+    D_min_cm: float = 0.0,
 ) -> tuple[float, float, float, float]:
     """Evaluate (R_det, t_exp_s, q_med, D_med_Gpc) at a single point.
 
@@ -165,27 +171,22 @@ def _eval_point(
     # Model dispatch — mirrors compute_surface logic
     model = _pick_model(t_cad_s, optical_on, model_day, model_night)
 
-    # Rate
+    # Rate (filter applied inside the rate method, matching compute_surface)
     N_arr = np.array([N_exp])
     t_arr = np.array([t_cad_s])
     if full_integral:
-        log10R = float(model.rate_log10_full_integral(i_det, N_arr, t_arr)[0])
+        log10R = float(model.rate_log10_full_integral(
+            i_det, N_arr, t_arr, q_min=q_min, D_min_cm=D_min_cm)[0])
     else:
-        log10R = float(model.rate_log10(i_det, N_arr, t_arr)[0])
+        log10R = float(model.rate_log10(
+            i_det, N_arr, t_arr, q_min=q_min, D_min_cm=D_min_cm)[0])
     R = 10.0 ** log10R if np.isfinite(log10R) else np.nan
     # Sub-day optical: only the nighttime fraction of detections are accessible
     if optical_on and model_night is not None and t_cad_s < DAY_S:
         R = R * f_night
 
-    # Off-axis correction: subtract on-axis contribution (q < q_dec)
-    if off_axis and np.isfinite(R):
-        r_on = float(_on_axis_rate_linear(model, i_det, N_arr, t_arr)[0])
-        if optical_on and model_night is not None and t_cad_s < DAY_S:
-            r_on = r_on * f_night
-        R_off = R - r_on if np.isfinite(r_on) else R
-        if R_off <= 0:
-            return _nan4
-        R = R_off
+    if not np.isfinite(R) or R <= 0:
+        return _nan4
 
     # t_exp
     try:
@@ -204,7 +205,10 @@ def _eval_point(
 
     # Medians — use model_day for consistency with compute_surface
     try:
-        qm, dm = model_day.compute_medians(i_det, N_arr, t_arr, full_integral=full_integral, off_axis=off_axis)
+        qm, dm = model_day.compute_medians(
+            i_det, N_arr, t_arr, full_integral=full_integral,
+            q_min=q_min, D_min_cm=D_min_cm,
+        )
         q_med     = float(qm[0])
         D_med_Gpc = float(dm[0]) / GPC_TO_CM
     except Exception:
@@ -235,7 +239,8 @@ def register(app: dash.Dash) -> None:
         Input("omega_srv_slider", "value"),
         Input("theme-store", "data"),
         Input("full-integral-switch", "value"),
-        Input("off-axis-switch", "value"),
+        Input("qmin_slider", "value"),
+        Input("Dmin_slider", "value"),
         Input("p_slider", "value"),
         Input("nu_log_slider", "value"),
         Input("Ekiso_log_slider", "value"),
@@ -253,7 +258,7 @@ def register(app: dash.Dash) -> None:
     def update_all_visuals(
         i_det, A_log, omega_exp_deg2, f_live, t_overhead_s,
         optical_switch, toh_approx_switch, color_switch, tnight_hours, omega_srv_deg2, theme,
-        full_integral_switch, off_axis_switch,
+        full_integral_switch, qmin_val, Dmin_val,
         p_val, nu_log, ekiso_log, n0_log, epse_val, epsB_val,
         thetaj_val, gamma0_log, deuc_gpc, rho_grb_log,
         nslice_tfix_log, tslice_nfix_log, view_mode,
@@ -262,7 +267,8 @@ def register(app: dash.Dash) -> None:
         approx_on = bool(toh_approx_switch)
         color_on = bool(color_switch)
         full_integral_on = bool(full_integral_switch)
-        off_axis_on = bool(off_axis_switch)
+        q_min = float(qmin_val) if qmin_val is not None else 0.0
+        D_min_cm = (float(Dmin_val) if Dmin_val is not None else 0.0) * GPC_TO_CM
 
         survey_defaults = SurveyDesignParams()
         t_night_s = float(tnight_hours) * 3600.0 if optical_on else survey_defaults.t_night_s
@@ -317,7 +323,7 @@ def register(app: dash.Dash) -> None:
             model_day, model_night, int(i_det),
             optical_survey=optical_on, color_regimes=color_on,
             t_night_s=t_night_s, nx=nx, ny=ny,
-            full_integral=full_integral_on, off_axis=off_axis_on,
+            full_integral=full_integral_on, q_min=q_min, D_min_cm=D_min_cm,
         )
 
         # In approx mode, mask points where f_live·t_cad/N_exp ≤ t_OH
@@ -356,7 +362,7 @@ def register(app: dash.Dash) -> None:
             x_min=0.0, x_max=np.log10(N_exp_max),
             y_min=0.0, y_max=8.0,
             optical_survey=optical_on, t_night_s=t_night_s,
-            full_integral=full_integral_on, off_axis=off_axis_on,
+            full_integral=full_integral_on, q_min=q_min, D_min_cm=D_min_cm,
             validity_fn=opt_validity_fn,
         )
         t_cad_opt_hr = t_cad_opt_s / 3600.0 if np.isfinite(t_cad_opt_s) else np.nan
@@ -365,7 +371,7 @@ def register(app: dash.Dash) -> None:
             model_day, model_night,
             float(f_live), f_night_val,
             optical_on, approx_on, float(t_overhead_s),
-            full_integral=full_integral_on, off_axis=off_axis_on,
+            full_integral=full_integral_on, q_min=q_min, D_min_cm=D_min_cm,
         )
 
         # ── ZTF reference point ──────────────────────────────────────────────
@@ -378,7 +384,7 @@ def register(app: dash.Dash) -> None:
             model_day, model_night,
             float(f_live), f_night_val,
             optical_on, approx_on, float(t_overhead_s),
-            full_integral=full_integral_on, off_axis=off_axis_on,
+            full_integral=full_integral_on, q_min=q_min, D_min_cm=D_min_cm,
         )
 
         # ── Surface for 3D figure ─────────────────────────────────────────────
@@ -424,7 +430,8 @@ def register(app: dash.Dash) -> None:
                 color_on=color_on,
                 optical_on=optical_on,
                 full_integral_on=full_integral_on,
-                off_axis_on=off_axis_on,
+                q_min=q_min,
+                D_min_cm=D_min_cm,
                 model_day=model_day,
                 model_night=model_night,
                 i_det=int(i_det),
@@ -453,7 +460,7 @@ def register(app: dash.Dash) -> None:
                 t_cad_scalar=t_cad_fix_s, f_night_val=f_night_val,
                 approx_on=approx_on, f_live=float(f_live),
                 t_overhead_s=float(t_overhead_s), color_on=color_on,
-                off_axis=off_axis_on,
+                q_min=q_min, D_min_cm=D_min_cm,
             )
             fig_nslice = build_nslice_figure(
                 N_sweep=N_sweep, R_n=R_n, rid_n=rid_n,
@@ -473,7 +480,7 @@ def register(app: dash.Dash) -> None:
                 optical_on=optical_on, model_night=model_night,
                 approx_on=approx_on, f_live=float(f_live),
                 t_overhead_s=float(t_overhead_s), color_on=color_on,
-                off_axis=off_axis_on,
+                q_min=q_min, D_min_cm=D_min_cm,
             )
             if optical_on and model_night is not None:
                 # Continuous region (sub-night, uses model_night)

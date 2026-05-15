@@ -18,6 +18,8 @@ _SYNC_PAIRS: list[tuple[str, str, float, float]] = [
     ("omegaexp_slider",    "omegaexp_input",    1,      200),
     ("toh_slider",         "toh_input",         0.0,    30.0),
     ("omega_srv_slider",   "omega_srv_input",   100,    41253),
+    ("qmin_slider",        "qmin_input",        0.0,    14.5),
+    ("Dmin_slider",        "Dmin_input",        0.0,    12.0),
     ("tnight_slider",      "tnight_input",      4.0,    14.0),
     # Physics tab
     ("p_slider",           "p_input",           2.01,   3.0),

@@ -270,15 +270,95 @@ with $\tilde{D}_{\rm dec}=(F_{\rm lim}/F_{\rm dec})^{-1/2}$ (dimensionless). Bot
 The dominant-term approximation (Sec.~4.2) is the leading term of~\eqref{eq:full_integral} evaluated at the boundary angle ($q_{\rm Euc}$ or $q_i$). The full integral adds contributions from all other angles.
 Evaluated with a trapezoidal rule over $N_q=500$ points ($<0.3\%$ error for typical parameters).
 
-\subsection{Off-axis-only mode}
+% -------------------------------------------------------
+\section{Detection-Rate Filters: $q_{\rm min}$ and $D_{\rm min}$}
+\label{sec:filters}
 
-When the ``off-axis'' switch is enabled, the on-axis contribution ($q<q_{\rm dec}$, where all bursts are equally bright) is subtracted:
+The model exposes two physics filters that restrict which GRBs contribute to the detection rate.
+They replace an earlier ``off-axis only'' boolean toggle (deprecated; see Sec.~\ref{sec:filters_legacy}).
+
+\medskip\noindent\textbf{Definitions.}
+\begin{itemize}
+\item $q_{\rm min}\in[0,q_{\rm nr}]$: minimum viewing-angle parameter. Only GRBs with $q\ge q_{\rm min}$ count toward the rate. Default $q_{\rm min}=0$ (no filter).
+\item $D_{\rm min}\in[0,D_{\rm euc}]$: minimum \emph{detectable} distance. The integration shell is restricted to $D\ge D_{\rm min}$. Default $D_{\rm min}=0$ (no filter).
+\end{itemize}
+
+\medskip\noindent\textbf{Interpretation note.} $D_{\rm min}$ is a \emph{detectability-distance} floor, not a source-distance floor. The detector volume integral is performed over the shell $[\,D_{\rm min},\,D_{\rm eff}(q)\,]$, where $D_{\rm eff}(q)$ is the maximum distance at which a burst at angle $q$ is detectable.
+Bursts whose maximum detectable distance $D_{\rm eff}(q)$ falls below $D_{\rm min}$ are excluded.
+
+\subsection{Joint distribution of detected bursts}
+
+For uniform GRB number density and isotropic jet axes, the joint detection PDF on the support
+$\{q\in[0,q_{\rm nr}],\;0\le D\le D_{\rm eff}(q)\}$ is
+\[
+p(q,D)\propto q\cdot D^2,
+\]
+combining the solid-angle factor $\theta_j^2\,q\,dq$ and the Euclidean volume element $D^2\,dD$.
+The unfiltered total rate is
+\[
+R = f_\Omega\,\theta_j^2\,R_{\rm int}\int_0^{q_{\rm nr}} q\,\tfrac{1}{3}\,D_{\rm eff}(q)^3\,dq,
+\]
+in agreement with Eq.~\eqref{eq:full_integral} after absorbing the constant $\tfrac{1}{3}$ into the rate normalization.
+
+\subsection{Filtered dominant-term formula}
+
+When $D_{\rm eff}(q)$ is constant over the integration range $[q_{\rm min},q_{\rm max,\,k}]$ (which holds by construction in each regime $k$), the inner $D$-integral becomes
+\[
+\int_{D_{\rm min}}^{D_{\rm eff,\,k}} D^2\,dD = \tfrac{1}{3}\bigl[D_{\rm eff,\,k}^3 - D_{\rm min}^3\bigr]_+,
+\]
+where $[\,x\,]_+\equiv\max(x,0)$ enforces non-negativity when the filter excludes the entire shell.
+The $q$-integral yields the same algebraic form:
+\[
+\int_{q_{\rm min}}^{q_{\rm max,\,k}} q\,dq = \tfrac{1}{2}\bigl[q_{\rm max,\,k}^2 - q_{\rm min}^2\bigr]_+.
+\]
+Combining, the filtered regime rate is
 \begin{equation}
-R_{\rm off} = R_{\rm total} - R_{\rm on},
-\qquad
-R_{\rm on} = \tfrac{1}{2}\,f_\Omega\,\theta_j^2\,q_{\rm dec}^2\,\min\!\bigl(D_{\rm dec}/D_{\rm euc},\,1\bigr)^3\,R_{\rm int}.
+\label{eq:filter_dominant}
+R_k(q_{\rm min},D_{\rm min}) = \tfrac{1}{2}\,f_\Omega\,\theta_j^2\,R_{\rm int}\;\bigl[q_{\rm max,\,k}^2 - q_{\rm min}^2\bigr]_+\;\bigl[(D_{\rm eff,\,k}/D_{\rm euc})^3 - (D_{\rm min}/D_{\rm euc})^3\bigr]_+.
 \end{equation}
-$R_{\rm on}$ is evaluated from the dominant-term formula regardless of whether full-integral mode is active, and is deliberately conservative in cadence-limited regimes.
+At $q_{\rm min}=D_{\rm min}=0$ this reduces exactly (to floating-point) to the unfiltered formula in Sec.~4.2. When either bracket evaluates to zero, the regime contributes nothing and the cell's $\log_{10}R$ is NaN.
+
+\subsection{Filtered full-integral formula}
+
+In full-integral mode the inner $D$-integral cannot be evaluated in closed form because $D_{\rm eff}(q)$ is piecewise:
+\begin{equation}
+\label{eq:filter_full}
+R = f_\Omega\,\theta_j^2\,R_{\rm int}\int_0^{q_{\rm nr}} \mathbf{1}\{q\ge q_{\rm min}\}\;q\;\bigl[D_{\rm eff}(q)^3 - (D_{\rm min}/D_{\rm euc})^3\bigr]_+\,dq,
+\end{equation}
+where $D_{\rm eff}(q)=\min\!\bigl(\tilde D_{\rm max}(q),\,\tilde D_{\rm eff}\bigr)$ is the same profile defined in Eq.~\eqref{eq:Dmax_tilde}.
+The indicator $\mathbf{1}\{q\ge q_{\rm min}\}$ is applied to a discrete $q$-grid of $N_q=500$ points; the trapezoidal rule near $q=q_{\rm min}$ introduces an $\mathcal{O}(\Delta q/q_{\rm nr})\approx 2\times 10^{-3}$ relative bias. This bias is verified empirically by the test \texttt{test\_B12\_indicator\_bias\_at\_qmin\_bounded}.
+
+\subsection{Filtered medians}
+
+Under the dominant-term assumption (constant $D_{\rm eff}$ on the regime), the marginals are
+\[
+p(q)\propto q\cdot\bigl[D_{\rm eff}^3-D_{\rm min}^3\bigr]_+\propto q,\quad q\in[q_{\rm min},q_{\rm max}],
+\]
+\[
+p(D)\propto D^2\cdot\bigl[q_{\rm max}^2-q_{\rm min}^2\bigr]_+\propto D^2,\quad D\in[D_{\rm min},D_{\rm eff}].
+\]
+Solving $F(q_{\rm med})=\tfrac{1}{2}$ for each gives
+\begin{equation}
+\label{eq:filter_medians}
+q_{\rm med} = \sqrt{\tfrac{q_{\rm max}^2 + q_{\rm min}^2}{2}},
+\qquad
+D_{\rm med} = \!\left(\tfrac{D_{\rm eff}^3 + D_{\rm min}^3}{2}\right)^{\!1/3}\!.
+\end{equation}
+At $q_{\rm min}=D_{\rm min}=0$ these reduce to $q_{\rm max}/\sqrt{2}$ and $D_{\rm eff}\cdot 2^{-1/3}$ (Sec.~6.1). When the filter excludes all weight ($q_{\rm max}\le q_{\rm min}$ or $D_{\rm eff}\le D_{\rm min}$), both medians return NaN.
+
+In full-integral mode where $D_{\rm eff}(q)$ varies, the q-marginal becomes
+\[
+p(q)\propto q\cdot\bigl[D_{\rm eff}(q)^3-(D_{\rm min}/D_{\rm euc})^3\bigr]_+\cdot \mathbf{1}\{q\ge q_{\rm min}\},
+\]
+which is \emph{not} simply $\propto q$, so the analytic formula~\eqref{eq:filter_medians} no longer applies; the median is found by cumulative trapezoidal integration of this weighted form. See \texttt{compute\_medians\_numerical}.
+
+\subsection{Legacy off-axis-only mode (deprecated)}
+\label{sec:filters_legacy}
+
+Earlier versions of the code exposed an ``off-axis detections only'' boolean that subtracted the on-axis ($q<q_{\rm dec}$) contribution: $R_{\rm off}=R_{\rm total}-R_{\rm on}$.
+This was replaced by the continuous $q_{\rm min}$ filter described above.
+Setting $q_{\rm min}\approx q_{\rm dec}\approx 1.03$ approximates the old behaviour: the angular shell $q<q_{\rm dec}$ is excluded directly from each regime's integral, rather than computed and subtracted.
+The new formulation is numerically cleaner (no near-cancellation of two large numbers) and exposes the filter as a continuous physics parameter rather than a hard toggle.
 
 % -------------------------------------------------------
 \section{Median Viewing Angle and Distance}

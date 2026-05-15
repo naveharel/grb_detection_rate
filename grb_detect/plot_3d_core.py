@@ -352,40 +352,6 @@ def _build_adaptive_N_exp_grid(
     return result
 
 
-def _on_axis_rate_linear(
-    model: DetectionRateModel,
-    i_det: int,
-    N_exp: np.ndarray,
-    t_cad_s: np.ndarray,
-) -> np.ndarray:
-    """Linear rate contribution from on-axis bursts (q < q_dec).
-
-    For q < q_dec the full integral uses D_max(q) = D_dec (constant), so the
-    on-axis integral evaluates analytically:
-
-        R_on = 0.5 · fO · θ_j² · q_dec² · min(D_dec/D_euc, D_i/D_euc, 1)³ · R_int
-
-    This is subtracted from R_total to obtain the off-axis-only rate.
-    Returns the linear rate (not log10); NaN outside the physical domain.
-    """
-    t_exp   = model.t_exp_s(N_exp, t_cad_s)
-    F_lim   = model.F_lim_Jy(t_exp)
-    fO      = model.f_Omega(N_exp)
-    D_dec   = model.D_dec(F_lim)
-    D_i     = model.D_i(i_det, t_cad_s, F_lim)
-    D_euc   = model.phys.D_euc_cm
-    theta_j = model.phys.theta_j_rad
-    q_dec   = float(model.derived.q_dec)
-    R_int   = model.phys.R_int_yr
-
-    # Apply both flux (D_dec) and cadence (D_i) constraints, then cap at D_euc.
-    # In A7 (D_i > D_dec since q_i < q_dec) this is a no-op.
-    # In A4-A6 (D_i < D_dec) it fixes R_on >> R_total which drove R_off negative.
-    D_eff_on = np.minimum(np.minimum(D_dec, D_i) / D_euc, 1.0)
-    r_on = 0.5 * fO * (theta_j ** 2) * (q_dec ** 2) * (D_eff_on ** 3) * R_int
-    return np.where(np.isfinite(t_exp) & (t_exp > 0), r_on, np.nan)
-
-
 def _rate(
     model: DetectionRateModel,
     i_det: int,
@@ -393,24 +359,22 @@ def _rate(
     t_cad_s: np.ndarray,
     full_integral: bool,
     *,
-    off_axis: bool = False,
+    q_min: float = 0.0,
+    D_min_cm: float = 0.0,
 ) -> np.ndarray:
     """Dispatch to the full-integral or dominant-term rate method.
 
-    When off_axis=True, subtracts the on-axis contribution (q < q_dec) from the
-    total rate, yielding only bursts detected from outside the beaming cone.
+    The q_min / D_min_cm filter is applied inside the chosen rate method so
+    R_total and the filter share the same approximation level.  q_min=0 and
+    D_min_cm=0 reduce to the unfiltered behavior to floating-point.
     """
     if full_integral:
-        logR = model.rate_log10_full_integral(i_det, N_exp, t_cad_s)
-    else:
-        logR = model.rate_log10(i_det, N_exp, t_cad_s)
-
-    if off_axis:
-        r_on  = _on_axis_rate_linear(model, i_det, N_exp, t_cad_s)
-        R_off = np.where(np.isfinite(logR), 10.0 ** logR, np.nan) - r_on
-        with np.errstate(divide="ignore", invalid="ignore"):
-            logR = np.where(R_off > 0, np.log10(R_off), np.nan)
-    return logR
+        return model.rate_log10_full_integral(
+            i_det, N_exp, t_cad_s, q_min=q_min, D_min_cm=D_min_cm,
+        )
+    return model.rate_log10(
+        i_det, N_exp, t_cad_s, q_min=q_min, D_min_cm=D_min_cm,
+    )
 
 
 def compute_surface(
@@ -424,7 +388,8 @@ def compute_surface(
     nx: int = 220,
     ny: int = 260,
     full_integral: bool = False,
-    off_axis: bool = False,
+    q_min: float = 0.0,
+    D_min_cm: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
     """Compute the log-rate surface on a (log N_exp, log t_cad) grid.
 
@@ -472,11 +437,13 @@ def compute_surface(
         )
         is_subday = t_cad_eff < float(DAY_S)
 
-        Z_day = _rate(model_day, i_det, N_exp, t_cad_eff, full_integral, off_axis=off_axis)
+        Z_day = _rate(model_day, i_det, N_exp, t_cad_eff, full_integral,
+                      q_min=q_min, D_min_cm=D_min_cm)
 
         if model_night is None:
             raise RuntimeError("model_night is required when optical_survey=True")
-        Z_night = _rate(model_night, i_det, N_exp, t_cad_eff, full_integral, off_axis=off_axis)
+        Z_night = _rate(model_night, i_det, N_exp, t_cad_eff, full_integral,
+                        q_min=q_min, D_min_cm=D_min_cm)
 
         # Sub-day: only the nighttime fraction of the sky is observable each cadence
         f_night = t_night_s / float(DAY_S)
@@ -484,7 +451,8 @@ def compute_surface(
         Z_raw = np.where(valid, Z_raw, np.nan)
     else:
         t_cad_eff = t_cad_s
-        Z_raw = _rate(model_day, i_det, N_exp, t_cad_eff, full_integral, off_axis=off_axis)
+        Z_raw = _rate(model_day, i_det, N_exp, t_cad_eff, full_integral,
+                      q_min=q_min, D_min_cm=D_min_cm)
 
     # Display mask for the plotted surface only
     Z_plot = np.where(np.isfinite(Z_raw) & (Z_raw >= ZMIN_DISPLAY_LOG10), Z_raw, np.nan)
@@ -519,7 +487,8 @@ def compute_surface(
     # t_exp uses t_cad_eff (optical-corrected cadence) to match the rate computation.
     t_exp_grid      = model_day.t_exp_s(N_exp, t_cad_eff)
     q_med_grid, D_med_cm_grid = model_day.compute_medians(
-        i_det, N_exp, t_cad_eff, full_integral=full_integral, off_axis=off_axis,
+        i_det, N_exp, t_cad_eff, full_integral=full_integral,
+        q_min=q_min, D_min_cm=D_min_cm,
     )
     D_med_Gpc_grid  = D_med_cm_grid / GPC_TO_CM
 
@@ -556,7 +525,8 @@ def maximize_log_surface_iterative(
     optical_survey: bool,
     t_night_s: float,
     full_integral: bool = False,
-    off_axis: bool = False,
+    q_min: float = 0.0,
+    D_min_cm: float = 0.0,
     n0x: int = 180,
     n0y: int = 220,
     n_refine: int = 3,
@@ -577,9 +547,9 @@ def maximize_log_surface_iterative(
         If True, use ``rate_log10_full_integral`` instead of the dominant-term
         approximation.  Must match the flag used in ``compute_surface`` so the
         optimizer finds the maximum of the same surface that is displayed.
-    off_axis : bool
-        If True, subtract the on-axis contribution before optimising.  Must match
-        the flag used in ``compute_surface``.
+    q_min, D_min_cm : float, optional
+        Lower bounds on q and D.  Must match the values used in ``compute_surface``
+        so the optimum lies on the same filtered surface that is displayed.
     validity_fn : callable(N_arr, t_arr) -> bool_array, optional
         If provided, called with linear N_exp and t_cad_s arrays of the same shape as
         the evaluation grid.  Points where the function returns False are masked out
@@ -604,8 +574,10 @@ def maximize_log_surface_iterative(
             return None
 
         is_subday = t_eff < float(DAY_S)
-        Z_day   = _rate(model_day,   i_det, N, t_eff, full_integral, off_axis=off_axis)
-        Z_night = _rate(model_night, i_det, N, t_eff, full_integral, off_axis=off_axis)
+        Z_day   = _rate(model_day,   i_det, N, t_eff, full_integral,
+                        q_min=q_min, D_min_cm=D_min_cm)
+        Z_night = _rate(model_night, i_det, N, t_eff, full_integral,
+                        q_min=q_min, D_min_cm=D_min_cm)
         f_night = t_night_s / float(DAY_S)
         Z = np.where(is_subday, Z_night + np.log10(f_night), Z_day)
         Z = np.where(valid, Z, np.nan)
@@ -645,7 +617,8 @@ def maximize_log_surface_iterative(
         # Meshgrid over (t_days, N)
         N2, t2 = np.meshgrid(N, t_days)
 
-        Z = _rate(model_day, i_det, N2, t2, full_integral, off_axis=off_axis)
+        Z = _rate(model_day, i_det, N2, t2, full_integral,
+                  q_min=q_min, D_min_cm=D_min_cm)
         if validity_fn is not None:
             Z = np.where(validity_fn(N2, t2), Z, np.nan)
         if not np.any(np.isfinite(Z)):
@@ -663,7 +636,8 @@ def maximize_log_surface_iterative(
             X, Y = np.meshgrid(xs, ys)
             N = 10 ** X
             t = 10 ** Y
-            Z = _rate(model_day, i_det, N, t, full_integral, off_axis=off_axis)
+            Z = _rate(model_day, i_det, N, t, full_integral,
+                      q_min=q_min, D_min_cm=D_min_cm)
             Z = np.where(np.isfinite(Z), Z, np.nan)
             if validity_fn is not None:
                 Z = np.where(validity_fn(N, t), Z, np.nan)

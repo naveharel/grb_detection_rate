@@ -334,6 +334,8 @@ class DetectionRateModel:
         N_exp: np.ndarray,
         t_cad_s: np.ndarray,
         *,
+        q_min: float = 0.0,
+        D_min_cm: float = 0.0,
         return_components: bool = False,
     ) -> np.ndarray | Tuple[np.ndarray, Dict[str, np.ndarray]]:
         """Compute log10 R_det for the given strategy grid.
@@ -343,6 +345,14 @@ class DetectionRateModel:
             R_T(x,y) = {A1: R1, A2: R2, ..., A7: R7}
 
         where each Rk is itself a log10(...) expression.
+
+        Parameters
+        ----------
+        q_min, D_min_cm : float, optional
+            Lower bounds applied to the detection volume: only count GRBs with
+            viewing-angle parameter q ≥ q_min and source distance D ≥ D_min_cm.
+            Each regime's rate gets clipping factors max(q_max² − q_min², 0)
+            and max(D_eff³ − D_min³, 0).  Default 0 / 0 = no filter.
 
         Returns
         -------
@@ -376,17 +386,36 @@ class DetectionRateModel:
         R_int = self.phys.R_int_yr
         theta_j = self.phys.theta_j_rad
         D_euc = self.phys.D_euc_cm
+        q_nr_val = float(self.derived.q_nr)
+        q_dec_val = float(self.derived.q_dec)
 
-        # Region rates (linear)
-        # Note: these are the *linear* rate expressions inside the log10.
-        r1 = fO * R_int
-        r2 = 0.5 * fO * (theta_j**2) * (qE**2) * R_int
-        r3 = r2
-        r4 = 0.5 * fO * (theta_j**2) * (self.derived.q_nr**2) * ((D_i / D_euc) ** 3) * R_int
-        r5 = 0.5 * fO * (theta_j**2) * (qi**2) * ((D_i / D_euc) ** 3) * R_int
-        r6 = r5
+        # Filter clipping factors.  At q_min=0, D_min=0 these reduce to q_max² and D_eff³,
+        # so each rₖ matches the pre-filter expression to floating-point.
+        q_min_sq = float(q_min) ** 2
+        D_min_norm_cubed = (float(D_min_cm) / D_euc) ** 3
+
+        def _q_factor(q_max_sq: np.ndarray | float) -> np.ndarray:
+            return np.maximum(q_max_sq - q_min_sq, 0.0)
+
+        def _D_factor(D_norm_cubed: np.ndarray | float) -> np.ndarray:
+            return np.maximum(D_norm_cubed - D_min_norm_cubed, 0.0)
+
+        # Region rates (linear), un-simplified so the q² / D³ factors are explicit.
+        # r1's pre-filter form `fO * R_int` exploits θ_j² · q_nr² = 2; we re-introduce
+        # the explicit factors here so the filter can clip them generically.
         D_eff7 = np.minimum(D_dec, D_i) / D_euc
-        r7 = 0.5 * fO * (theta_j**2) * (self.derived.q_dec**2) * (D_eff7 ** 3) * R_int
+        D_norm_cubed_A123 = 1.0                                    # D̃_eff = 1 (D_Euc cap)
+        D_norm_cubed_A456 = (D_i / D_euc) ** 3                     # D̃_eff = D_i / D_euc
+        D_norm_cubed_A7   = D_eff7 ** 3                            # D̃_eff = min(D_dec, D_i)/D_euc
+
+        base = 0.5 * fO * (theta_j ** 2) * R_int
+        r1 = base * _q_factor(q_nr_val ** 2)  * _D_factor(D_norm_cubed_A123)
+        r2 = base * _q_factor(qE ** 2)        * _D_factor(D_norm_cubed_A123)
+        r3 = r2
+        r4 = base * _q_factor(q_nr_val ** 2)  * _D_factor(D_norm_cubed_A456)
+        r5 = base * _q_factor(qi ** 2)        * _D_factor(D_norm_cubed_A456)
+        r6 = r5
+        r7 = base * _q_factor(q_dec_val ** 2) * _D_factor(D_norm_cubed_A7)
 
         # Convert to log10 safely.
         R1 = _safe_log10(r1)
@@ -440,6 +469,8 @@ class DetectionRateModel:
         N_exp: np.ndarray,
         t_cad_s: np.ndarray,
         *,
+        q_min: float = 0.0,
+        D_min_cm: float = 0.0,
         N_q: int = 500,
     ) -> np.ndarray:
         """Exact rate via full q-integral (thesis Eq. 39/62). No dominant-term approximation.
@@ -457,6 +488,10 @@ class DetectionRateModel:
 
         Parameters
         ----------
+        q_min, D_min_cm : float, optional
+            Lower bounds on viewing-angle parameter and source distance.  Only the
+            shell q ≥ q_min, D_min ≤ D ≤ D_eff(q) contributes to the integral.
+            Default 0 / 0 = no filter.
         N_q : int
             Number of integration points along q.  500 gives <0.3% numerical error
             relative to the analytic limit for typical parameters.
@@ -516,8 +551,13 @@ class DetectionRateModel:
         # Effective detectable distance: min(D̃_max, D̃_eff)
         D_eff = np.minimum(D_tilde_max, D_tilde_eff)  # (N_q, *shape)
 
-        # Trapezoidal integral: ∫ q * D̃_eff^3 dq
-        integrand = q_g * (D_eff ** 3)                          # (N_q, *shape)
+        # Trapezoidal integral: ∫_{q_min}^{q_nr} q * max(D̃_eff^3 − D̃_min^3, 0) dq
+        # At q_min=0, D_min=0 the indicator and the max() reduce to 1 and D̃_eff³,
+        # so the integral matches the pre-filter form exactly.
+        D_min_norm_cubed = (float(D_min_cm) / D_Euc) ** 3
+        D_shell_cubed = np.maximum(D_eff ** 3 - D_min_norm_cubed, 0.0)
+        q_keep = q_g >= float(q_min)
+        integrand = np.where(q_keep, q_g * D_shell_cubed, 0.0)   # (N_q, *shape)
         I = np.trapezoid(integrand, q_vals, axis=0)             # shape
 
         R = fO * (theta_j ** 2) * R_int * I
@@ -532,14 +572,18 @@ class DetectionRateModel:
         N_exp: np.ndarray,
         t_cad_s: np.ndarray,
         *,
-        off_axis: bool = False,
+        q_min: float = 0.0,
+        D_min_cm: float = 0.0,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Median q and D for the dominant-term (normal) mode.
 
         In the dominant-term approximation, D_eff is constant within the
-        integration range [0, q_max] for each regime, giving analytic medians:
-            q_med  = q_max / sqrt(2)
-            D_med  = D_eff_const * 2^(-1/3)
+        integration range [q_min, q_max] for each regime, giving analytic medians:
+            q_med  = sqrt((q_max² + q_min²) / 2)
+            D_med  = ((D_eff_const³ + D_min³) / 2)^(1/3)
+        At q_min=0, D_min=0 these reduce to the standard q_max/√2 and D_eff·2^(−1/3).
+        When the filter excludes all weight in a regime (q_min ≥ q_max or
+        D_min ≥ D_eff_const), both medians are NaN.
 
         Returns
         -------
@@ -582,14 +626,22 @@ class DetectionRateModel:
         D_eff_const = np.where(masks["A4"] | masks["A5"] | masks["A6"], D_i,   D_eff_const)
         D_eff_const = np.where(masks["A7"], np.minimum(D_dec, D_i), D_eff_const)
 
-        # p(q) ∝ q: normal → q_med = q_max/√2; off-axis (q∈[q_dec,q_max]) → √((q_max²+q_dec²)/2)
-        # A7 has no off-axis detections → NaN in off-axis mode.
-        # D distribution p(D) ∝ D² is unaffected by the q lower bound (constant D_eff).
-        if off_axis:
-            q_med = np.where(masks["A7"], np.nan, np.sqrt((q_max ** 2 + q_dec ** 2) / 2.0))
-        else:
-            q_med = q_max / np.sqrt(2.0)
-        D_med_cm = D_eff_const * (2.0 ** (-1.0 / 3.0))
+        # p(q) ∝ q on [q_min, q_max] → median q² = (q_max² + q_min²)/2.
+        # p(D) ∝ D² on [D_min, D_eff_const] → median D³ = (D_eff_const³ + D_min³)/2.
+        # Cells where the filter excludes all weight (q_max² ≤ q_min² or
+        # D_eff_const³ ≤ D_min³) → NaN for both medians.
+        q_min_sq = float(q_min) ** 2
+        D_min_cm_f = float(D_min_cm)
+        D_min_cubed = D_min_cm_f ** 3
+
+        q_max_sq         = q_max ** 2
+        D_eff_const_cubed = D_eff_const ** 3
+
+        zero_weight = (q_max_sq <= q_min_sq) | (D_eff_const_cubed <= D_min_cubed)
+        q_med    = np.where(zero_weight, np.nan,
+                            np.sqrt((q_max_sq + q_min_sq) / 2.0))
+        D_med_cm = np.where(zero_weight, np.nan,
+                            ((D_eff_const_cubed + D_min_cubed) / 2.0) ** (1.0 / 3.0))
 
         invalid  = ~np.isfinite(t_exp) | (t_exp <= 0)
         return np.where(invalid, np.nan, q_med), np.where(invalid, np.nan, D_med_cm)
@@ -601,13 +653,16 @@ class DetectionRateModel:
         t_cad_s: np.ndarray,
         N_q: int = 200,
         *,
-        off_axis: bool = False,
+        q_min: float = 0.0,
+        D_min_cm: float = 0.0,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Median q and D for the full-integral mode, computed numerically.
 
         Uses the same D_eff(q) = min(D_max(q), D_tilde_eff) profile as
-        rate_log10_full_integral.  Integrand for marginal q: w(q) = q·D_eff³.
-        Marginal D: p(D) ∝ D²·Q(D)² where Q(D) = max{q : D_eff(q) ≥ D}.
+        rate_log10_full_integral.  Integrand for marginal q (filtered):
+        w(q) = 1{q ≥ q_min} · q · max(D_eff³ − D̃_min³, 0).
+        Marginal D (filtered): p(D) ∝ D² · max(Q(D)² − q_min², 0) restricted to
+        D ≥ D_min, where Q(D) = max{q : D_eff(q) ≥ D}.
 
         Returns
         -------
@@ -657,28 +712,31 @@ class DetectionRateModel:
 
         D_eff = np.minimum(D_tilde_max, D_tilde_eff)   # (N_q, *shape), normalized
 
-        # In off-axis mode exclude on-axis angles (q < q_dec) from both medians.
-        if off_axis:
-            D_eff_med = np.where(q_g >= q_dec, D_eff, 0.0)
-        else:
-            D_eff_med = D_eff
+        # Filter: only q ≥ q_min and D ≥ D_min count.  At q_min=0, D_min=0
+        # the integrand below reduces to the original q · D_eff³.
+        q_min_f = float(q_min)
+        q_min_sq = q_min_f ** 2
+        D_min_norm = float(D_min_cm) / D_Euc
+        D_min_norm_cubed = D_min_norm ** 3
+
+        q_keep_mask = q_g >= q_min_f                                         # (N_q, 1, ...)
 
         # ── Median q ──────────────────────────────────────────────────────────
-        # w(q) = q · D_eff(q)³ is the marginal density (unnormalized)
-        w_q        = q_g * (D_eff_med ** 3)            # (N_q, *shape)
+        # Filtered marginal: w(q) = 1{q ≥ q_min} · q · max(D_eff³ − D̃_min³, 0).
+        D_shell_cubed = np.maximum(D_eff ** 3 - D_min_norm_cubed, 0.0)
+        w_q        = np.where(q_keep_mask, q_g * D_shell_cubed, 0.0)         # (N_q, *shape)
         cumsum_q   = np.cumsum(w_q, axis=0)
         total_q    = cumsum_q[-1:] + 1e-300
-        idx_q      = np.argmax(cumsum_q / total_q >= 0.5, axis=0)  # (*shape)
-        # No off-axis weight (A7) → total ≈ 0 → NaN
+        idx_q      = np.argmax(cumsum_q / total_q >= 0.5, axis=0)            # (*shape)
         has_weight = (cumsum_q[-1] > 1e-290)
         q_med      = np.where(has_weight, q_vals[idx_q], np.nan)
 
         # ── Median D ──────────────────────────────────────────────────────────
-        # p(D) ∝ D² · Q(D)²  where  Q(D) = max{q : D_eff(q) ≥ D}.
-        # D_eff is non-increasing in q, so Q(D) = q_vals[n_above(D) - 1]
-        # where n_above(D) = #{q : D_eff(q) ≥ D}.
-        D_eff_max  = np.maximum(D_eff_med.max(axis=0), 1e-30)  # (*shape)
-        D_eff_norm = D_eff_med / D_eff_max[np.newaxis, ...]    # (N_q, *shape), in [0, 1]
+        # p(D) ∝ D² · max(Q(D)² − q_min², 0) on D ≥ D_min, where
+        # Q(D) = max{q : D_eff(q) ≥ D}.  D_eff is non-increasing in q, so Q(D) is
+        # picked from the last index where D_eff_norm ≥ d.
+        D_eff_max  = np.maximum(D_eff.max(axis=0), 1e-30)  # (*shape)
+        D_eff_norm = D_eff / D_eff_max[np.newaxis, ...]    # (N_q, *shape), in [0, 1]
 
         N_D    = 100
         d_grid = np.linspace(1.0 / N_D, 1.0, N_D)     # normalized D levels, (N_D,)
@@ -691,12 +749,20 @@ class DetectionRateModel:
             Q_vals[j]   = q_vals[last_idx]
 
         d_g      = d_grid.reshape((-1,) + (1,) * ndim)
-        w_D      = d_g ** 2 * Q_vals ** 2              # (N_D, *shape)
+        # Q² → max(Q² − q_min², 0) to filter out viewing angles below q_min.
+        Q_sq_filtered = np.maximum(Q_vals ** 2 - q_min_sq, 0.0)
+        # Distance-floor mask: zero out levels below D_min_cm.
+        D_phys = d_g * D_eff_max[np.newaxis, ...] * D_Euc       # (N_D, *shape) in cm
+        D_keep = D_phys >= float(D_min_cm)
+        w_D      = np.where(D_keep, d_g ** 2 * Q_sq_filtered, 0.0)  # (N_D, *shape)
         cumsum_D = np.cumsum(w_D, axis=0)
         total_D  = cumsum_D[-1:] + 1e-300
         idx_D    = np.argmax(cumsum_D / total_D >= 0.5, axis=0)    # (*shape)
         d_med    = d_grid[idx_D]
-        D_med_cm = np.where(has_weight, d_med * D_eff_max * D_Euc, np.nan)
+        D_has_weight = (cumsum_D[-1] > 1e-290)
+        D_med_cm = np.where(has_weight & D_has_weight, d_med * D_eff_max * D_Euc, np.nan)
+        # If the q-marginal had no weight, q_med must also be NaN regardless of D.
+        q_med    = np.where(has_weight & D_has_weight, q_med, np.nan)
 
         invalid  = ~np.isfinite(t_exp) | (t_exp <= 0)
         return np.where(invalid, np.nan, q_med), np.where(invalid, np.nan, D_med_cm)
@@ -709,12 +775,17 @@ class DetectionRateModel:
         *,
         full_integral: bool = False,
         N_q: int = 200,
-        off_axis: bool = False,
+        q_min: float = 0.0,
+        D_min_cm: float = 0.0,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return (q_med, D_med_cm) using analytic (normal) or numerical (full-integral) formula."""
         if full_integral:
-            return self.compute_medians_numerical(i_det, N_exp, t_cad_s, N_q, off_axis=off_axis)
-        return self.compute_medians_analytic(i_det, N_exp, t_cad_s, off_axis=off_axis)
+            return self.compute_medians_numerical(
+                i_det, N_exp, t_cad_s, N_q, q_min=q_min, D_min_cm=D_min_cm,
+            )
+        return self.compute_medians_analytic(
+            i_det, N_exp, t_cad_s, q_min=q_min, D_min_cm=D_min_cm,
+        )
 
     # ---------- Analytic optimal strategy (from  ) ----------
     def analytic_optimum(self, i_det: int) -> Dict[str, float]:

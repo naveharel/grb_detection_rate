@@ -21,8 +21,16 @@ ROOT = pathlib.Path(__file__).parent
 # ---------------------------------------------------------------------------
 
 def _cs_slider(sid: str, smin: float, smax: float, step: float,
-               default: float, marks: list, slider_id: str | None = None) -> str:
-    """Generate a .cs-wrap custom slider block with correct thumb/fill alignment."""
+               default: float, marks: list, slider_id: str | None = None,
+               discrete_values: list | None = None) -> str:
+    """Generate a .cs-wrap custom slider block with correct thumb/fill alignment.
+
+    When `discrete_values` is provided, the slider is restricted to exactly
+    those values — drag positions and keyboard arrows map onto the nearest
+    listed value, and no in-between values are reachable. Used for the slice-
+    position sliders so typical values (1 day, 2 day, 1 week, …) are the only
+    selectable points.
+    """
     if slider_id is None:
         slider_id = f"{sid}_slider"
 
@@ -48,8 +56,15 @@ def _cs_slider(sid: str, smin: float, smax: float, step: float,
             f'<div class="cs-tick" data-pct="{p:.4f}" style="--tick-pct:{p:.4f}"></div>')
 
     dflt_pct = pct(default)
+    discrete_attr = ""
+    if discrete_values:
+        discrete_attr = (
+            ' data-discrete-values="'
+            + ",".join(f"{v:g}" for v in discrete_values)
+            + '"'
+        )
     return (
-        f'<div class="cs-wrap" data-id="{sid}" style="--val-pct:{dflt_pct:.4f}">'
+        f'<div class="cs-wrap" data-id="{sid}"{discrete_attr} style="--val-pct:{dflt_pct:.4f}">'
         f'<div class="cs-track-area">'
         f'<div class="cs-track-bg"></div>'
         f'<div class="cs-track-fill"></div>'
@@ -73,6 +88,8 @@ _SLIDERS = [
     ('OMEGAEXP',    'omegaexp',    1,      200,     1,      47,      [(1,'1'),(47,'47'),(100,'100'),(200,'200')]),
     ('TOH',         'toh',         0,      30,      0.5,    0,       [(0,'0'),(15,'15'),(30,'30')]),
     ('OMEGA_SRV',   'omega_srv',   100,    41253,   100,    27500,   [(100,'100'),(10000,'10k'),(27500,'27.5k'),(41253,'41k')]),
+    ('QMIN',        'qmin',        0,      14.5,    0.01,   0,       [(0,'0'),(1,'1'),(2,'2'),(5,'5'),(10,'10'),(14.5,'14.5')]),
+    ('DMIN',        'Dmin',        0,      12,      0.01,   0,       [(0,'0'),(1,'1'),(5.28,'5.28'),(8,'8'),(12,'12')]),
     ('TNIGHT',      'tnight',      4,      14,      0.25,   10,      [(4,'4'),(6,'6'),(8,'8'),(10,'10'),(12,'12'),(14,'14')]),
     ('P',           'p',           2.01,   3,       0.01,   2.5,     [(2.01,'2'),(2.5,'2.5'),(3,'3')]),
     ('NU_LOG',      'nu_log',      14.3,   15.1,    0.01,   14.7,    [(14.3,'14.3'),(14.7,'14.7'),(15.1,'15.1')]),
@@ -86,12 +103,79 @@ _SLIDERS = [
     ('RHO_GRB_LOG', 'rho_grb_log', 1,      3.3,     0.005,  2.415,   [(1,'10'),(2,'100'),(2.415,'260'),(3,'1k'),(3.3,'2k')]),
     # Slice-position sliders (under N-slice / t-slice plots). Hyphen IDs preserved
     # so existing JS selectors (e.g. 'nslice-tfix-slider') keep working.
-    ('NSLICE_TFIX', 'nslice-tfix', 2,      8,       0.05,   4.937,
-        [(2,'100 s'),(3.556,'1 hr'),(4.937,'1 day'),(5.781,'1 wk'),(7.499,'1 yr')],
-        'nslice-tfix-slider'),
-    ('TSLICE_NFIX', 'tslice-nfix', 0,      4,       0.05,   2.0,
+    # Discrete sliders: only the listed log10 values are reachable — no in-between
+    # values. Step on the hidden <input type="range"> is kept fine (0.001) for
+    # browser compatibility; the custom JS layer enforces discrete positions.
+    ('NSLICE_TFIX', 'nslice-tfix', 2,      8,       0.001,  4.937,
+        [(2,'100 s'),(3.556,'1 hr'),(4.937,'1 day'),(5.238,'2 day'),(5.781,'1 wk'),(7.499,'1 yr')],
+        'nslice-tfix-slider',
+        # log10(seconds) — reachable values (densely populated, includes all
+        # original anchors: 100 s, 10 min, 30 min, 1 hr, 3 hr, 6 hr, 12 hr,
+        # 1 day, 2 day, 3 day, 1 wk, 2 wk, 1 mo, 3 mo, 1 yr).
+        [2.000,   # 100 s
+         2.301,   # 200 s
+         2.477,   # 5 min
+         2.778,   # 10 min
+         2.954,   # 15 min
+         3.079,   # 20 min
+         3.255,   # 30 min
+         3.431,   # 45 min
+         3.556,   # 1 hr
+         3.732,   # 1.5 hr
+         3.857,   # 2 hr
+         4.034,   # 3 hr
+         4.158,   # 4 hr
+         4.335,   # 6 hr
+         4.459,   # 8 hr
+         4.636,   # 12 hr
+         4.812,   # 18 hr
+         4.937,   # 1 day
+         5.113,   # 1.5 day
+         5.238,   # 2 day
+         5.414,   # 3 day
+         5.539,   # 4 day
+         5.636,   # 5 day
+         5.781,   # 1 wk
+         5.937,   # 10 day
+         6.082,   # 2 wk
+         6.259,   # 3 wk
+         6.414,   # 1 mo (30 day)
+         6.560,   # 6 wk
+         6.715,   # 2 mo
+         6.892,   # 3 mo
+         7.017,   # 4 mo
+         7.193,   # 6 mo
+         7.368,   # 9 mo
+         7.499]), # 1 yr
+    ('TSLICE_NFIX', 'tslice-nfix', 0,      4,       0.001,  2.0,
         [(0,'1'),(1,'10'),(2,'100'),(3,'1k'),(4,'10k')],
-        'tslice-nfix-slider'),
+        'tslice-nfix-slider',
+        # log10(N_exp) — reachable values (densely populated, includes all
+        # original anchors: 1, 2, 5, 10, 20, 50, 100, 200, 500, 1k, 2k, 5k, 10k).
+        [0.000,   # 1
+         0.301,   # 2
+         0.477,   # 3
+         0.699,   # 5
+         0.845,   # 7
+         1.000,   # 10
+         1.176,   # 15
+         1.301,   # 20
+         1.477,   # 30
+         1.699,   # 50
+         1.845,   # 70
+         2.000,   # 100
+         2.176,   # 150
+         2.301,   # 200
+         2.477,   # 300
+         2.699,   # 500
+         2.845,   # 700
+         3.000,   # 1k
+         3.176,   # 1.5k
+         3.301,   # 2k
+         3.477,   # 3k
+         3.699,   # 5k
+         3.845,   # 7k
+         4.000]), # 10k
 ]
 
 # ---------------------------------------------------------------------------
@@ -439,7 +523,7 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
 </details>
 
 <!-- Constraints -->
-<details class="acc-item" open>
+<details class="acc-item">
 <summary>Constraints</summary>
 <div class="acc-body">
   <div class="param-block">
@@ -449,6 +533,20 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
     </div>
     %%SLIDER_OMEGA_SRV%%
     <div id="nexpmax-display"></div>
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="qmin_slider" title="Minimum viewing-angle parameter q for detections counted in the rate. q=0 → no filter. q≈1 → outside relativistic beaming cone (jet edge). q=2 → jet break. Larger q → deeper off-axis. Values ≥ q_nr (≈√2/θ_j) yield no detections.">q<sub>min</sub></label>
+      <input type="number" id="qmin_input" class="param-input" min="0" max="14.5" step="0.01" value="0">
+    </div>
+    %%SLIDER_QMIN%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="Dmin_slider" title="Minimum detection distance in Gpc. 0 = no filter. Sources closer than D_min are excluded from the detection rate. Values ≥ D_Euc yield no detections.">D<sub>min</sub> [Gpc]</label>
+      <input type="number" id="Dmin_input" class="param-input" min="0" max="12" step="0.01" value="0">
+    </div>
+    %%SLIDER_DMIN%%
   </div>
   <div class="param-block" id="tnight-block" style="display:none">
     <div class="param-row">
@@ -580,14 +678,6 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
     <span class="switch-label" onclick="document.getElementById('full-integral-switch').click()">Full integral mode</span>
   </div>
   <p class="toggle-hint">Computes R<sub>det</sub> using the exact integral over all viewing angles q ∈ [0, q<sub>nr</sub>] (thesis Eq. 39), instead of the dominant-term approximation. Adds the tail contribution beyond q<sub>Euc</sub> (flux-limited) or q<sub>i</sub> (cadence-limited). Slower but more accurate, especially near range boundaries.</p>
-  <div class="param-switch-row">
-    <label class="toggle-switch" for="off-axis-switch">
-      <input type="checkbox" id="off-axis-switch">
-      <span class="toggle-track"><span class="toggle-thumb"></span></span>
-    </label>
-    <span class="switch-label" onclick="document.getElementById('off-axis-switch').click()">Off-axis detections only</span>
-  </div>
-  <p class="toggle-hint">Show only GRBs detected from outside the relativistic beaming cone (viewing angle q &gt; q<sub>dec</sub>). Subtracts the on-axis contribution (q &lt; q<sub>dec</sub>) from the rate integral. Regions where no off-axis detection is possible are masked out.</p>
 </div>
 </details>
 
@@ -734,7 +824,7 @@ document.querySelectorAll('.view-btn').forEach(btn => {
 
 // ── Slider ↔ input sync ────────────────────────────────────────────────────
 const SLIDER_IDS = [
-  'i','flive','Alog','omegaexp','toh','omega_srv','tnight',
+  'i','flive','Alog','omegaexp','toh','omega_srv','qmin','Dmin','tnight',
   'p','nu_log','Ekiso_log','n0_log','gamma0_log','thetaj','epse','epsB','deuc','rho_grb_log'
 ];
 
@@ -803,12 +893,36 @@ function _initCustomSliders() {
     // SLIDER_IDS (e.g. slice-position sliders); idempotent for sidebar sliders.
     sl.addEventListener('input', () => updateSliderVisual(sl));
 
+    // Discrete-value slider: when `data-discrete-values` is present, the slider
+    // is restricted to exactly those log10 values. Drag positions map to the
+    // nearest listed value; keyboard arrows move between adjacent values; no
+    // continuous in-between values are reachable. Sidebar sliders (no attr)
+    // keep their existing continuous step-based behaviour.
+    const discreteValues = wrap.dataset.discreteValues
+      ? wrap.dataset.discreteValues.split(',')
+          .map(parseFloat).filter(v => isFinite(v))
+          .sort((a, b) => a - b)
+      : null;
+
+    function nearestDiscrete(v) {
+      let best = discreteValues[0], bestD = Math.abs(v - best);
+      for (let i = 1; i < discreteValues.length; i++) {
+        const d = Math.abs(v - discreteValues[i]);
+        if (d < bestD) { bestD = d; best = discreteValues[i]; }
+      }
+      return best;
+    }
+
     function valFromX(clientX) {
       const rect = area.getBoundingClientRect();
       const p = Math.min(1, Math.max(0, (clientX - rect.left - CS_R) / (rect.width - 2 * CS_R)));
       const mn = parseFloat(sl.min), mx = parseFloat(sl.max), st = parseFloat(sl.step) || 1;
       let v = mn + p * (mx - mn);
-      if (st > 0) v = Math.round((v - mn) / st) * st + mn;
+      if (discreteValues && discreteValues.length) {
+        v = nearestDiscrete(v);
+      } else if (st > 0) {
+        v = Math.round((v - mn) / st) * st + mn;
+      }
       return Math.min(mx, Math.max(mn, v));
     }
     function applyVal(v) {
@@ -836,6 +950,19 @@ function _initCustomSliders() {
     if (thumb) thumb.addEventListener('keydown', e => {
       const mn = parseFloat(sl.min), mx = parseFloat(sl.max), st = parseFloat(sl.step) || 1;
       let v = parseFloat(sl.value);
+      if (discreteValues && discreteValues.length) {
+        // Discrete slider: arrows step between adjacent listed values.
+        let idx = discreteValues.indexOf(v);
+        if (idx < 0) idx = discreteValues.indexOf(nearestDiscrete(v));
+        if      (e.key === 'ArrowRight' || e.key === 'ArrowUp')   idx = Math.min(discreteValues.length - 1, idx + 1);
+        else if (e.key === 'ArrowLeft'  || e.key === 'ArrowDown') idx = Math.max(0, idx - 1);
+        else if (e.key === 'Home') idx = 0;
+        else if (e.key === 'End')  idx = discreteValues.length - 1;
+        else return;
+        e.preventDefault();
+        applyVal(discreteValues[idx]);
+        return;
+      }
       if      (e.key === 'ArrowRight' || e.key === 'ArrowUp')   v += st;
       else if (e.key === 'ArrowLeft'  || e.key === 'ArrowDown') v -= st;
       else if (e.key === 'Home') v = mn;
@@ -864,7 +991,7 @@ document.getElementById('optical-switch').addEventListener('change', function() 
 });
 
 // Other toggles
-['toh-approx-switch','regime-color-switch','full-integral-switch','off-axis-switch'].forEach(id => {
+['toh-approx-switch','regime-color-switch','full-integral-switch'].forEach(id => {
   document.getElementById(id).addEventListener('change', triggerUpdate);
 });
 
@@ -1007,7 +1134,8 @@ function readParams() {
     optical_survey:  b('optical-switch'),
     color_regimes:   b('regime-color-switch'),
     full_integral:   b('full-integral-switch'),
-    off_axis:        b('off-axis-switch'),
+    qmin:            v('qmin_slider'),
+    Dmin_cm:         v('Dmin_slider') * 3.085677581491367e27,  // GPC_TO_CM
     toh_approx:      b('toh-approx-switch'),
     nslice_tfix_log: v('nslice-tfix-slider'),
     tslice_nfix_log: v('tslice-nfix-slider'),
@@ -1607,13 +1735,36 @@ function render3DSurface(data, params) {
     });
   }
 
-  const Rmax = data.R_opt != null ? Math.max(data.R_opt, data.R_ztf || 0, 0.11) : 0.11;
+  // Include the surface max in Rmax so the zaxis adapts to actual data even
+  // when R_opt / R_ztf are NaN (e.g. filters are restrictive but some surface
+  // points still pass). Mirrors callbacks/surface.py:409-415.
+  const RmaxCands = [0.11];
+  if (isFinite(data.R_opt)) RmaxCands.push(data.R_opt);
+  if (isFinite(data.R_ztf)) RmaxCands.push(data.R_ztf);
+  if (isFinite(data.R_surface_max) && data.R_surface_max > 0) RmaxCands.push(data.R_surface_max);
+  const Rmax = Math.max(...RmaxCands);
 
   // Match Dash's 3D scene grid colour (slightly stronger than the 2D grids).
   const grid3d = dark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.12)';
 
+  // Empty-state detection: a "real" surface trace is type==='surface'.
+  // Phantom legend traces (scatter3d with x=[null]) and 3D markers don't count.
+  const hasSurface = traces.some(t => t.type === 'surface');
+  const annotText = dark ? '#8ba0c0' : '#4b6080';
+  const layoutAnnotations = hasSurface ? [] : [{
+    text: 'No detections above 0.01/yr — adjust filters',
+    xref: 'paper', yref: 'paper', x: 0.5, y: 0.5,
+    showarrow: false, xanchor: 'center', yanchor: 'middle',
+    font: {size: 14, color: annotText},
+  }];
+
+  // Toggle uirevision based on data presence — forces a camera/zoom reset
+  // across the empty ↔ populated transition so a stale view doesn't persist.
+  const uirev = hasSurface ? 'keep-view-v1-data' : 'keep-view-v1-empty';
+
   const layout = {
-    uirevision: 'keep-view-v1',
+    uirevision: uirev,
+    annotations: layoutAnnotations,
     template: dark ? 'plotly_dark' : 'plotly_white',
     paper_bgcolor: plotBg(),
     hoverlabel: {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'},
@@ -1794,6 +1945,26 @@ function renderNSlice(data) {
     });
   }
 
+  // Explicit axis ranges — Plotly.js's autorange + fixed tickvals can
+  // otherwise widen the view far beyond the data extent. Match data range
+  // with a small log-padding margin.
+  const xPad = 0.05, yPad = 0.1;
+  let xRange = null, yRange = null;
+  if (xv.length > 0) {
+    let xLo = Infinity, xHi = -Infinity;
+    for (const x of xv) { if (x > 0) { if (x < xLo) xLo = x; if (x > xHi) xHi = x; } }
+    if (isFinite(xLo) && isFinite(xHi) && xLo > 0 && xHi > 0) {
+      xRange = [Math.log10(xLo) - xPad, Math.log10(xHi) + xPad];
+    }
+  }
+  if (zv.length > 0) {
+    let yLo = Infinity, yHi = -Infinity;
+    for (const z of zv) { if (z > 0) { if (z < yLo) yLo = z; if (z > yHi) yHi = z; } }
+    if (isFinite(yLo) && isFinite(yHi) && yLo > 0 && yHi > 0) {
+      yRange = [Math.log10(yLo) - yPad, Math.log10(yHi) + yPad];
+    }
+  }
+
   const layout = {
     // Dash's build_nslice_figure intentionally omits uirevision so the 2D view
     // resets on every update (matches Plotly.py default behaviour).
@@ -1801,8 +1972,14 @@ function renderNSlice(data) {
     paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
     font: {family: "'JetBrains Mono','Cascadia Code',monospace", color: fontCol(), size: 12},
     margin: {l: 64, r: 24, b: 48, t: 40},
-    xaxis: {title: 'N<sub>exp</sub>', type: 'log', showgrid: true, gridcolor: gridColLight()},
-    yaxis: {title: 'R<sub>det</sub> [yr ⁻¹]', type: 'log', showgrid: true, gridcolor: gridColLight()},
+    xaxis: Object.assign(
+      {title: 'N<sub>exp</sub>', type: 'log', showgrid: true, gridcolor: gridColLight()},
+      xRange ? {range: xRange, autorange: false} : {autorange: true},
+    ),
+    yaxis: Object.assign(
+      {title: 'R<sub>det</sub> [yr ⁻¹]', type: 'log', showgrid: true, gridcolor: gridColLight()},
+      yRange ? {range: yRange, autorange: false} : {autorange: true},
+    ),
     showlegend: true,
     legend: {x: 0.01, y: 0.98, xanchor: 'left', yanchor: 'top', bgcolor: 'rgba(0,0,0,0)', font: {size: 11}},
     annotations: annotations,
@@ -2074,6 +2251,28 @@ function renderTSlice(data) {
     });
   }
 
+  // Explicit axis ranges — combine cont + disc regions; otherwise Plotly.js's
+  // autorange + fixed TCAD_TICKVALS_H widens the axis to ~[1 sec, 1 yr] even
+  // when data only spans an hour or two.
+  const xPadT = 0.05, yPadT = 0.1;
+  const tAll = hasCont ? (hasDisc ? tCont.concat(tDisc) : tCont) : (hasDisc ? tDisc : []);
+  const rAll = hasCont ? (hasDisc ? rCont.concat(rDisc) : rCont) : (hasDisc ? rDisc : []);
+  let xRangeT = null, yRangeT = null;
+  if (tAll.length > 0) {
+    let tLo = Infinity, tHi = -Infinity;
+    for (const t of tAll) { if (t > 0) { if (t < tLo) tLo = t; if (t > tHi) tHi = t; } }
+    if (isFinite(tLo) && isFinite(tHi) && tLo > 0 && tHi > 0) {
+      xRangeT = [Math.log10(tLo) - xPadT, Math.log10(tHi) + xPadT];
+    }
+  }
+  if (rAll.length > 0) {
+    let rLo = Infinity, rHi = -Infinity;
+    for (const r of rAll) { if (r > 0) { if (r < rLo) rLo = r; if (r > rHi) rHi = r; } }
+    if (isFinite(rLo) && isFinite(rHi) && rLo > 0 && rHi > 0) {
+      yRangeT = [Math.log10(rLo) - yPadT, Math.log10(rHi) + yPadT];
+    }
+  }
+
   const layout = {
     // Dash's build_tslice_figure intentionally omits uirevision so the 2D view
     // resets on every update (matches Plotly.py default behaviour).
@@ -2081,12 +2280,16 @@ function renderTSlice(data) {
     paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
     font: {family: "'JetBrains Mono','Cascadia Code',monospace", color: fontCol(), size: 12},
     margin: {l: 64, r: 24, b: 48, t: 40},
-    xaxis: {
-      title: 't<sub>cad</sub>', type: 'log',
-      tickvals: TCAD_TICKVALS_H, ticktext: TCAD_TICKTEXT,
-      showgrid: true, gridcolor: gridColLight(),
-    },
-    yaxis: {title: 'R<sub>det</sub> [yr ⁻¹]', type: 'log', showgrid: true, gridcolor: gridColLight()},
+    xaxis: Object.assign(
+      {title: 't<sub>cad</sub>', type: 'log',
+       tickvals: TCAD_TICKVALS_H, ticktext: TCAD_TICKTEXT,
+       showgrid: true, gridcolor: gridColLight()},
+      xRangeT ? {range: xRangeT, autorange: false} : {autorange: true},
+    ),
+    yaxis: Object.assign(
+      {title: 'R<sub>det</sub> [yr ⁻¹]', type: 'log', showgrid: true, gridcolor: gridColLight()},
+      yRangeT ? {range: yRangeT, autorange: false} : {autorange: true},
+    ),
     showlegend: true,
     legend: {x: 0.01, y: 0.98, xanchor: 'left', yanchor: 'top', bgcolor: 'rgba(0,0,0,0)', font: {size: 11}},
     annotations: annotations,
@@ -2192,7 +2395,7 @@ _b.compute_all({
     'epsilon_e_log10':-1.0,'epsilon_B_log10':-2.0,'theta_j_rad':0.1,
     'gamma0_log10':2.5,'D_euc_gpc':5.28,'rho_grb_log10':2.415,
     'optical_survey':False,'color_regimes':False,
-    'full_integral':False,'off_axis':False,'toh_approx':False,'nx':60,'ny':80,
+    'full_integral':False,'qmin':0.0,'Dmin_cm':0.0,'toh_approx':False,'nx':60,'ny':80,
 })
 print('Bridge ready')
 `);
@@ -2242,8 +2445,10 @@ def build() -> None:
     for entry in _SLIDERS:
         key, sid, smin, smax, step, default, marks = entry[:7]
         slider_id = entry[7] if len(entry) > 7 else None
+        discrete_values = entry[8] if len(entry) > 8 else None
         html = html.replace(f"%%SLIDER_{key}%%",
-                            _cs_slider(sid, smin, smax, step, default, marks, slider_id))
+                            _cs_slider(sid, smin, smax, step, default, marks,
+                                       slider_id, discrete_values))
     out = ROOT / "grb_detection_rate.html"
     out.write_text(html, encoding="utf-8")
     size_kb = out.stat().st_size // 1024

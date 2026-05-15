@@ -150,6 +150,27 @@ def _constraints_section() -> list:
             input_step=100,
         ),
         html.Div(id="nexpmax-display"),
+        _param_block(
+            ["q", html.Sub("min")],
+            "Minimum viewing-angle parameter q for detections counted in the rate. "
+            "q=0 → no filter. q≈1 → outside relativistic beaming cone (jet edge). "
+            "q=2 → jet break. Larger q → deeper off-axis. "
+            "Values ≥ q_nr (≈√2/θ_j) yield no detections.",
+            "qmin_slider", "qmin_input",
+            0.0, 14.5, 0.01, 0.0,
+            {0: "0", 1: "1", 2: "2", 5: "5", 10: "10", 14.5: "14.5"},
+            input_step=0.01,
+        ),
+        _param_block(
+            ["D", html.Sub("min"), " [Gpc]"],
+            "Minimum detection distance in Gpc. 0 = no filter. "
+            "Sources closer than D_min are excluded from the detection rate. "
+            "Values ≥ D_Euc yield no detections.",
+            "Dmin_slider", "Dmin_input",
+            0.0, 12.0, 0.01, 0.0,
+            {0: "0", 1: "1", 5.28: "5.28", 8: "8", 12: "12"},
+            input_step=0.01,
+        ),
         html.Div(
             id="tnight_container",
             style={"display": "none"},
@@ -216,17 +237,6 @@ def _settings_section() -> list:
                 html.Sub("Euc"), " (flux-limited) or q", html.Sub("i"),
                 " (cadence-limited). Slower but more accurate, especially near "
                 "range boundaries.",
-            ],
-        ),
-        _toggle_block(
-            "off-axis-switch",
-            "Off-axis detections only",
-            [
-                "Show only GRBs detected from outside the relativistic beaming cone "
-                "(viewing angle q > q", html.Sub("dec"), "). "
-                "Subtracts the on-axis contribution (q < q", html.Sub("dec"),
-                ") from the rate integral. "
-                "Regions where no off-axis detection is possible are masked out.",
             ],
         ),
     ]
@@ -346,7 +356,7 @@ def create_sidebar() -> html.Aside:
     accordion = dbc.Accordion(
         id="param-accordion",
         always_open=True,   # DBC: multiple sections can be open simultaneously; opening one does NOT auto-close others
-        active_item=["strategy", "instrument", "constraints"],
+        active_item=["strategy", "instrument"],
         className="param-accordion",
         children=[
             dbc.AccordionItem(

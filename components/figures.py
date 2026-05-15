@@ -270,7 +270,8 @@ def _add_discrete_day_lines(
     height_colorscale: str = "Plasma",
     regime_colors: list[str] | None = None,
     full_integral: bool = False,
-    off_axis: bool = False,
+    q_min: float = 0.0,
+    D_min_cm: float = 0.0,
 ) -> None:
     """Draw discrete integer-day cadence curves on top of a 3-D surface."""
     N_cols = np.asarray(N_cols, dtype=float)
@@ -312,7 +313,8 @@ def _add_discrete_day_lines(
         t_arr = np.full_like(N_cols, float(t_s))
         t_exp_arr = model_day.t_exp_s(N_cols, t_arr)
         q_med_arr, D_med_cm_arr = model_day.compute_medians(
-            int(i_det), N_cols, t_arr, full_integral=full_integral, off_axis=off_axis,
+            int(i_det), N_cols, t_arr, full_integral=full_integral,
+            q_min=q_min, D_min_cm=D_min_cm,
         )
         D_med_Gpc_arr = D_med_cm_arr / _GPC
         return np.stack([t_exp_arr, q_med_arr, D_med_Gpc_arr], axis=-1)  # (nN, 3)
@@ -323,7 +325,7 @@ def _add_discrete_day_lines(
         t_s = float(n) * float(DAY_S)
         log10R = _rate(
             model_day, int(i_det), N_line, np.full_like(N_line, t_s),
-            full_integral, off_axis=off_axis,
+            full_integral, q_min=q_min, D_min_cm=D_min_cm,
         )
         log10R = np.asarray(log10R).reshape(1, -1).ravel()
 
@@ -410,7 +412,8 @@ def build_3d_figure(
     color_on: bool,
     optical_on: bool,
     full_integral_on: bool = False,
-    off_axis_on: bool = False,
+    q_min: float = 0.0,
+    D_min_cm: float = 0.0,
     model_day=None,
     model_night=None,
     i_det: int = 1,
@@ -436,6 +439,17 @@ def build_3d_figure(
 
     fig = go.Figure()
 
+    # Detect whether the surface will produce any visible traces. Used below to
+    # toggle uirevision (so the camera/zoom resets when the user transitions
+    # between an empty surface and a populated one) and to add an empty-state
+    # annotation when nothing renders.
+    Rs_arr = np.asarray(surface_Rs)
+    if color_on and surface_regime_id is not None:
+        rid_arr = np.asarray(surface_regime_id)
+        has_surface = bool(np.any(np.isfinite(Rs_arr) & np.isfinite(rid_arr)))
+    else:
+        has_surface = bool(np.any(np.isfinite(Rs_arr)))
+
     # Discrete day lines (optical mode only)
     if optical_on:
         if color_on and surface_regime_id is not None:
@@ -443,7 +457,7 @@ def build_3d_figure(
                 fig, model_day=model_day, i_det=i_det,
                 N_cols=day_line_N_cols, t_cad_max_s=day_line_t_max_s,
                 zmin_plot_log10=ZMIN_DISPLAY_LOG10, color_mode="regime", regime_colors=REGIME_HEX,
-                full_integral=full_integral_on, off_axis=off_axis_on,
+                full_integral=full_integral_on, q_min=q_min, D_min_cm=D_min_cm,
             )
         else:
             zmax_color = float(np.nanmax(surface_Z_plot)) if np.any(np.isfinite(surface_Z_plot)) else 0.0
@@ -452,7 +466,7 @@ def build_3d_figure(
                 N_cols=day_line_N_cols, t_cad_max_s=day_line_t_max_s,
                 zmin_plot_log10=ZMIN_DISPLAY_LOG10, color_mode="height",
                 height_cmin=-2.0, height_cmax=zmax_color, height_colorscale="Plasma",
-                full_integral=full_integral_on, off_axis=off_axis_on,
+                full_integral=full_integral_on, q_min=q_min, D_min_cm=D_min_cm,
             )
 
     # Per-point customdata for hover: [t_exp_s, q_med, D_med_Gpc].
@@ -559,8 +573,22 @@ def build_3d_figure(
     bg_col = "rgba(0,0,0,0)"
     grid_col = "rgba(255,255,255,0.14)" if dark else "rgba(0,0,0,0.12)"
     hl = _hover_label(dark)
+    # uirevision changes when the data-presence state changes so the camera
+    # resets across an empty ↔ populated transition rather than persisting a
+    # stale view.
+    uirev = "keep-view-v1-data" if has_surface else "keep-view-v1-empty"
+    empty_annotations = []
+    if not has_surface:
+        empty_txt_col = "#8ba0c0" if dark else "#4b6080"
+        empty_annotations = [dict(
+            text="No detections above 0.01/yr — adjust filters",
+            xref="paper", yref="paper", x=0.5, y=0.5,
+            showarrow=False, xanchor="center", yanchor="middle",
+            font=dict(size=14, color=empty_txt_col),
+        )]
     fig.update_layout(
-        uirevision="keep-view-v1",
+        uirevision=uirev,
+        annotations=empty_annotations,
         template=plotly_template,
         paper_bgcolor=bg_col,
         hoverlabel=dict(bgcolor=hl["bgcolor"], font_color=hl["font_color"],

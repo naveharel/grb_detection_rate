@@ -14,7 +14,6 @@ from grb_detect.constants import DAY_S, DEG2_TO_SR
 from grb_detect.params import GPC_TO_CM, SurveyDesignParams, SurveyStrategy
 from grb_detect.plot_3d_core import (
     ZMIN_DISPLAY_LOG10,
-    _on_axis_rate_linear,
     _rate,
     compute_surface,
     make_rate_model,
@@ -76,16 +75,21 @@ def _compute_rate(
     f_live: float,
     t_overhead_s: float,
     color_on: bool,
-    off_axis: bool = False,
+    q_min: float = 0.0,
+    D_min_cm: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute (R, t_exp, q_med, D_med_Gpc, rid) for a 1-D sweep.
 
     Verbatim port of callbacks/surface.py:_compute_rate.
     """
     if full_integral:
-        Z = model.rate_log10_full_integral(i_det, N_arr, t_arr)
+        Z = model.rate_log10_full_integral(
+            i_det, N_arr, t_arr, q_min=q_min, D_min_cm=D_min_cm,
+        )
     else:
-        Z = model.rate_log10(i_det, N_arr, t_arr)
+        Z = model.rate_log10(
+            i_det, N_arr, t_arr, q_min=q_min, D_min_cm=D_min_cm,
+        )
     R = np.where(np.isfinite(Z), 10.0 ** Z, np.nan)
 
     if optical_on and model_night is not None and t_cad_scalar < DAY_S:
@@ -100,7 +104,8 @@ def _compute_rate(
         rid = _masks_1d(masks, len(N_arr))
 
     q_med, D_med_cm = model.compute_medians(
-        i_det, N_arr, t_arr, full_integral=full_integral, off_axis=off_axis,
+        i_det, N_arr, t_arr, full_integral=full_integral,
+        q_min=q_min, D_min_cm=D_min_cm,
     )
     t_exp = model.t_exp_s(N_arr, t_arr)
     D_med_Gpc = D_med_cm / GPC_TO_CM
@@ -128,11 +133,12 @@ def _eval_point(
     approx_on: bool,
     t_overhead_s: float,
     full_integral: bool = False,
-    off_axis: bool = False,
+    q_min: float = 0.0,
+    D_min_cm: float = 0.0,
 ) -> tuple[float, float, float, float]:
     """Evaluate (R_det, t_exp_s, q_med, D_med_Gpc) at a single point.
 
-    Mirrors callbacks/surface.py:_eval_point (lines 140-212).
+    Mirrors callbacks/surface.py:_eval_point.
     """
     _nan4 = (math.nan, math.nan, math.nan, math.nan)
     if not (math.isfinite(N_exp) and math.isfinite(t_cad_s) and N_exp > 0 and t_cad_s > 0):
@@ -144,27 +150,22 @@ def _eval_point(
     else:
         model = model_day
 
-    # Rate
+    # Rate (filter applied inside the rate method, matching compute_surface)
     N_arr = np.array([N_exp])
     t_arr = np.array([t_cad_s])
     if full_integral:
-        log10R = float(model.rate_log10_full_integral(i_det, N_arr, t_arr)[0])
+        log10R = float(model.rate_log10_full_integral(
+            i_det, N_arr, t_arr, q_min=q_min, D_min_cm=D_min_cm)[0])
     else:
-        log10R = float(model.rate_log10(i_det, N_arr, t_arr)[0])
+        log10R = float(model.rate_log10(
+            i_det, N_arr, t_arr, q_min=q_min, D_min_cm=D_min_cm)[0])
     R = 10.0 ** log10R if math.isfinite(log10R) else math.nan
     # Sub-day optical: only the nighttime fraction of detections are accessible
     if optical_on and model_night is not None and t_cad_s < DAY_S:
         R = R * f_night
 
-    # Off-axis correction: subtract on-axis contribution (q < q_dec)
-    if off_axis and math.isfinite(R):
-        r_on = float(_on_axis_rate_linear(model, i_det, N_arr, t_arr)[0])
-        if optical_on and model_night is not None and t_cad_s < DAY_S:
-            r_on = r_on * f_night
-        R_off = R - r_on if math.isfinite(r_on) else R
-        if R_off <= 0:
-            return _nan4
-        R = R_off
+    if not math.isfinite(R) or R <= 0:
+        return _nan4
 
     # t_exp
     try:
@@ -184,7 +185,8 @@ def _eval_point(
     # Medians — use model_day for consistency with compute_surface
     try:
         qm, dm = model_day.compute_medians(
-            i_det, N_arr, t_arr, full_integral=full_integral, off_axis=off_axis,
+            i_det, N_arr, t_arr, full_integral=full_integral,
+            q_min=q_min, D_min_cm=D_min_cm,
         )
         q_med     = float(qm[0])
         D_med_Gpc = float(dm[0]) / GPC_TO_CM
@@ -203,7 +205,8 @@ def _build_day_line_arrays(
     N_cols: np.ndarray,
     t_cad_max_s: float,
     full_integral: bool,
-    off_axis: bool,
+    q_min: float = 0.0,
+    D_min_cm: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build flat per-day overlay arrays.
 
@@ -254,7 +257,7 @@ def _build_day_line_arrays(
         t_s = float(n) * float(DAY_S)
         log10R = _rate(
             model_day, int(i_det), N_line, np.full_like(N_line, t_s),
-            full_integral, off_axis=off_axis,
+            full_integral, q_min=q_min, D_min_cm=D_min_cm,
         )
         log10R = np.asarray(log10R).reshape(1, -1).ravel()
 
@@ -265,7 +268,8 @@ def _build_day_line_arrays(
         t_arr = np.full_like(N_cols, t_s)
         t_exp_arr = model_day.t_exp_s(N_cols, t_arr)
         q_med_arr, D_med_cm_arr = model_day.compute_medians(
-            int(i_det), N_cols, t_arr, full_integral=full_integral, off_axis=off_axis,
+            int(i_det), N_cols, t_arr, full_integral=full_integral,
+            q_min=q_min, D_min_cm=D_min_cm,
         )
         D_med_Gpc_arr = D_med_cm_arr / GPC_TO_CM
 
@@ -311,7 +315,8 @@ def _build_models(params) -> dict:
     optical_on   = bool(params["optical_survey"])
     color_on     = bool(params["color_regimes"])
     full_on      = bool(params["full_integral"])
-    off_axis_on  = bool(params["off_axis"])
+    q_min        = float(params.get("qmin", 0.0) or 0.0)
+    D_min_cm     = float(params.get("Dmin_cm", 0.0) or 0.0)
     toh_approx   = bool(params.get("toh_approx", False))
 
     physics_kw = dict(
@@ -353,7 +358,8 @@ def _build_models(params) -> dict:
         "optical_on":   optical_on,
         "color_on":     color_on,
         "full_on":      full_on,
-        "off_axis_on":  off_axis_on,
+        "q_min":        q_min,
+        "D_min_cm":     D_min_cm,
         "toh_approx":   toh_approx,
         "t_night_s":    t_night_s,
         "f_night":      f_night,
@@ -377,7 +383,8 @@ def _cr_kwargs_from_state(state: dict) -> dict:
         f_live=float(state["f_live"]),
         t_overhead_s=float(state["t_overhead_s"]),
         color_on=state["color_on"],
-        off_axis=state["off_axis_on"],
+        q_min=state["q_min"],
+        D_min_cm=state["D_min_cm"],
     )
 
 
@@ -554,7 +561,8 @@ def compute_all(params) -> dict:
         optical_on   = state["optical_on"]
         color_on     = state["color_on"]
         full_on      = state["full_on"]
-        off_axis_on  = state["off_axis_on"]
+        q_min        = state["q_min"]
+        D_min_cm     = state["D_min_cm"]
         toh_approx   = state["toh_approx"]
         t_night_s    = state["t_night_s"]
         f_night      = state["f_night"]
@@ -571,7 +579,7 @@ def compute_all(params) -> dict:
             model_day, model_night, i_det,
             optical_survey=optical_on, color_regimes=color_on,
             t_night_s=t_night_s, nx=nx, ny=ny,
-            full_integral=full_on, off_axis=off_axis_on,
+            full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
         )
 
         if toh_approx and t_overhead_s > 0:
@@ -602,13 +610,13 @@ def compute_all(params) -> dict:
             x_min=0.0, x_max=math.log10(N_exp_max),
             y_min=0.0, y_max=8.0,
             optical_survey=optical_on, t_night_s=t_night_s,
-            full_integral=full_on, off_axis=off_axis_on,
+            full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
             validity_fn=opt_validity_fn,
         )
         R_opt, t_exp_opt_s, q_med_opt, D_med_Gpc_opt = _eval_point(
             N_opt, t_cad_opt_s, i_det, model_day, model_night,
             f_live, f_night, optical_on, toh_approx, t_overhead_s,
-            full_integral=full_on, off_axis=off_axis_on,
+            full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
         )
 
         # ── ZTF reference ────────────────────────────────────────────────────
@@ -617,7 +625,7 @@ def compute_all(params) -> dict:
         R_ztf, t_exp_ztf_s, q_med_ztf, D_med_Gpc_ztf = _eval_point(
             N_ztf, t_cad_ztf_s, i_det, model_day, model_night,
             f_live, f_night, optical_on, toh_approx, t_overhead_s,
-            full_integral=full_on, off_axis=off_axis_on,
+            full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
         )
 
         # ── Slice sweeps at user-chosen positions ────────────────────────────
@@ -643,6 +651,7 @@ def compute_all(params) -> dict:
         R_toward_day = R_int_yr * f_b / 365.25
 
         zmax_log10 = float(np.nanmax(Z_plot)) if np.any(np.isfinite(Z_plot)) else 0.0
+        R_surface_max = float(np.nanmax(R_lin)) if np.any(np.isfinite(R_lin)) else 0.0
 
         # ── Gap times (optical t-slice; see callbacks/surface.py:501) ────────
         if optical_on:
@@ -663,7 +672,7 @@ def compute_all(params) -> dict:
             ) = _build_day_line_arrays(
                 model_day=model_day, i_det=i_det,
                 N_cols=N_cols, t_cad_max_s=t_cad_max_s,
-                full_integral=full_on, off_axis=off_axis_on,
+                full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
             )
             n_days, n_N = (int(day_vals.size),
                            int(day_N.shape[1]) if day_N.ndim == 2 and day_vals.size > 0 else 0)
@@ -711,6 +720,7 @@ def compute_all(params) -> dict:
             "q_med_ztf":       _nan_to_none(q_med_ztf),
             "D_med_Gpc_ztf":   _nan_to_none(D_med_Gpc_ztf),
             "zmax_log10":   zmax_log10,
+            "R_surface_max": R_surface_max,
             "R_int_yr":     float(R_int_yr),
             "R_toward_day": float(R_toward_day),
             "N_exp_max":    float(N_exp_max),
