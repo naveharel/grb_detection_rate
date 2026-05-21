@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GRB Detection Rate Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+%%STYLES%%
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- ── Navbar ────────────────────────────────────────────────────────────── -->
+<nav class="app-navbar">
+  <button class="icon-btn" id="sidebar-toggle" title="Toggle sidebar">☰</button>
+  <span class="app-title">GRB Detection Rate Explorer</span>
+  <div class="navbar-right">
+    <select class="preset-select" id="preset-select" title="Load preset parameters">
+      <option value="none" disabled selected>— Presets —</option>
+      <option value="ztf">ZTF</option>
+      <option value="rubin">Rubin LSST</option>
+    </select>
+    <button class="nav-btn" id="export-btn" title="Download surface as CSV">⬇ CSV</button>
+    <div class="view-controls">
+      <button class="view-btn active" data-tab="3d" title="3D surface view">3D</button>
+      <button class="view-btn" data-tab="nslice" title="R vs N_exp at fixed t_cad">N<sub>exp</sub> slice</button>
+      <button class="view-btn" data-tab="tslice" title="R vs t_cad at fixed N_exp">t<sub>cad</sub> slice</button>
+    </div>
+    <button class="nav-btn" id="theme-toggle">☾ Dark</button>
+  </div>
+</nav>
+
+<!-- ── Metrics strip ─────────────────────────────────────────────────────── -->
+<div class="metrics-strip" id="metrics-strip">
+  <div class="metric-badge"><span class="metric-label">R<sub>det,opt</sub></span><span class="metric-value metric-amber" id="m-R-opt">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-badge"><span class="metric-label">t<sub>cad,opt</sub></span><span class="metric-value metric-muted" id="m-tcad-opt">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-badge"><span class="metric-label">N<sub>exp,opt</sub></span><span class="metric-value metric-muted" id="m-N-opt">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-badge"><span class="metric-label">t<sub>exp,opt</sub></span><span class="metric-value metric-muted" id="m-texp-opt">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-sep-prominent"></div>
+  <div class="metric-badge"><span class="metric-label">R<sub>det,ZTF</sub></span><span class="metric-value metric-coral" id="m-R-ztf">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-badge"><span class="metric-label">t<sub>cad,ZTF</sub></span><span class="metric-value metric-muted" id="m-tcad-ztf">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-badge"><span class="metric-label">N<sub>exp,ZTF</sub></span><span class="metric-value metric-muted" id="m-N-ztf">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-badge"><span class="metric-label">t<sub>exp,ZTF</sub></span><span class="metric-value metric-muted" id="m-texp-ztf">—</span></div>
+  <div class="metric-sep"></div>
+  <div class="metric-sep-prominent"></div>
+  <div class="metric-badge"><span class="metric-label">Gain</span><span class="metric-value metric-gain" id="m-gain">—</span></div>
+  <div class="metric-status" id="metric-status"></div>
+</div>
+
+<!-- ── App body ───────────────────────────────────────────────────────────── -->
+<div class="app-body">
+
+<!-- ── Sidebar ───────────────────────────────────────────────────────────── -->
+<aside class="app-sidebar open" id="app-sidebar">
+<div class="sidebar-inner">
+
+<!-- Strategy -->
+<details class="acc-item" open>
+<summary>Strategy</summary>
+<div class="acc-body">
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="i_slider" title="Number of detections required per GRB to count as a detection event">i</label>
+      <input type="number" id="i_input" class="param-input" min="2" max="100" step="1" value="10">
+    </div>
+    %%SLIDER_I%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="flive_slider" title="Fraction of total time the telescope is actually observing (0=never, 1=always)">f<sub>live</sub></label>
+      <input type="number" id="flive_input" class="param-input" min="0.01" max="1" step="0.01" value="0.2">
+    </div>
+    %%SLIDER_FLIVE%%
+  </div>
+</div>
+</details>
+
+<!-- Instrument -->
+<details class="acc-item" open>
+<summary>Instrument</summary>
+<div class="acc-body">
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="Alog_slider" title="log₁₀ of reference limiting flux in Jansky at t_exp_ref = 30 s">log A [Jy]</label>
+      <input type="number" id="Alog_input" class="param-input" min="-12" max="-2" step="0.01" value="-4.68">
+    </div>
+    %%SLIDER_ALOG%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="omegaexp_slider" title="Single-exposure field of view of the instrument in square degrees">Ω<sub>exp</sub> [deg²]</label>
+      <input type="number" id="omegaexp_input" class="param-input" min="1" max="200" step="1" value="47">
+    </div>
+    %%SLIDER_OMEGAEXP%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="toh_slider" title="Per-exposure overhead (readout, slew, settle) in seconds">t<sub>OH</sub> [sec]</label>
+      <input type="number" id="toh_input" class="param-input" min="0" max="30" step="0.5" value="0">
+    </div>
+    %%SLIDER_TOH%%
+  </div>
+</div>
+</details>
+
+<!-- Constraints -->
+<details class="acc-item">
+<summary>Constraints</summary>
+<div class="acc-body">
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="omega_srv_slider" title="Maximum surveyable sky area per cadence cycle in square degrees">Ω<sub>srv,max</sub> [deg²]</label>
+      <input type="number" id="omega_srv_input" class="param-input" min="100" max="41253" step="100" value="27500">
+    </div>
+    %%SLIDER_OMEGA_SRV%%
+    <div id="nexpmax-display"></div>
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="qmin_slider" title="Minimum viewing-angle parameter q for detections counted in the rate. q=0 → no filter. q≈1 → outside relativistic beaming cone (jet edge). q=2 → jet break. Larger q → deeper off-axis. Values ≥ q_nr (≈√2/θ_j) yield no detections.">q<sub>min</sub></label>
+      <input type="number" id="qmin_input" class="param-input" min="0" max="14.5" step="0.01" value="0">
+    </div>
+    %%SLIDER_QMIN%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="Dmin_slider" title="Minimum detection distance in Gpc. 0 = no filter. Sources closer than D_min are excluded from the detection rate. Values ≥ D_Euc yield no detections.">D<sub>min</sub> [Gpc]</label>
+      <input type="number" id="Dmin_input" class="param-input" min="0" max="12" step="0.01" value="0">
+    </div>
+    %%SLIDER_DMIN%%
+  </div>
+  <div class="param-block" id="tnight-block" style="display:none">
+    <div class="param-row">
+      <label class="param-label" for="tnight_slider" title="Length of the observable astronomical night in hours">t<sub>night</sub> [hr]</label>
+      <input type="number" id="tnight_input" class="param-input" min="4" max="14" step="0.25" value="10">
+    </div>
+    %%SLIDER_TNIGHT%%
+    <div id="subnight-limit-display"></div>
+  </div>
+</div>
+</details>
+
+<!-- Physics -->
+<details class="acc-item">
+<summary>Parameters</summary>
+<div class="acc-body">
+  <div class="param-group-label">Physical model</div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="p_slider" title="Electron power-law index (must be > 2). Exponentially amplified in flux; strongly affects spectral slope and all detection ranges.">p</label>
+      <input type="number" id="p_input" class="param-input" min="2.01" max="3" step="0.01" value="2.5">
+    </div>
+    %%SLIDER_P%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="nu_log_slider" title="log₁₀ of observing frequency in Hz. Optical/near-IR window: 10^14.3 Hz (~1 µm, J-band) to 10^15.1 Hz (~80 nm, near-UV). Default 5×10¹⁴ Hz = optical V-band (550 nm).">log ν [Hz]</label>
+      <input type="number" id="nu_log_input" class="param-input" min="14.3" max="15.1" step="0.01" value="14.7">
+    </div>
+    %%SLIDER_NU_LOG%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="Ekiso_log_slider" title="log₁₀ of isotropic-equivalent kinetic energy in erg. Scales flux as E^{(p+3)/4} and deceleration time as E^{1/3}.">log E<sub>k,iso</sub> [erg]</label>
+      <input type="number" id="Ekiso_log_input" class="param-input" min="51" max="55" step="0.1" value="53">
+    </div>
+    %%SLIDER_EKISO_LOG%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="n0_log_slider" title="log₁₀ of ISM number density in cm⁻³. Affects flux (∝ n^{1/2}) and deceleration time (∝ n^{-1/3}).">log n<sub>0</sub> [cm⁻³]</label>
+      <input type="number" id="n0_log_input" class="param-input" min="-3" max="2" step="0.1" value="0">
+    </div>
+    %%SLIDER_N0_LOG%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="gamma0_log_slider" title="log₁₀ of initial bulk Lorentz factor. Affects deceleration time (∝ Γ₀^{-8/3}) and the on-axis beaming cone angle.">log Γ<sub>0</sub></label>
+      <input type="number" id="gamma0_log_input" class="param-input" min="2" max="3.5" step="0.05" value="2.5">
+    </div>
+    %%SLIDER_GAMMA0_LOG%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="thetaj_slider" title="Jet half-opening angle in radians. Sets the jet-break time and the beaming fraction f_b = θ_j²/2.">θ<sub>j</sub> [rad]</label>
+      <input type="number" id="thetaj_input" class="param-input" min="0.01" max="0.5" step="0.01" value="0.1">
+    </div>
+    %%SLIDER_THETAJ%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="epse_slider" title="log₁₀ of electron energy fraction. Enters flux as (ε_e·(p−2)/(p−1))^{p−1}.">log ε<sub>e</sub></label>
+      <input type="number" id="epse_input" class="param-input" min="-2" max="-0.3" step="0.05" value="-1">
+    </div>
+    %%SLIDER_EPSE%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="epsB_slider" title="log₁₀ of magnetic energy fraction. Enters flux as ε_B^{(p+1)/4}.">log ε<sub>B</sub></label>
+      <input type="number" id="epsB_input" class="param-input" min="-3" max="-1" step="0.05" value="-2">
+    </div>
+    %%SLIDER_EPSB%%
+  </div>
+  <div class="param-group-label" style="margin-top:10px">Cosmological model</div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="deuc_slider" title="Euclidean calibration distance in Gpc. Sets the volume for the rate integral. Default 5.28 Gpc ≈ z = 2 in flat ΛCDM.">D<sub>Euc</sub> [Gpc]</label>
+      <input type="number" id="deuc_input" class="param-input" min="1" max="12" step="0.01" value="5.28">
+    </div>
+    %%SLIDER_DEUC%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="rho_grb_log_slider" title="log₁₀ of GRB volumetric rate density. Scales the total detection rate linearly.">log ℛ [Gpc⁻³ yr⁻¹]</label>
+      <input type="number" id="rho_grb_log_input" class="param-input" min="1" max="3.3" step="0.005" value="2.415">
+    </div>
+    %%SLIDER_RHO_GRB_LOG%%
+  </div>
+  <div class="param-row grb-derived-row">
+    <span id="grb-ntotal-display" class="grb-derived-val">R<sub>int</sub> = —</span>
+    <span id="grb-ntoward-display" class="grb-derived-val">f<sub>b</sub>R<sub>int</sub> = —</span>
+  </div>
+</div>
+</details>
+
+<!-- Settings -->
+<details class="acc-item">
+<summary>Settings</summary>
+<div class="acc-body">
+  <div class="param-switch-row">
+    <label class="toggle-switch" for="optical-switch">
+      <input type="checkbox" id="optical-switch">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    </label>
+    <span class="switch-label" onclick="document.getElementById('optical-switch').click()">Optical survey mode</span>
+  </div>
+  <p class="toggle-hint">Requires ≥ i detections in one night or a single detection each night. Multi-day effective live fraction is reduced by f<sub>night</sub> = t<sub>night</sub> / 24 h; the t<sub>night</sub> slider becomes active.</p>
+  <div class="param-switch-row">
+    <label class="toggle-switch" for="toh-approx-switch">
+      <input type="checkbox" id="toh-approx-switch">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    </label>
+    <span class="switch-label" onclick="document.getElementById('toh-approx-switch').click()">t<sub>OH</sub> approximation</span>
+  </div>
+  <p class="toggle-hint">Uses the naive t<sub>exp</sub> = f<sub>live</sub>·t<sub>cad</sub>/N<sub>exp</sub> equation (ignoring t<sub>OH</sub> in the exposure formula) for fully analytic optimal strategies, while still enforcing f<sub>live</sub>·t<sub>cad</sub>/N<sub>exp</sub> &gt; t<sub>OH</sub> as the validity boundary.</p>
+  <div class="param-switch-row">
+    <label class="toggle-switch" for="regime-color-switch">
+      <input type="checkbox" id="regime-color-switch">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    </label>
+    <span class="switch-label" onclick="document.getElementById('regime-color-switch').click()">Color by detection regime</span>
+  </div>
+  <p class="toggle-hint">Colors the surface by analytical detection regime. Warm colors (red→amber) indicate flux-limited (D<sub>Euc</sub>) regimes; cool colors (blue→teal) indicate cadence-limited (D<sub>i</sub>) regimes; gray indicates the singly-limited (D<sub>dec</sub>) regime. More vibrant colors correspond to higher detection ranges.</p>
+  <div class="param-switch-row">
+    <label class="toggle-switch" for="full-integral-switch">
+      <input type="checkbox" id="full-integral-switch">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    </label>
+    <span class="switch-label" onclick="document.getElementById('full-integral-switch').click()">Full integral mode</span>
+  </div>
+  <p class="toggle-hint">Computes R<sub>det</sub> using the exact integral over all viewing angles q ∈ [0, q<sub>nr</sub>] (thesis Eq. 39), instead of the dominant-term approximation. Adds the tail contribution beyond q<sub>Euc</sub> (flux-limited) or q<sub>i</sub> (cadence-limited). Slower but more accurate, especially near range boundaries.</p>
+</div>
+</details>
+
+</div><!-- sidebar-inner -->
+</aside><!-- app-sidebar -->
+
+<!-- ── Main area ─────────────────────────────────────────────────────────── -->
+<main class="app-main">
+  <div id="panel-3d" class="view-panel">
+    <div id="plot-3d" class="plot-div"></div>
+  </div>
+  <div id="panel-nslice" class="view-panel hidden">
+    <div id="plot-nslice" class="plot-div"></div>
+    <div class="slice-ctrl">
+      <span class="slice-ctrl-label">Fixed t<sub>cad</sub></span>
+      <div class="slice-pos-slider">%%SLIDER_NSLICE_TFIX%%</div>
+      <span class="slice-pos-value" id="nslice-tfix-value">1 day</span>
+    </div>
+  </div>
+  <div id="panel-tslice" class="view-panel hidden">
+    <div id="plot-tslice" class="plot-div"></div>
+    <div class="slice-ctrl">
+      <span class="slice-ctrl-label">Fixed N<sub>exp</sub></span>
+      <div class="slice-pos-slider">%%SLIDER_TSLICE_NFIX%%</div>
+      <span class="slice-pos-value" id="tslice-nfix-value">100</span>
+    </div>
+  </div>
+</main>
+
+</div><!-- app-body -->
+</div><!-- app -->
+
+<!-- ── Embedded physics package ───────────────────────────────────────────── -->
+<script id="physics-zip" type="application/octet-stream">%%PHYSICS_ZIP_B64%%</script>
+
+<!-- ── Application JavaScript ────────────────────────────────────────────── -->
+<script>
+%%APP_JS%%
+</script>
+</body>
+</html>
