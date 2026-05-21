@@ -24,7 +24,8 @@ from grb_detect.survey import exposure_time_s
 ZTF_OMEGA_EXP_DEG2: float = 47.0
 OMEGA_SRV_DEFAULT_DEG2: float = 27500.0
 
-# Grid resolutions — must match callbacks/surface.py:36-37
+# Grid resolutions. Regime-colour mode uses the denser grid so the discrete
+# boundaries between regimes stay crisp.
 NX_REGIME, NY_REGIME = 200, 240
 NX_DEFAULT, NY_DEFAULT = 160, 200
 
@@ -47,7 +48,7 @@ def _array_to_list(arr) -> list:
     return [None if (v != v) else float(v) for v in flat.tolist()]
 
 
-# ── Regime-id helper (mirrors _masks_1d from callbacks/surface.py) ──────────
+# ── Regime-id helper ────────────────────────────────────────────────────────
 
 def _masks_1d(masks: dict, n: int) -> np.ndarray:
     rid = np.full(n, np.nan, dtype=float)
@@ -58,7 +59,7 @@ def _masks_1d(masks: dict, n: int) -> np.ndarray:
     return rid
 
 
-# ── 1-D rate sweep (mirrors _compute_rate from callbacks/surface.py) ────────
+# ── 1-D rate sweep ──────────────────────────────────────────────────────────
 
 def _compute_rate(
     model,
@@ -78,10 +79,7 @@ def _compute_rate(
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Compute (R, t_exp, q_med, D_med_Gpc, rid) for a 1-D sweep.
-
-    Verbatim port of callbacks/surface.py:_compute_rate.
-    """
+    """Compute (R, t_exp, q_med, D_med_Gpc, rid) for a 1-D sweep."""
     if full_integral:
         Z = model.rate_log10_full_integral(
             i_det, N_arr, t_arr, q_min=q_min, D_min_cm=D_min_cm,
@@ -119,7 +117,7 @@ def _compute_rate(
     return R, t_exp, q_med, D_med_Gpc, rid
 
 
-# ── Point evaluation (mirrors _eval_point from callbacks/surface.py) ────────
+# ── Point evaluation ────────────────────────────────────────────────────────
 
 def _eval_point(
     N_exp: float,
@@ -136,10 +134,7 @@ def _eval_point(
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
 ) -> tuple[float, float, float, float]:
-    """Evaluate (R_det, t_exp_s, q_med, D_med_Gpc) at a single point.
-
-    Mirrors callbacks/surface.py:_eval_point.
-    """
+    """Evaluate (R_det, t_exp_s, q_med, D_med_Gpc) at a single point."""
     _nan4 = (math.nan, math.nan, math.nan, math.nan)
     if not (math.isfinite(N_exp) and math.isfinite(t_cad_s) and N_exp > 0 and t_cad_s > 0):
         return _nan4
@@ -196,7 +191,7 @@ def _eval_point(
     return R, t_exp, q_med, D_med_Gpc
 
 
-# ── Discrete-day overlay builder (mirrors components/figures.py:259-379) ────
+# ── Discrete-day overlay builder ────────────────────────────────────────────
 
 def _build_day_line_arrays(
     *,
@@ -214,9 +209,6 @@ def _build_day_line_arrays(
     where each *_flat array has length n_days * n_N in row-major (day, N_exp) order.
     Per-point values outside the display domain (log10R < ZMIN_DISPLAY_LOG10) are set
     to NaN so the JS side can treat them as gaps.
-
-    Mirrors _add_discrete_day_lines in components/figures.py:259-379, but flattens
-    the result instead of building Plotly traces.
     """
     N_cols = np.asarray(N_cols, dtype=float)
     n_N = int(N_cols.size)
@@ -398,7 +390,7 @@ def _compute_nslice_sweep(state: dict, t_cad_fix_s: float) -> dict:
 
     N_sweep = np.logspace(0.0, math.log10(N_exp_max), 800)
     t_fixed = np.full_like(N_sweep, float(t_cad_fix_s))
-    # Dispatch mirrors _pick_model (callbacks/surface.py:77-81).
+    # Optical sub-day cadences use the night model; everything else uses day.
     if optical_on and model_night is not None and t_cad_fix_s < DAY_S:
         model_nslice = model_night
     else:
@@ -598,8 +590,8 @@ def compute_all(params) -> dict:
         R_lin = np.where(np.isfinite(Z_plot), 10.0 ** Z_plot, np.nan)
 
         # ── Optimizer ────────────────────────────────────────────────────────
-        # Validity constraint for the approx-mode optimizer — see
-        # callbacks/surface.py:345-349.
+        # Validity constraint for the approx-mode optimizer:
+        # f_live · t_cad / N_exp must exceed t_OH for the strategy to be feasible.
         opt_validity_fn = None
         if toh_approx and t_overhead_s > 0:
             _f0, _toh0 = float(f_live), float(t_overhead_s)
@@ -654,7 +646,7 @@ def compute_all(params) -> dict:
         zmax_log10 = float(np.nanmax(Z_plot)) if np.any(np.isfinite(Z_plot)) else 0.0
         R_surface_max = float(np.nanmax(R_lin)) if np.any(np.isfinite(R_lin)) else 0.0
 
-        # ── Gap times (optical t-slice; see callbacks/surface.py:501) ────────
+        # ── Gap times (optical t-slice) ──────────────────────────────────────
         if optical_on:
             gap_lo_h = (t_night_s / 3600.0) / float(i_det)
             gap_hi_h = 24.0

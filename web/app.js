@@ -16,8 +16,7 @@ const ZMIN_LOG = -2;
 
 // Explicit Plasma colorscale (from plotly.colors.sequential.Plasma resolved via
 // plotly.express.colors.make_colorscale). Passing the explicit array — instead
-// of the string 'Plasma' — guarantees Plotly.js renders identically to Plotly.py,
-// which is what Dash does behind the scenes.
+// of the string 'Plasma' — guarantees Plotly.js renders identically to Plotly.py.
 const PLASMA_SCALE = [
   [0.0,                'rgb(13, 8, 135)'],
   [0.1111111111111111, 'rgb(70, 3, 159)'],
@@ -31,7 +30,7 @@ const PLASMA_SCALE = [
   [1.0,                'rgb(240, 249, 33)'],
 ];
 
-// Presets (match callbacks/ui.py) — touch only: i, f_live, A_log, omega_exp, t_oh, omega_srv, optical.
+// Presets — each one only touches: i, f_live, A_log, omega_exp, t_oh, omega_srv, optical.
 const PRESETS = {
   ztf:   {i:10, f_live:0.2,  A_log:-4.68, omega_exp:47,  t_oh:15, omega_srv:27500, optical:true},
   rubin: {i:10, f_live:0.7,  A_log:-7.0,  omega_exp:9.6, t_oh:30, omega_srv:18000, optical:true},
@@ -152,7 +151,7 @@ function syncFromInput(id) {
     inp.value = sl.value;
     return;
   }
-  // Clamp to [slider.min, slider.max] — matches Dash callbacks/sync.py
+  // Clamp to [slider.min, slider.max].
   const mn = parseFloat(sl.min), mx = parseFloat(sl.max);
   const clamped = Math.min(Math.max(v, mn), mx);
   inp.value = clamped;
@@ -342,7 +341,7 @@ document.getElementById('tslice-nfix-slider').addEventListener('input', function
 });
 
 // ── Preset loader ──────────────────────────────────────────────────────────
-// Matches callbacks/ui.py: only 7 controls are touched.
+// Only 7 controls are touched.
 function _setSliderValue(id, val) {
   const sl  = document.getElementById(id);
   const inp = document.getElementById(id.replace(/_slider$/, '_input'));
@@ -634,7 +633,7 @@ function buildSharedData(data) {
   return shared;
 }
 
-// ── Standardized hovertemplates (ported verbatim from components/figures.py)
+// ── Standardized hovertemplates ────────────────────────────────────────────
 const XYZ_HOVER =
   'N<sub>exp</sub> = %{x:.4g}<br>' +
   't<sub>cad</sub> = %{y:.4g} hr<br>' +
@@ -665,11 +664,10 @@ const T_HOVER =
   '<extra></extra>';
 
 // ── Regime-segmentation helper for 2D slice line traces ────────────────────
-// Mirrors components/figures.py::_draw_regime_segments_2d. Walks x/y/regime
-// arrays in lockstep, emitting one Plotly scatter trace per contiguous run of
-// equal regime IDs; optionally bridges to the first point of the next segment
-// so neighbouring segments visually connect. `customdata` is a parallel array
-// of per-point hover payloads (length == xArr.length).
+// Walks x/y/regime arrays in lockstep, emitting one Plotly scatter trace per
+// contiguous run of equal regime IDs; optionally bridges to the first point of
+// the next segment so neighbouring segments visually connect. `customdata` is
+// a parallel array of per-point hover payloads (length == xArr.length).
 function segmentsByRegime(xArr, yArr, regimeArr, customdata, opts) {
   opts = opts || {};
   const lineWidth = opts.lineWidth != null ? opts.lineWidth : 2.5;
@@ -731,7 +729,7 @@ function regimeLegendTraces2D(colorOn) {
   }));
 }
 
-// Match Dash's _marker_hover: only emit the optional lines when the scalar is finite.
+// Only emit the optional hover lines when the scalar is finite.
 function markerHover3D(label, t_exp_s, q_med, D_med_Gpc) {
   const okTexp = t_exp_s   != null && isFinite(t_exp_s);
   const okQ    = q_med     != null && isFinite(q_med);
@@ -827,10 +825,9 @@ function plotBg() { return 'rgba(0,0,0,0)'; }
 function annotCol() { return darkMode() ? '#8ba0c0' : '#4b6080'; }
 
 // ── Discrete-day overlay lines (3D, optical mode only) ────────────────────
-// Mirrors components/figures.py::_add_discrete_day_lines. Days with no valid
-// (unmasked) points are skipped. In regime-colour mode each consecutive run
-// of equal regime IDs becomes its own segment; in height-colour mode a
-// single light uniform line is drawn per day.
+// Days with no valid (unmasked) points are skipped. In regime-colour mode
+// each consecutive run of equal regime IDs becomes its own segment; in
+// height-colour mode a single light uniform line is drawn per day.
 function addDay3DLines(traces, shared, params, zmaxLog) {
   const dl = shared && shared.dayLine;
   if (!dl || dl.n_days === 0) return;
@@ -838,10 +835,9 @@ function addDay3DLines(traces, shared, params, zmaxLog) {
   const heightCmax = (zmaxLog != null && isFinite(zmaxLog)) ? zmaxLog : 1.0;
 
   // Height-colour mode: collect marker traces separately so they are appended
-  // AFTER every per-day line trace. Matches components/figures.py:L319-L337 —
-  // WebGL depth-sort ties break in favour of later draw calls, so deferring the
-  // markers keeps dots painted above the faint connecting lines regardless of
-  // camera angle.
+  // AFTER every per-day line trace. WebGL depth-sort ties break in favour of
+  // later draw calls, so deferring the markers keeps dots painted above the
+  // faint connecting lines regardless of camera angle.
   const pendingMarkers = [];
 
   for (let d = 0; d < dl.n_days; d++) {
@@ -932,13 +928,13 @@ function render3DSurface(data, params) {
   const traces = [];
   const dark = darkMode();
 
-  // Discrete day-cadence overlay lines (optical only); Dash adds these BEFORE the
-  // main surface so the surface z-order wins on overlapping regions.
+  // Discrete day-cadence overlay lines (optical only); added BEFORE the main
+  // surface so the surface z-order wins on overlapping regions.
   if (params.optical_survey) addDay3DLines(traces, shared, params, data.zmax_log10);
 
   // Optical mode: exclude discrete-day rows (y ≥ 24 h) from the surface — they
-  // are rendered as 1D scatter3d lines by addDay3DLines instead.
-  // Mirrors callbacks/surface.py:385-398 where Dash keeps only rows with y_s < DAY_S.
+  // are rendered as 1D scatter3d lines by addDay3DLines instead. The surface
+  // grid keeps only rows with y_s < DAY_S.
   let Z2dSurf = Z2d, Zlog2dSurf = Zlog2d, regime2dSurf = regime2d;
   if (params.optical_survey) {
     const nullRow = new Array(nx).fill(null);
@@ -1020,14 +1016,14 @@ function render3DSurface(data, params) {
 
   // Include the surface max in Rmax so the zaxis adapts to actual data even
   // when R_opt / R_ztf are NaN (e.g. filters are restrictive but some surface
-  // points still pass). Mirrors callbacks/surface.py:409-415.
+  // points still pass).
   const RmaxCands = [0.11];
   if (isFinite(data.R_opt)) RmaxCands.push(data.R_opt);
   if (isFinite(data.R_ztf)) RmaxCands.push(data.R_ztf);
   if (isFinite(data.R_surface_max) && data.R_surface_max > 0) RmaxCands.push(data.R_surface_max);
   const Rmax = Math.max(...RmaxCands);
 
-  // Match Dash's 3D scene grid colour (slightly stronger than the 2D grids).
+  // 3D scene grid colour (slightly stronger than the 2D grids).
   const grid3d = dark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.12)';
 
   // Empty-state detection: a "real" surface trace is type==='surface'.
@@ -1078,11 +1074,11 @@ function render3DSurface(data, params) {
 }
 
 // ── N-slice render (R vs N_exp at user-chosen t_cad) ───────────────────────
-// Ports components/figures.py::build_nslice_figure. Slice position is driven
-// by the nslice-tfix-slider (payload t_cad_fix_h), so the render no longer
-// early-returns when the optimizer fails. The amber-diamond marker tracks the
-// optimizer's N_opt on the CURRENT curve (R value read at argmin|N_sweep - N_opt|);
-// when the slice is not near the optimum t_cad, an annotation calls that out.
+// Slice position is driven by the nslice-tfix-slider (payload t_cad_fix_h), so
+// the render no longer early-returns when the optimizer fails. The amber-
+// diamond marker tracks the optimizer's N_opt on the CURRENT curve (R value
+// read at argmin|N_sweep - N_opt|); when the slice is not near the optimum
+// t_cad, an annotation calls that out.
 function renderNSlice(data) {
   // Slice position comes from the bridge payload (falls back to optimum on
   // first render if the slice-position slider has not yet been consulted).
@@ -1090,8 +1086,8 @@ function renderNSlice(data) {
     ? data.t_cad_fix_h
     : (data.t_cad_opt_h != null && isFinite(data.t_cad_opt_h) ? data.t_cad_opt_h : null);
 
-  // Chunk 7: consume dedicated high-res N-sweep (800 points, logspaced)
-  // computed by the bridge. Mirrors callbacks/surface.py:441-451.
+  // Consume dedicated high-res N-sweep (800 points, logspaced) computed by
+  // the bridge.
   const xArr  = data.N_sweep_flat          || [];
   const zArr  = data.N_sweep_R_flat        || [];
   const teArr = data.N_sweep_t_exp_flat    || [];
@@ -1153,7 +1149,7 @@ function renderNSlice(data) {
   }
 
   // Optimal N_exp marker (amber diamond) — placed on the CURRENT curve at
-  // argmin|N_sweep - N_opt|. Matches components/figures.py:L374-L392 (upstream).
+  // argmin|N_sweep - N_opt|.
   if (data.N_opt != null && isFinite(data.N_opt) && xv.length > 0) {
     let optIdx = 0, optDist = Infinity;
     for (let k = 0; k < xv.length; k++) {
@@ -1249,8 +1245,8 @@ function renderNSlice(data) {
   }
 
   const layout = {
-    // Dash's build_nslice_figure intentionally omits uirevision so the 2D view
-    // resets on every update (matches Plotly.py default behaviour).
+    // No uirevision: the 2D view intentionally resets on every update
+    // (matches Plotly.py default behaviour).
     template: dark ? 'plotly_dark' : 'plotly_white',
     paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
     font: {family: "'JetBrains Mono','Cascadia Code',monospace", color: fontCol(), size: 12},
@@ -1274,13 +1270,12 @@ function renderNSlice(data) {
 }
 
 // ── T-slice render (R vs t_cad at optimal N_exp) ───────────────────────────
-// Ports components/figures.py::build_tslice_figure. Builds two data regions:
-// (1) a continuous sub-night sweep (t_cad < gap_lo_h) taken from the 2-D grid
-//     column at N_opt, and (2) a discrete-day region (integer-day cadences)
-//     extracted from the shared `dayLine` payload. In optical mode an amber
-//     gap rectangle spans [gap_lo_h, gap_hi_h]. In regime-colour mode both
-//     regions use `segmentsByRegime`, and discrete days get per-day markers
-//     coloured by regime (matches Dash's overlay markers in figures.py).
+// Builds two data regions: (1) a continuous sub-night sweep (t_cad < gap_lo_h)
+// taken from the 2-D grid column at N_opt, and (2) a discrete-day region
+// (integer-day cadences) extracted from the shared `dayLine` payload. In
+// optical mode an amber gap rectangle spans [gap_lo_h, gap_hi_h]. In regime-
+// colour mode both regions use `segmentsByRegime`, and discrete days get
+// per-day markers coloured by regime.
 function renderTSlice(data) {
   const opticalOn  = data.gap_lo_h != null && isFinite(data.gap_lo_h);
   const gapLo      = data.gap_lo_h;
@@ -1292,9 +1287,8 @@ function renderTSlice(data) {
     : (data.N_opt != null && isFinite(data.N_opt) ? data.N_opt : null);
   const N_opt_col  = N_fix;
 
-  // Chunk 7: consume dedicated high-res t-slice sweeps (600 cont / 500 disc
-  // for optical, or 1500 cont + 0 disc for non-optical) computed by the
-  // bridge. Mirrors callbacks/surface.py:471-513.
+  // Consume dedicated high-res t-slice sweeps (600 cont / 500 disc for
+  // optical, or 1500 cont + 0 disc for non-optical) computed by the bridge.
   const tContArr = data.t_cont_h_flat         || [];
   const rContArr = data.t_cont_R_flat         || [];
   const tecContArr = data.t_cont_t_exp_flat   || [];
@@ -1393,8 +1387,7 @@ function renderTSlice(data) {
         lineWidth: 1.5, opacity: 0.9,
         hovertemplate: T_HOVER, hoverlabel: hl,
       }).forEach(t => traces.push(t));
-      // Per-day markers coloured by regime — matches Dash's overlay markers
-      // inside components/figures.py::build_tslice_figure L796-808.
+      // Per-day markers coloured by regime.
       for (let k = 0; k < tDisc.length; k++) {
         const rv = ridDisc[k];
         const col = (rv != null && isFinite(rv) && rv >= 1 && rv <= 7)
@@ -1426,7 +1419,7 @@ function renderTSlice(data) {
 
   // ── Optimal t_cad marker — find R on the CURRENT curve at t_cad_opt_h ───
   // When the slice N_exp is off-optimum, the marker's R value differs from
-  // data.R_opt (which was taken at both optima). Mirrors Dash upstream.
+  // data.R_opt (which was taken at both optima).
   const tOptH = data.t_cad_opt_h;
   if (tOptH != null && isFinite(tOptH)) {
     // Prefer whichever region contains t_cad_opt_h.
@@ -1557,8 +1550,8 @@ function renderTSlice(data) {
   }
 
   const layout = {
-    // Dash's build_tslice_figure intentionally omits uirevision so the 2D view
-    // resets on every update (matches Plotly.py default behaviour).
+    // No uirevision: the 2D view intentionally resets on every update
+    // (matches Plotly.py default behaviour).
     template: dark ? 'plotly_dark' : 'plotly_white',
     paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
     font: {family: "'JetBrains Mono','Cascadia Code',monospace", color: fontCol(), size: 12},
@@ -1631,7 +1624,7 @@ document.getElementById('export-btn').addEventListener('click', () => {
   for (let i = 0; i < n; i++) {
     const N = d.X_flat[i], t = d.Y_flat[i], z = d.Z_log_flat ? d.Z_log_flat[i] : null, r = d.regime_flat ? d.regime_flat[i] : null;
     if (N == null || t == null) continue;
-    // d.Y_flat is in hours (t_cad_h); t_cad_s = t_cad_h * 3600 to match Dash column order
+    // d.Y_flat is in hours (t_cad_h); emit t_cad_s = t_cad_h * 3600 alongside.
     rows.push([
       N.toExponential(4),
       (t * 3600).toFixed(6),

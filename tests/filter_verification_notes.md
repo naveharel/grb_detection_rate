@@ -127,8 +127,8 @@ The plan's five open questions, recorded here for ongoing tracking:
    numerical check pending.
 4. **Indicator bias at q_min** (B.12 quantifies as `O(1/N_q) ≈ 2e-3`).
    Acceptable, or worth increasing N_q?
-5. **Tooltip wording** — `components/sidebar.py:166` reads "Sources closer than
-   D_min are excluded from the detection rate." This is technically wrong; the
-   filter excludes bursts whose *maximum detectable distance* falls below
+5. **D<sub>min</sub> tooltip wording** — the current text reads "Sources closer
+   than D_min are excluded from the detection rate." This is technically wrong;
+   the filter excludes bursts whose *maximum detectable distance* falls below
    D_min, not bursts physically nearer than D_min. Recommend rewording to:
    "Excludes bursts that cannot be detected beyond D_min."
