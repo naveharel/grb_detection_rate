@@ -30,7 +30,7 @@ from grb_detect.params import (
     SurveyInstrumentParams,
     SurveyTelescopeParams,
 )
-from grb_detect.plot_3d_core import maximize_log_surface_iterative
+from grb_detect.core import maximize_log_surface_iterative
 
 
 # --------------------------------------------------------------------------- #

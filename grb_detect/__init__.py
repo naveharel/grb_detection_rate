@@ -6,7 +6,7 @@ assumptions (ISM external medium, Euclidean rate treatment, chosen PLS model).
 
 Most users will interact with:
 - DetectionRateModel: evaluates the piecewise log-rate surface
-- plot3d_core: numerical helpers used by the interactive Dash app
+- core: numerical helpers used by the interactive Dash app
 """
 
 from .params import (

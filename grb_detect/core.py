@@ -1,4 +1,4 @@
-# grb_detect/plot_3d_core.py
+# grb_detect/core.py
 """Numerical core for the interactive 3D detection-rate surface.
 
 This module contains no Dash code. It provides the computational helpers used by

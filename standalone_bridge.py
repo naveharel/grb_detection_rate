@@ -12,7 +12,7 @@ import numpy as np
 
 from grb_detect.constants import DAY_S, DEG2_TO_SR
 from grb_detect.params import GPC_TO_CM, SurveyDesignParams, SurveyStrategy
-from grb_detect.plot_3d_core import (
+from grb_detect.core import (
     ZMIN_DISPLAY_LOG10,
     _rate,
     compute_surface,
