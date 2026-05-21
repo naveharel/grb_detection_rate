@@ -1,8 +1,8 @@
 # grb_detect/core.py
-"""Numerical core for the interactive 3D detection-rate surface.
+"""Numerical core for the 3D detection-rate surface.
 
-This module contains no Dash code. It provides the computational helpers used by
-the interactive app:
+Pure-Python compute helpers used by the in-browser Pyodide app (via
+standalone_bridge.py):
 - build a rate model from user-facing survey parameters
 - map cadence to an effective cadence for optical surveys
 - evaluate the log-rate surface and (optionally) regime identifiers

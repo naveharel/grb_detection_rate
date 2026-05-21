@@ -570,7 +570,8 @@ def compute_all(params) -> dict:
         model_day    = state["model_day"]
         model_night  = state["model_night"]
 
-        # Grid resolution — match Dash (callbacks/surface.py:311-312)
+        # Grid resolution: regime-colouring needs the higher density to keep
+        # discrete boundaries clean.
         nx = NX_REGIME if color_on else NX_DEFAULT
         ny = NY_REGIME if color_on else NY_DEFAULT
 
