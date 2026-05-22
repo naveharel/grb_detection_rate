@@ -167,10 +167,19 @@ At the boundary $q=q_j$ ($\tilde{q}=1$), the Phase~II and Phase~III expressions 
 \section{Survey Model}
 
 \begin{equation}
-t_{\rm exp} = \frac{f_{\rm live}\,t_{\rm cad}}{N_{\rm exp}} - t_{\rm OH},\qquad
+t_{\rm exp} = \frac{f_{\rm live,eff}\,t_{\rm cad}}{N_{\rm exp}} - t_{\rm OH},\qquad
 F_{\rm lim} = F_{\rm ref}\!\left(\frac{t_{\rm exp}}{t_{\rm ref}}\right)^{-\alpha},\qquad
 f_\Omega = \frac{N_{\rm exp}\,\Omega_{\rm exp}}{4\pi}
 \end{equation}
+The effective live fraction $f_{\rm live,eff}$ depends on the cadence regime:
+\[
+f_{\rm live,eff} = \begin{cases}
+f_{\rm live} & t_{\rm cad} = n\cdot 86400\,\text{s},\; n\in\mathbb{N}\quad\text{(discrete, per-day)}\\[4pt]
+f_{\rm live}/f_{\rm night} & t_{\rm cad} < 86400\,\text{s}\;\text{and optical-survey mode}\quad\text{(continuous, sub-night)}
+\end{cases}
+\]
+with $f_{\rm night}=t_{\rm night}/86400$. In the continuous regime all exposures land inside the night window of length $t_{\rm night}$, so the within-night live fraction is $f_{\rm live}\cdot 86400/t_{\rm night}=f_{\rm live}/f_{\rm night}$. The total detection rate on the continuous branch is additionally multiplied by $f_{\rm night}$ to account for the nighttime accessibility of GRBs. The construction is physical only when $f_{\rm night}\ge f_{\rm live}$ (so $f_{\rm live,eff}\le 1$); this is enforced in the UI by a dynamic lower bound on the $t_{\rm night}$ slider.
+
 A strategy point $(N_{\rm exp},t_{\rm cad})$ is in the valid region~A0 when $t_{\rm exp}>0$, $N_{\rm exp}\ge1$, and $N_{\rm exp}\le N_{\rm exp,max}\equiv\Omega_{\rm srv,max}/\Omega_{\rm exp}$.
 
 % -------------------------------------------------------

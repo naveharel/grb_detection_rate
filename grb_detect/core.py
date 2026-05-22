@@ -445,7 +445,11 @@ def compute_surface(
         Z_night = _rate(model_night, i_det, N_exp, t_cad_eff, full_integral,
                         q_min=q_min, D_min_cm=D_min_cm)
 
-        # Sub-day: only the nighttime fraction of the sky is observable each cadence
+        # Sub-day: only the nighttime fraction of the sky is observable each
+        # cadence. model_night carries instrument.f_live = f_live / f_night
+        # (set by the bridge), so Z_night already reflects the within-night
+        # rescaling of the t_exp formula; here we only apply the f_night factor
+        # that accounts for night-time accessibility of GRBs.
         f_night = t_night_s / float(DAY_S)
         Z_raw = np.where(is_subday, Z_night + np.log10(f_night), Z_day)
         Z_raw = np.where(valid, Z_raw, np.nan)
@@ -578,6 +582,9 @@ def maximize_log_surface_iterative(
                         q_min=q_min, D_min_cm=D_min_cm)
         Z_night = _rate(model_night, i_det, N, t_eff, full_integral,
                         q_min=q_min, D_min_cm=D_min_cm)
+        # model_night was built with f_live = f_live / f_night, so Z_night
+        # already uses the within-night-rescaled t_exp; the f_night factor
+        # below covers night-time accessibility.
         f_night = t_night_s / float(DAY_S)
         Z = np.where(is_subday, Z_night + np.log10(f_night), Z_day)
         Z = np.where(valid, Z, np.nan)

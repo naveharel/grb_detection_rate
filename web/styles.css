@@ -180,6 +180,8 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
   white-space:nowrap;pointer-events:none;line-height:14px;
 }
 .cs-mark-dflt{font-weight:700;font-size:11px;color:var(--text-hi)}
+.cs-tick.below-floor{opacity:0.25}
+.cs-mark.below-floor{opacity:0.3}
 .cs-hidden{position:absolute;width:1px;height:1px;opacity:0;
            pointer-events:none;overflow:hidden;clip:rect(0,0,0,0)}
 /* ── Switches ────────────────────────────────────────────────────────────── */
@@ -204,7 +206,7 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
 /* ── Group labels ────────────────────────────────────────────────────────── */
 .param-group-label{font-size:10px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-lo);margin:6px 0 2px}
 /* ── Derived value display ───────────────────────────────────────────────── */
-.grb-derived-row{margin-top:4px;gap:6px;flex-wrap:wrap}
+.grb-derived-row{flex-direction:column;align-items:flex-start;margin-top:4px;gap:4px}
 .grb-derived-val{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);padding:2px 6px;white-space:nowrap}
 /* ── Main area ───────────────────────────────────────────────────────────── */
 .app-main{display:flex;flex-direction:column;flex:1;min-width:0;overflow:hidden;background:var(--bg)}

@@ -11,10 +11,28 @@ Definitions
 
 - t_cad: cadence, time between consecutive visits to the same field.
 
-Given live fraction f_live and overhead per exposure t_overhead, the exposure time
-per visit is:
+Given live fraction f_live and overhead per exposure t_overhead, the exposure
+time per visit is:
 
-    t_exp = f_live * t_cad / N_exp - t_overhead.
+    t_exp = f_live_eff * t_cad / N_exp - t_overhead.
+
+Here f_live_eff depends on the cadence regime:
+
+- Discrete (per-day) cadences  t_cad = n · 86400 s:
+    f_live_eff = f_live  — f_live is the fraction of wall-clock time the
+    telescope observes.
+
+- Continuous (sub-night) cadences  t_cad < 86400 s, optical-survey mode:
+    f_live_eff = f_live / f_night,  where f_night = t_night / 86400.
+    All exposures land inside the night window of length t_night, so the
+    within-night live fraction is (f_live · 86400) / t_night = f_live / f_night.
+    The total detection rate on this branch is additionally multiplied by
+    f_night to account for the nighttime accessibility of GRBs.
+
+The rescaling is applied implicitly: in standalone_bridge.py the night-mode
+DetectionRateModel is constructed with instrument.f_live = f_live / f_night,
+so this function (and the rest of the survey/detection code) reads the
+already-correct value via instrument.f_live and needs no branching.
 
 The limiting flux is modeled as:
 

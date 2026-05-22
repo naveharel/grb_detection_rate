@@ -74,6 +74,7 @@ def _compute_rate(
     f_night_val: float,
     approx_on: bool,
     f_live: float,
+    f_live_night: float,
     t_overhead_s: float,
     color_on: bool,
     q_min: float = 0.0,
@@ -90,11 +91,16 @@ def _compute_rate(
         )
     R = np.where(np.isfinite(Z), 10.0 ** Z, np.nan)
 
-    if optical_on and model_night is not None and t_cad_scalar < DAY_S:
+    # Optical sub-day branch: rate is reduced by the night-accessibility fraction.
+    # The same predicate decides which f_live the validity boundary uses, since
+    # model_night was constructed with f_live_eff = f_live / f_night.
+    is_subday_optical = optical_on and model_night is not None and t_cad_scalar < DAY_S
+    if is_subday_optical:
         R = R * f_night_val
+    f_live_validity = float(f_live_night) if is_subday_optical else float(f_live)
 
     if approx_on and float(t_overhead_s) > 0:
-        R = np.where(float(f_live) * t_arr / N_arr <= float(t_overhead_s), np.nan, R)
+        R = np.where(f_live_validity * t_arr / N_arr <= float(t_overhead_s), np.nan, R)
 
     rid = np.full(len(N_arr), np.nan)
     if color_on:
@@ -109,7 +115,7 @@ def _compute_rate(
     D_med_Gpc = D_med_cm / GPC_TO_CM
 
     if approx_on and float(t_overhead_s) > 0:
-        _inv = float(f_live) * t_arr / N_arr <= float(t_overhead_s)
+        _inv = f_live_validity * t_arr / N_arr <= float(t_overhead_s)
         t_exp     = np.where(_inv, np.nan, t_exp)
         q_med     = np.where(_inv, np.nan, q_med)
         D_med_Gpc = np.where(_inv, np.nan, D_med_Gpc)
@@ -126,6 +132,7 @@ def _eval_point(
     model_day,
     model_night,
     f_live: float,
+    f_live_night: float,
     f_night: float,
     optical_on: bool,
     approx_on: bool,
@@ -172,9 +179,15 @@ def _eval_point(
     except Exception:
         t_exp = math.nan
 
-    # Approx validity check — same criterion as the surface post-hoc mask
+    # Approx validity check — same criterion as the surface post-hoc mask.
+    # Sub-day optical uses the rescaled f_live (= f_live / f_night).
+    f_live_validity = (
+        f_live_night
+        if (optical_on and model_night is not None and t_cad_s < DAY_S)
+        else f_live
+    )
     if approx_on and t_overhead_s > 0:
-        if f_live * t_cad_s / N_exp <= t_overhead_s:
+        if f_live_validity * t_cad_s / N_exp <= t_overhead_s:
             return _nan4
 
     # Medians — use model_day for consistency with compute_surface
@@ -328,24 +341,30 @@ def _build_models(params) -> dict:
     t_oh_model = 0.0 if toh_approx else t_overhead_s
     design = SurveyDesignParams(omega_survey_max_sr=omega_srv * DEG2_TO_SR)
 
+    f_night = t_night_s / DAY_S
+    # Continuous (sub-night) optical branch: within-night live fraction is
+    # f_live · 86400 / t_night = f_live / f_night. The UI keeps f_night ≥ f_live
+    # via a dynamic t_night floor, but we still guard against a zero denominator.
+    f_live_night = f_live / max(f_night, 1e-12)
+
     model_day = make_rate_model(
         A_log=A_log, f_live=f_live, t_overhead_s=t_oh_model,
         omega_exp_deg2=omega_exp, design=design, **physics_kw,
     )
     model_night = (
         make_rate_model(
-            A_log=A_log, f_live=f_live, t_overhead_s=t_oh_model,
+            A_log=A_log, f_live=f_live_night, t_overhead_s=t_oh_model,
             omega_exp_deg2=omega_exp, design=design, **physics_kw,
         )
         if optical_on else None
     )
 
-    f_night   = t_night_s / DAY_S
     N_exp_max = model_day.instrument.omega_survey_max_sr / model_day.instrument.omega_exp_sr
 
     return {
         "i_det":        i_det,
         "f_live":       f_live,
+        "f_live_night": f_live_night,
         "t_overhead_s": t_overhead_s,
         "optical_on":   optical_on,
         "color_on":     color_on,
@@ -373,6 +392,7 @@ def _cr_kwargs_from_state(state: dict) -> dict:
         model_night=state["model_night"],
         approx_on=state["toh_approx"],
         f_live=float(state["f_live"]),
+        f_live_night=float(state["f_live_night"]),
         t_overhead_s=float(state["t_overhead_s"]),
         color_on=state["color_on"],
         q_min=state["q_min"],
@@ -549,6 +569,7 @@ def compute_all(params) -> dict:
         state = _build_models(params)
         i_det        = state["i_det"]
         f_live       = state["f_live"]
+        f_live_night = state["f_live_night"]
         t_overhead_s = state["t_overhead_s"]
         optical_on   = state["optical_on"]
         color_on     = state["color_on"]
@@ -576,7 +597,13 @@ def compute_all(params) -> dict:
         )
 
         if toh_approx and t_overhead_s > 0:
-            budget = f_live * Y_s / X
+            # Sub-day optical points use f_live_night in the validity boundary,
+            # matching the rescaled t_exp formula t_exp = (f_live/f_night)·t_cad/N_exp.
+            if optical_on and model_night is not None:
+                f_eff = np.where(Y_s < DAY_S, f_live_night, f_live)
+            else:
+                f_eff = f_live
+            budget = f_eff * Y_s / X
             invalid = budget <= t_overhead_s
             Z_plot = np.where(invalid, np.nan, Z_plot)
             Z_raw = np.where(invalid, np.nan, Z_raw)
@@ -591,12 +618,18 @@ def compute_all(params) -> dict:
 
         # ── Optimizer ────────────────────────────────────────────────────────
         # Validity constraint for the approx-mode optimizer:
-        # f_live · t_cad / N_exp must exceed t_OH for the strategy to be feasible.
+        # f_live_eff · t_cad / N_exp must exceed t_OH for the strategy to be feasible.
+        # In optical mode the sub-day branch uses f_live_eff = f_live / f_night.
         opt_validity_fn = None
         if toh_approx and t_overhead_s > 0:
-            _f0, _toh0 = float(f_live), float(t_overhead_s)
+            _f_day, _f_night_eff, _toh0 = float(f_live), float(f_live_night), float(t_overhead_s)
+            _optical = bool(optical_on and model_night is not None)
             def opt_validity_fn(N_arr: np.ndarray, t_arr: np.ndarray) -> np.ndarray:
-                return _f0 * t_arr / N_arr > _toh0
+                if _optical:
+                    f_eff = np.where(t_arr < DAY_S, _f_night_eff, _f_day)
+                else:
+                    f_eff = _f_day
+                return f_eff * t_arr / N_arr > _toh0
 
         N_opt, t_cad_opt_s, log10R_opt = maximize_log_surface_iterative(
             model_day, model_night, i_det,
@@ -608,7 +641,7 @@ def compute_all(params) -> dict:
         )
         R_opt, t_exp_opt_s, q_med_opt, D_med_Gpc_opt = _eval_point(
             N_opt, t_cad_opt_s, i_det, model_day, model_night,
-            f_live, f_night, optical_on, toh_approx, t_overhead_s,
+            f_live, f_live_night, f_night, optical_on, toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
         )
 
@@ -617,7 +650,7 @@ def compute_all(params) -> dict:
         t_cad_ztf_s = 2.0 * DAY_S
         R_ztf, t_exp_ztf_s, q_med_ztf, D_med_Gpc_ztf = _eval_point(
             N_ztf, t_cad_ztf_s, i_det, model_day, model_night,
-            f_live, f_night, optical_on, toh_approx, t_overhead_s,
+            f_live, f_live_night, f_night, optical_on, toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
         )
 
@@ -642,6 +675,9 @@ def compute_all(params) -> dict:
         R_int_yr = rho * (4.0 / 3.0) * math.pi * D_gpc ** 3
         f_b      = theta_j ** 2 / 2.0
         R_toward_day = R_int_yr * f_b / 365.25
+
+        t_dec_s_val  = float(model_day.derived.t_dec_s)
+        F_nu_tdec_Jy = float(model_day.derived.F_dec_Jy)
 
         zmax_log10 = float(np.nanmax(Z_plot)) if np.any(np.isfinite(Z_plot)) else 0.0
         R_surface_max = float(np.nanmax(R_lin)) if np.any(np.isfinite(R_lin)) else 0.0
@@ -716,6 +752,8 @@ def compute_all(params) -> dict:
             "R_surface_max": R_surface_max,
             "R_int_yr":     float(R_int_yr),
             "R_toward_day": float(R_toward_day),
+            "t_dec_s":      t_dec_s_val,
+            "F_nu_tdec_Jy": F_nu_tdec_Jy,
             "N_exp_max":    float(N_exp_max),
             "gap_lo_h":     _nan_to_none(gap_lo_h) if gap_lo_h is not None else None,
             "gap_hi_h":     _nan_to_none(gap_hi_h) if gap_hi_h is not None else None,

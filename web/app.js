@@ -110,6 +110,17 @@ const SLIDER_IDS = [
   'p','nu_log','Ekiso_log','n0_log','gamma0_log','thetaj','epse','epsB','deuc','rho_grb_log'
 ];
 
+// Effective minimum: respects optional `data-min-floor` on the .cs-wrap, which
+// is used to impose a dynamic lower bound on a slider while keeping its
+// structural `min` (and the baked-in tick positions) unchanged.
+function _effMin(sl) {
+  const slMin = parseFloat(sl.min);
+  const wrap = sl.closest('.cs-wrap');
+  if (!wrap) return slMin;
+  const floor = parseFloat(wrap.dataset.minFloor);
+  return isFinite(floor) && floor > slMin ? floor : slMin;
+}
+
 // Visual helpers: paint filled track up to current value + toggle active-dot class.
 function _sliderPct(sl) {
   const mn = parseFloat(sl.min), mx = parseFloat(sl.max);
@@ -136,6 +147,9 @@ function syncFromSlider(id) {
   if (inp) inp.value = sl.value;
   updateSliderVisual(sl);
   if (id === 'deuc' || id === 'thetaj' || id === 'rho_grb_log') updateGrbCounts();
+  if (id === 'Alog') updateMagDisplay();
+  if (id === 'flive') _updateTnightFloor();
+  if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
   _checkPresetDrift();
   triggerUpdate();
 }
@@ -151,13 +165,17 @@ function syncFromInput(id) {
     inp.value = sl.value;
     return;
   }
-  // Clamp to [slider.min, slider.max].
-  const mn = parseFloat(sl.min), mx = parseFloat(sl.max);
+  // Clamp to [effective min, slider.max]. _effMin honours an optional
+  // dynamic floor set via data-min-floor on the .cs-wrap.
+  const mn = _effMin(sl), mx = parseFloat(sl.max);
   const clamped = Math.min(Math.max(v, mn), mx);
   inp.value = clamped;
   sl.value = clamped;
   updateSliderVisual(sl);
   if (id === 'deuc' || id === 'thetaj' || id === 'rho_grb_log') updateGrbCounts();
+  if (id === 'Alog') updateMagDisplay();
+  if (id === 'flive') _updateTnightFloor();
+  if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
   _checkPresetDrift();
   triggerUpdate();
 }
@@ -198,14 +216,18 @@ function _initCustomSliders() {
     function valFromX(clientX) {
       const rect = area.getBoundingClientRect();
       const p = Math.min(1, Math.max(0, (clientX - rect.left - CS_R) / (rect.width - 2 * CS_R)));
-      const mn = parseFloat(sl.min), mx = parseFloat(sl.max), st = parseFloat(sl.step) || 1;
-      let v = mn + p * (mx - mn);
+      const slMin = parseFloat(sl.min), mx = parseFloat(sl.max), st = parseFloat(sl.step) || 1;
+      // Compute the value from the click position using the structural min so
+      // tick alignment stays consistent; clamp to the effective (dynamic) min
+      // at the end so sliders with a data-min-floor cannot be dragged below it.
+      let v = slMin + p * (mx - slMin);
       if (discreteValues && discreteValues.length) {
         v = nearestDiscrete(v);
       } else if (st > 0) {
-        v = Math.round((v - mn) / st) * st + mn;
+        v = Math.round((v - slMin) / st) * st + slMin;
       }
-      return Math.min(mx, Math.max(mn, v));
+      const floor = _effMin(sl);
+      return Math.min(mx, Math.max(floor, v));
     }
     function applyVal(v) {
       sl.value = v;
@@ -230,7 +252,7 @@ function _initCustomSliders() {
     window.addEventListener('touchend', () => { dragging = false; wrap.classList.remove('cs-dragging'); });
 
     if (thumb) thumb.addEventListener('keydown', e => {
-      const mn = parseFloat(sl.min), mx = parseFloat(sl.max), st = parseFloat(sl.step) || 1;
+      const mn = _effMin(sl), mx = parseFloat(sl.max), st = parseFloat(sl.step) || 1;
       let v = parseFloat(sl.value);
       if (discreteValues && discreteValues.length) {
         // Discrete slider: arrows step between adjacent listed values.
@@ -268,6 +290,7 @@ SLIDER_IDS.forEach(id => {
 document.getElementById('optical-switch').addEventListener('change', function() {
   document.getElementById('tnight-block').style.display = this.checked ? 'block' : 'none';
   updateSubnightLimitDisplay();
+  _updateTnightFloorNote();
   _checkPresetDrift();
   triggerUpdate();
 });
@@ -367,6 +390,7 @@ document.getElementById('preset-select').addEventListener('change', function() {
   _activePresetKey = key;
   _presetApplying = false;
   updateGrbCounts();
+  _updateTnightFloor();
   triggerUpdate();
 });
 
@@ -482,6 +506,63 @@ function updateSubnightLimitDisplay() {
                + limit_h.toFixed(2) + ' hr  (t<sub>night</sub> / i)</span>';
 }
 
+// Dynamic t_night lower bound: enforces f_night ≥ f_live so that the
+// continuous (sub-night) f_live_eff = f_live / f_night stays ≤ 1.
+// Sets data-min-floor on the t_night .cs-wrap (read by _effMin) and clamps
+// the current t_night value if it falls below the new floor.
+function _updateTnightFloor() {
+  const tn = document.getElementById('tnight_slider');
+  if (!tn) return;
+  const wrap = tn.closest('.cs-wrap');
+  if (!wrap) return;
+  const flive = parseFloat(document.getElementById('flive_slider').value);
+  const structuralMin = parseFloat(tn.min);
+  const max_h = parseFloat(tn.max);
+  const step = parseFloat(tn.step) || 0.25;
+  const rawFloor = Math.min(max_h, Math.max(structuralMin, isFinite(flive) ? 24 * flive : structuralMin));
+  // Snap up to the nearest step multiple so the floor lands on the slider grid.
+  const floor = Math.min(max_h, Math.ceil(rawFloor / step - 1e-9) * step);
+  wrap.dataset.minFloor = String(floor);
+  // Dim ticks/marks below the new floor (purely cosmetic — clamp is what
+  // actually prevents reaching them).
+  const pctFloor = (floor - structuralMin) / (max_h - structuralMin);
+  wrap.querySelectorAll('.cs-tick').forEach(t => {
+    const tp = parseFloat(t.dataset.pct);
+    t.classList.toggle('below-floor', isFinite(tp) && tp < pctFloor - 1e-6);
+  });
+  wrap.querySelectorAll('.cs-mark').forEach(m => {
+    const mp = parseFloat(m.style.getPropertyValue('--mpct'));
+    m.classList.toggle('below-floor', isFinite(mp) && mp < pctFloor - 1e-6);
+  });
+  // Clamp current value up to the new floor if necessary.
+  const cur = parseFloat(tn.value);
+  if (isFinite(cur) && cur < floor - 1e-9) {
+    tn.value = floor;
+    const inp = document.getElementById('tnight_input');
+    if (inp) inp.value = floor;
+    updateSliderVisual(tn);
+    updateSubnightLimitDisplay();
+  }
+  _updateTnightFloorNote();
+}
+
+function _updateTnightFloorNote() {
+  const el = document.getElementById('tnight-floor-note');
+  if (!el) return;
+  const optical = document.getElementById('optical-switch').checked;
+  const tn = document.getElementById('tnight_slider');
+  if (!optical || !tn) { el.innerHTML = ''; return; }
+  const wrap = tn.closest('.cs-wrap');
+  const floor = wrap ? parseFloat(wrap.dataset.minFloor) : NaN;
+  const cur = parseFloat(tn.value);
+  if (!isFinite(floor) || !isFinite(cur)) { el.innerHTML = ''; return; }
+  if (Math.abs(cur - floor) <= 1e-6) {
+    el.innerHTML = '<span class="derived-info">f<sub>night</sub> must be bigger than f<sub>live</sub></span>';
+  } else {
+    el.innerHTML = '';
+  }
+}
+
 // ── Derived GRB count display (instant, no Python needed) ─────────────────
 function updateGrbCounts() {
   const rho = Math.pow(10, parseFloat(document.getElementById('rho_grb_log_slider').value));
@@ -495,6 +576,16 @@ function updateGrbCounts() {
   document.getElementById('grb-ntotal-display').innerHTML = 'R<sub>int</sub> = ' + fmt(N_total) + ' yr⁻¹';
   document.getElementById('grb-ntoward-display').innerHTML = 'f<sub>b</sub>R<sub>int</sub> = ' + fmt(N_toward_day) + ' day⁻¹';
 }
+
+// ── AB magnitude display (instant, no Python needed) ─────────────────────
+function updateMagDisplay() {
+  const A_log = parseFloat(document.getElementById('Alog_slider').value);
+  const m_AB  = -2.5 * A_log + 2.5 * Math.log10(3631.0);
+  document.getElementById('mag-ab-display').innerHTML =
+    'm<sub>AB</sub> = ' + m_AB.toFixed(2) + ' mag';
+}
+updateMagDisplay();
+_updateTnightFloor();
 
 // ── Debounced update trigger ───────────────────────────────────────────────
 function triggerUpdate() {
@@ -1612,6 +1703,28 @@ function updateDerivedDisplays(data) {
   const fmt = x => x >= 1e6 ? (x/1e6).toFixed(1)+'M' : x >= 1e3 ? (x/1e3).toFixed(1)+'k' : x.toFixed(1);
   document.getElementById('grb-ntotal-display').innerHTML  = 'R<sub>int</sub> = ' + fmt(data.R_int_yr) + ' yr⁻¹';
   document.getElementById('grb-ntoward-display').innerHTML = 'f<sub>b</sub>R<sub>int</sub> = ' + fmt(data.R_toward_day) + ' day⁻¹';
+
+  if (data.t_dec_s != null && isFinite(data.t_dec_s)) {
+    const t = data.t_dec_s;
+    let val, unit;
+    if      (t < 1)    { val = t * 1000; unit = 'ms';  }
+    else if (t < 60)   { val = t;        unit = 's';   }
+    else if (t < 3600) { val = t / 60;   unit = 'min'; }
+    else               { val = t / 3600; unit = 'hr';  }
+    document.getElementById('tdec-display').innerHTML =
+      't<sub>dec</sub> = ' + val.toPrecision(3) + ' ' + unit;
+  }
+
+  if (data.F_nu_tdec_Jy != null && isFinite(data.F_nu_tdec_Jy)) {
+    const Fj = data.F_nu_tdec_Jy;
+    let val, unit;
+    if      (Fj >= 1)    { val = Fj;       unit = 'Jy';  }
+    else if (Fj >= 1e-3) { val = Fj * 1e3; unit = 'mJy'; }
+    else if (Fj >= 1e-6) { val = Fj * 1e6; unit = 'μJy'; }
+    else                 { val = Fj * 1e9; unit = 'nJy'; }
+    document.getElementById('fnu-tdec-display').innerHTML =
+      'F<sub>ν</sub>(t<sub>dec</sub>,D<sub>Euc</sub>) = ' + val.toPrecision(3) + ' ' + unit;
+  }
 }
 
 // ── CSV export ─────────────────────────────────────────────────────────────

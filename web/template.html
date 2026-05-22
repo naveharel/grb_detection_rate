@@ -93,10 +93,13 @@
 <div class="acc-body">
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="Alog_slider" title="log₁₀ of reference limiting flux in Jansky at t_exp_ref = 30 s">log A [Jy]</label>
+      <label class="param-label" for="Alog_slider" title="log₁₀ of reference limiting flux in Jansky at t_exp_ref = 30 s">log A [Jy at t<sub>exp</sub> = 30 s]</label>
       <input type="number" id="Alog_input" class="param-input" min="-12" max="-2" step="0.01" value="-4.68">
     </div>
     %%SLIDER_ALOG%%
+    <div class="param-row grb-derived-row">
+      <span id="mag-ab-display" class="grb-derived-val" title="AB limiting magnitude implied by A at the reference 30 s exposure: m_AB = -2.5·log10(A/3631 Jy)">m<sub>AB</sub> = —</span>
+    </div>
   </div>
   <div class="param-block">
     <div class="param-row">
@@ -144,9 +147,10 @@
   <div class="param-block" id="tnight-block" style="display:none">
     <div class="param-row">
       <label class="param-label" for="tnight_slider" title="Length of the observable astronomical night in hours">t<sub>night</sub> [hr]</label>
-      <input type="number" id="tnight_input" class="param-input" min="4" max="14" step="0.25" value="10">
+      <input type="number" id="tnight_input" class="param-input" min="4" max="24" step="0.25" value="10">
     </div>
     %%SLIDER_TNIGHT%%
+    <div id="tnight-floor-note"></div>
     <div id="subnight-limit-display"></div>
   </div>
 </div>
@@ -213,6 +217,10 @@
     </div>
     %%SLIDER_EPSB%%
   </div>
+  <div class="param-row grb-derived-row">
+    <span id="tdec-display" class="grb-derived-val" title="Deceleration time t_dec from the user's E_k,iso, n₀, Γ₀ (Euclidean ζ=1/3 branch)">t<sub>dec</sub> = —</span>
+    <span id="fnu-tdec-display" class="grb-derived-val" title="On-axis spectral flux density at t_dec, viewed from D_Euc at observing frequency ν (PLS G, Eq. 24)">F<sub>ν</sub>(t<sub>dec</sub>,D<sub>Euc</sub>) = —</span>
+  </div>
   <div class="param-group-label" style="margin-top:10px">Cosmological model</div>
   <div class="param-block">
     <div class="param-row">
@@ -246,7 +254,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('optical-switch').click()">Optical survey mode</span>
   </div>
-  <p class="toggle-hint">Requires ≥ i detections in one night or a single detection each night. Multi-day effective live fraction is reduced by f<sub>night</sub> = t<sub>night</sub> / 24 h; the t<sub>night</sub> slider becomes active.</p>
+  <p class="toggle-hint">Requires ≥ i detections in one night or a single detection each night. The t<sub>night</sub> slider becomes active and defines f<sub>night</sub> = t<sub>night</sub> / 24 h. In the continuous (sub-night) cadence regime, the exposure formula uses f<sub>live</sub>/f<sub>night</sub> as the effective live fraction and the total rate is multiplied by f<sub>night</sub>; the discrete (per-day) cadence regime is unchanged. Requires f<sub>night</sub> ≥ f<sub>live</sub>, enforced by a dynamic lower bound on the t<sub>night</sub> slider.</p>
   <div class="param-switch-row">
     <label class="toggle-switch" for="toh-approx-switch">
       <input type="checkbox" id="toh-approx-switch">
@@ -254,7 +262,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('toh-approx-switch').click()">t<sub>OH</sub> approximation</span>
   </div>
-  <p class="toggle-hint">Uses the naive t<sub>exp</sub> = f<sub>live</sub>·t<sub>cad</sub>/N<sub>exp</sub> equation (ignoring t<sub>OH</sub> in the exposure formula) for fully analytic optimal strategies, while still enforcing f<sub>live</sub>·t<sub>cad</sub>/N<sub>exp</sub> &gt; t<sub>OH</sub> as the validity boundary.</p>
+  <p class="toggle-hint">Uses the naive t<sub>exp</sub> = f<sub>live,eff</sub>·t<sub>cad</sub>/N<sub>exp</sub> equation (ignoring t<sub>OH</sub> in the exposure formula) for fully analytic optimal strategies, while still enforcing f<sub>live,eff</sub>·t<sub>cad</sub>/N<sub>exp</sub> &gt; t<sub>OH</sub> as the validity boundary. f<sub>live,eff</sub> = f<sub>live</sub> in the discrete (per-day) regime and f<sub>live</sub>/f<sub>night</sub> in the continuous (sub-night) optical-survey regime.</p>
   <div class="param-switch-row">
     <label class="toggle-switch" for="regime-color-switch">
       <input type="checkbox" id="regime-color-switch">
