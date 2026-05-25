@@ -30,6 +30,8 @@
       <button class="view-btn active" data-tab="3d" title="3D surface view">3D</button>
       <button class="view-btn" data-tab="nslice" title="R vs N_exp at fixed t_cad">N<sub>exp</sub> slice</button>
       <button class="view-btn" data-tab="tslice" title="R vs t_cad at fixed N_exp">t<sub>cad</sub> slice</button>
+      <button class="view-btn" data-tab="qview" title="R vs viewing-angle parameter q at fixed strategy">R(q)</button>
+      <button class="view-btn" data-tab="dview" title="R vs source distance D at fixed strategy">R(D)</button>
     </div>
     <button class="nav-btn" id="theme-toggle">☾ Dark</button>
   </div>
@@ -254,7 +256,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('optical-switch').click()">Optical survey mode</span>
   </div>
-  <p class="toggle-hint">Requires ≥ i detections in one night or a single detection each night. The t<sub>night</sub> slider becomes active and defines f<sub>night</sub> = t<sub>night</sub> / 24 h. In the continuous (sub-night) cadence regime, the exposure formula uses f<sub>live</sub>/f<sub>night</sub> as the effective live fraction and the total rate is multiplied by f<sub>night</sub>; the discrete (per-day) cadence regime is unchanged. Requires f<sub>night</sub> ≥ f<sub>live</sub>, enforced by a dynamic lower bound on the t<sub>night</sub> slider.</p>
+  <p class="toggle-hint">Requires ≥ i detections in one night (intra-night) or a single detection per night across nights (inter-night). Activates t<sub>night</sub> and defines f<sub>night</sub> = t<sub>night</sub>/24 h; sub-night (intra-night) cadences are rescaled by f<sub>night</sub>, per-day (inter-night) cadences are unchanged. Requires f<sub>night</sub> ≥ f<sub>live</sub>.</p>
   <div class="param-switch-row">
     <label class="toggle-switch" for="toh-approx-switch">
       <input type="checkbox" id="toh-approx-switch">
@@ -262,7 +264,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('toh-approx-switch').click()">t<sub>OH</sub> approximation</span>
   </div>
-  <p class="toggle-hint">Uses the naive t<sub>exp</sub> = f<sub>live,eff</sub>·t<sub>cad</sub>/N<sub>exp</sub> equation (ignoring t<sub>OH</sub> in the exposure formula) for fully analytic optimal strategies, while still enforcing f<sub>live,eff</sub>·t<sub>cad</sub>/N<sub>exp</sub> &gt; t<sub>OH</sub> as the validity boundary. f<sub>live,eff</sub> = f<sub>live</sub> in the discrete (per-day) regime and f<sub>live</sub>/f<sub>night</sub> in the continuous (sub-night) optical-survey regime.</p>
+  <p class="toggle-hint">Drops t<sub>OH</sub> from the exposure formula to enable closed-form optimal strategies, while still enforcing t<sub>exp</sub> &gt; t<sub>OH</sub> as the validity boundary.</p>
   <div class="param-switch-row">
     <label class="toggle-switch" for="regime-color-switch">
       <input type="checkbox" id="regime-color-switch">
@@ -270,7 +272,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('regime-color-switch').click()">Color by detection regime</span>
   </div>
-  <p class="toggle-hint">Colors the surface by analytical detection regime. Warm colors (red→amber) indicate flux-limited (D<sub>Euc</sub>) regimes; cool colors (blue→teal) indicate cadence-limited (D<sub>i</sub>) regimes; gray indicates the singly-limited (D<sub>dec</sub>) regime. More vibrant colors correspond to higher detection ranges.</p>
+  <p class="toggle-hint">Tints the surface by dominant regime: warm = flux-limited (D<sub>Euc</sub>), cool = cadence-limited (D<sub>i</sub>), gray = singly-limited (D<sub>dec</sub>). Brighter = higher range.</p>
   <div class="param-switch-row">
     <label class="toggle-switch" for="full-integral-switch">
       <input type="checkbox" id="full-integral-switch">
@@ -278,7 +280,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('full-integral-switch').click()">Full integral mode</span>
   </div>
-  <p class="toggle-hint">Computes R<sub>det</sub> using the exact integral over all viewing angles q ∈ [0, q<sub>nr</sub>] (thesis Eq. 39), instead of the dominant-term approximation. Adds the tail contribution beyond q<sub>Euc</sub> (flux-limited) or q<sub>i</sub> (cadence-limited). Slower but more accurate, especially near range boundaries.</p>
+  <p class="toggle-hint">Integrates R<sub>det</sub> over all viewing angles q ∈ [0, q<sub>nr</sub>] (thesis Eq. 39) instead of using the dominant-term approximation. Slower but more accurate.</p>
 </div>
 </details>
 
@@ -304,6 +306,31 @@
       <span class="slice-ctrl-label">Fixed N<sub>exp</sub></span>
       <div class="slice-pos-slider">%%SLIDER_TSLICE_NFIX%%</div>
       <span class="slice-pos-value" id="tslice-nfix-value">100</span>
+    </div>
+  </div>
+  <div id="panel-qview" class="view-panel hidden">
+    <div id="plot-qview" class="plot-div"></div>
+  </div>
+  <div id="panel-dview" class="view-panel hidden">
+    <div id="plot-dview" class="plot-div"></div>
+  </div>
+  <div id="qdview-ctrl" class="shared-slice-ctrl hidden">
+    <div class="slice-ctrl">
+      <span class="slice-ctrl-label">Fixed N<sub>exp</sub></span>
+      <div class="slice-pos-slider">%%SLIDER_QDVIEW_NFIX%%</div>
+      <span class="slice-pos-value" id="qdview-nfix-value">100</span>
+    </div>
+    <div class="slice-ctrl">
+      <span class="slice-ctrl-label">Fixed t<sub>cad</sub></span>
+      <div class="slice-pos-slider">%%SLIDER_QDVIEW_TFIX%%</div>
+      <span class="slice-pos-value" id="qdview-tfix-value">1 day</span>
+    </div>
+    <div class="slice-ctrl mode-ctrl">
+      <span class="slice-ctrl-label">View</span>
+      <div class="mode-toggle" id="qdview-mode-toggle">
+        <button class="mode-btn" data-mode="cum">Cumulative</button>
+        <button class="mode-btn active" data-mode="diff">Differential</button>
+      </div>
     </div>
   </div>
 </main>

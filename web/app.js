@@ -52,15 +52,20 @@ let pyodide = null;
 let pyComputeAll = null;
 let pyComputeNslice = null;
 let pyComputeTslice = null;
+let pyComputeQdview = null;
 let _computing = false;
 let _pendingUpdate = false;
 let _debounceTimer = null;
 let _sliceDebounceTimer = null;   // independent debounce for slice-position drags
-let _sliceComputing = { nslice: false, tslice: false };
-let _sliceQueued    = { nslice: false, tslice: false };
+let _sliceComputing = { nslice: false, tslice: false, qdview: false };
+let _sliceQueued    = { nslice: false, tslice: false, qdview: false };
 let _lastData = null;
 let _currentTab = '3d';
 let _currentTheme = 'dark';
+// Unified cumulative/differential mode for R(q) and R(D). One toggle in the
+// shared big-sliders strip drives both panels; defaults to differential since
+// the cumulative view is essentially the sidebar q_min/D_min filter visualised.
+let _qdviewMode = 'diff';
 
 // ── Status indicator (top-right of metrics strip) ─────────────────────────
 function setStatus(msg, spinning = false, isError = false) {
@@ -97,9 +102,14 @@ document.querySelectorAll('.view-btn').forEach(btn => {
     _currentTab = tab;
     document.querySelectorAll('.view-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     document.querySelectorAll('.view-panel').forEach(p => p.classList.toggle('hidden', p.id !== 'panel-' + tab));
+    // Shared qdview ctrl strip only shows on the R(q) / R(D) tabs.
+    const qdCtrl = document.getElementById('qdview-ctrl');
+    if (qdCtrl) qdCtrl.classList.toggle('hidden', !(tab === 'qview' || tab === 'dview'));
     if (_lastData) {
       if (tab === 'nslice') renderNSlice(_lastData);
       else if (tab === 'tslice') renderTSlice(_lastData);
+      else if (tab === 'qview') renderQView(_lastData);
+      else if (tab === 'dview') renderDView(_lastData);
     }
   });
 });
@@ -317,7 +327,10 @@ function triggerSliceUpdate(which) {
 }
 async function runSliceUpdate(which) {
   if (!_lastData) return;  // nothing to render against
-  const fn = which === 'nslice' ? pyComputeNslice : pyComputeTslice;
+  const fn =
+    which === 'nslice' ? pyComputeNslice :
+    which === 'tslice' ? pyComputeTslice :
+    which === 'qdview' ? pyComputeQdview : null;
   if (!fn) return;
   if (_sliceComputing[which]) { _sliceQueued[which] = true; return; }
   _sliceComputing[which] = true;
@@ -330,9 +343,13 @@ async function runSliceUpdate(which) {
     if (which === 'nslice') {
       const t_cad_fix_s = Math.pow(10, parseFloat(document.getElementById('nslice-tfix-slider').value));
       pyResult = fn(pyParams, t_cad_fix_s);
-    } else {
+    } else if (which === 'tslice') {
       const N_fix = Math.pow(10, parseFloat(document.getElementById('tslice-nfix-slider').value));
       pyResult = fn(pyParams, N_fix);
+    } else {  // qdview: shared (N_exp, t_cad) drive both R(q) and R(D)
+      const N_fix       = Math.pow(10, parseFloat(document.getElementById('qdview-nfix-slider').value));
+      const t_cad_fix_s = Math.pow(10, parseFloat(document.getElementById('qdview-tfix-slider').value));
+      pyResult = fn(pyParams, N_fix, t_cad_fix_s);
     }
     const payload = pyResult.toJs({ dict_converter: Object.fromEntries });
     pyResult.destroy();
@@ -344,6 +361,8 @@ async function runSliceUpdate(which) {
       Object.assign(_lastData, payload);
       if (which === 'nslice' && _currentTab === 'nslice') renderNSlice(_lastData);
       if (which === 'tslice' && _currentTab === 'tslice') renderTSlice(_lastData);
+      if (which === 'qdview' && _currentTab === 'qview')  renderQView(_lastData);
+      if (which === 'qdview' && _currentTab === 'dview')  renderDView(_lastData);
       setStatus('');
     }
   } catch (e) {
@@ -361,6 +380,33 @@ document.getElementById('nslice-tfix-slider').addEventListener('input', function
 document.getElementById('tslice-nfix-slider').addEventListener('input', function() {
   updateTsliceNfixDisplay();
   triggerSliceUpdate('tslice');
+});
+document.getElementById('qdview-nfix-slider').addEventListener('input', function() {
+  updateQdviewNfixDisplay();
+  triggerSliceUpdate('qdview');
+});
+document.getElementById('qdview-tfix-slider').addEventListener('input', function() {
+  updateQdviewTfixDisplay();
+  triggerSliceUpdate('qdview');
+});
+
+// Cumulative/Differential unified toggle (in the shared big-sliders strip).
+// Affects whichever of R(q) / R(D) is currently visible; the other re-renders
+// next time it's shown.  Bridge always returns both arrays in _lastData, so
+// the toggle is render-only.
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const mode = btn.dataset.mode;
+    if (!mode || mode === _qdviewMode) return;
+    _qdviewMode = mode;
+    document.querySelectorAll('.mode-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.mode === mode);
+    });
+    if (_lastData) {
+      if (_currentTab === 'qview') renderQView(_lastData);
+      else if (_currentTab === 'dview') renderDView(_lastData);
+    }
+  });
 });
 
 // ── Preset loader ──────────────────────────────────────────────────────────
@@ -445,6 +491,8 @@ function readParams() {
     toh_approx:      b('toh-approx-switch'),
     nslice_tfix_log: v('nslice-tfix-slider'),
     tslice_nfix_log: v('tslice-nfix-slider'),
+    qdview_nfix_log: v('qdview-nfix-slider'),
+    qdview_tfix_log: v('qdview-tfix-slider'),
     nx: 120, ny: 150,
   };
 }
@@ -478,6 +526,16 @@ function updateTsliceNfixDisplay() {
   const sl = document.getElementById('tslice-nfix-slider');
   const el = document.getElementById('tslice-nfix-value');
   if (sl && el) el.textContent = _fmtNexp(Math.pow(10, parseFloat(sl.value)));
+}
+function updateQdviewNfixDisplay() {
+  const sl = document.getElementById('qdview-nfix-slider');
+  const el = document.getElementById('qdview-nfix-value');
+  if (sl && el) el.textContent = _fmtNexp(Math.pow(10, parseFloat(sl.value)));
+}
+function updateQdviewTfixDisplay() {
+  const sl = document.getElementById('qdview-tfix-slider');
+  const el = document.getElementById('qdview-tfix-value');
+  if (sl && el) el.textContent = _fmtTcad(Math.pow(10, parseFloat(sl.value)));
 }
 
 // ── Derived sidebar displays (instant, no Python needed) ──────────────────
@@ -633,6 +691,8 @@ async function runUpdate() {
 
   if (_currentTab === 'nslice') renderNSlice(data);
   else if (_currentTab === 'tslice') renderTSlice(data);
+  else if (_currentTab === 'qview')  renderQView(data);
+  else if (_currentTab === 'dview')  renderDView(data);
 
   setStatus('');
 
@@ -752,6 +812,33 @@ const T_HOVER =
   'q<sub>med</sub> = %{customdata[2]:.3g}<br>' +
   'D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>' +
   'R<sub>det</sub> = %{y:.4g} yr ⁻¹' +
+  '<extra></extra>';
+
+// R(q) cumulative: x=q, y=R(q≥x); customdata=[N_exp, t_cad_h, fraction_of_total]
+const Q_HOVER_CUM =
+  'q ≥ %{x:.3g}<br>' +
+  'N<sub>exp</sub> = %{customdata[0]:.4g}, t<sub>cad</sub> = %{customdata[1]:.4g} hr<br>' +
+  'R<sub>det</sub>(q≥x) = %{y:.4g} yr ⁻¹<br>' +
+  'Fraction of total = %{customdata[2]:.1%}' +
+  '<extra></extra>';
+// R(q) differential: x=q, y=dR/dq; customdata=[N_exp, t_cad_h]
+const Q_HOVER_DIFF =
+  'q = %{x:.3g}<br>' +
+  'N<sub>exp</sub> = %{customdata[0]:.4g}, t<sub>cad</sub> = %{customdata[1]:.4g} hr<br>' +
+  'dR<sub>det</sub>/dq = %{y:.4g} yr ⁻¹' +
+  '<extra></extra>';
+// R(D) cumulative: x=D [Gpc], y=R(D≥x); customdata=[N_exp, t_cad_h, fraction_of_total]
+const D_HOVER_CUM =
+  'D ≥ %{x:.3g} Gpc<br>' +
+  'N<sub>exp</sub> = %{customdata[0]:.4g}, t<sub>cad</sub> = %{customdata[1]:.4g} hr<br>' +
+  'R<sub>det</sub>(D≥x) = %{y:.4g} yr ⁻¹<br>' +
+  'Fraction of total = %{customdata[2]:.1%}' +
+  '<extra></extra>';
+// R(D) differential: x=D [Gpc], y=dR/dD; customdata=[N_exp, t_cad_h]
+const D_HOVER_DIFF =
+  'D = %{x:.3g} Gpc<br>' +
+  'N<sub>exp</sub> = %{customdata[0]:.4g}, t<sub>cad</sub> = %{customdata[1]:.4g} hr<br>' +
+  'dR<sub>det</sub>/dD = %{y:.4g} yr ⁻¹ Gpc⁻¹' +
   '<extra></extra>';
 
 // ── Regime-segmentation helper for 2D slice line traces ────────────────────
@@ -1667,12 +1754,240 @@ function renderTSlice(data) {
   Plotly.react('plot-tslice', traces, layout, {responsive: true});
 }
 
+// ── R(q) and R(D) views — shared (N_exp, t_cad) drive both panels ─────────
+//
+// The bridge payload always carries both cumulative and differential arrays;
+// the per-panel toggle (_qviewMode / _dviewMode) flips which one we draw with
+// zero recompute cost. Both views are at a fixed strategy, so the regime is
+// constant along the curve — no segmentsByRegime here.
+
+function _renderQDPlot(opts) {
+  // Shared rendering for R(q) and R(D). opts:
+  //   plotId, axisLabel ('q' or 'D [Gpc]'), xGrid, yCum, yDiff, mode ('cum'|'diff'),
+  //   nFix, tCadH, totalRate, guides [{x,label,style}], accentMarker {x,label} or null,
+  //   panelTitle ('R(q)' or 'R(D)'), hoverCum, hoverDiff, yLabelCum, yLabelDiff, xRange.
+  const dark = darkMode();
+  const accent = dark ? '#6d9eff' : '#3b6fff';
+  const hl = {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'};
+
+  const xArr = opts.xGrid || [];
+  const yArr = (opts.mode === 'diff') ? (opts.yDiff || []) : (opts.yCum || []);
+  const n = Math.min(xArr.length, yArr.length);
+
+  // Drop NaN/None and non-positive y (log axis) — Plotly is forgiving but
+  // explicit filtering keeps the trace cleaner.
+  const xv = [], yv = [], cdV = [];
+  const totalR = (opts.totalRate != null && isFinite(opts.totalRate) && opts.totalRate > 0)
+    ? opts.totalRate : null;
+  for (let i = 0; i < n; i++) {
+    const x = xArr[i], y = yArr[i];
+    if (x == null || y == null) continue;
+    if (!isFinite(x) || !isFinite(y) || !(y > 0)) continue;
+    xv.push(x); yv.push(y);
+    const frac = (opts.mode === 'cum' && totalR != null) ? y / totalR : null;
+    cdV.push([opts.nFix, opts.tCadH, frac]);
+  }
+
+  const traces = [];
+
+  if (xv.length === 0) {
+    Plotly.react(opts.plotId, traces, {
+      template: dark ? 'plotly_dark' : 'plotly_white',
+      paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
+      annotations: [{
+        text: 'No valid data — strategy may be t<sub>OH</sub>-invalid',
+        xref: 'paper', yref: 'paper', x: 0.5, y: 0.5, showarrow: false,
+        font: {size: 13, color: annotCol()},
+      }],
+    }, {responsive: true});
+    return;
+  }
+
+  traces.push({
+    type: 'scatter', x: xv, y: yv,
+    customdata: cdV,
+    mode: 'lines',
+    line: {color: accent, width: 2.5},
+    showlegend: false,
+    hovertemplate: (opts.mode === 'diff') ? opts.hoverDiff : opts.hoverCum,
+    hoverlabel: hl,
+  });
+
+  // Vertical guides for physical reference scales (dashed gray).
+  const shapes = [];
+  const annotations = [];
+  (opts.guides || []).forEach((g, idx) => {
+    if (g.x == null || !isFinite(g.x)) return;
+    shapes.push({
+      type: 'line', yref: 'paper', y0: 0, y1: 1,
+      xref: 'x', x0: g.x, x1: g.x,
+      line: {color: annotCol(), width: 1.2, dash: 'dash'},
+    });
+    annotations.push({
+      text: g.label, xref: 'x', yref: 'paper',
+      x: g.x, y: 0.95 - 0.05 * idx,
+      xanchor: 'left', yanchor: 'top', showarrow: false,
+      font: {size: 10, color: annotCol()},
+    });
+  });
+
+  // Accent marker for the sidebar's own filter value (only if > 0).
+  if (opts.accentMarker && opts.accentMarker.x != null
+      && isFinite(opts.accentMarker.x) && opts.accentMarker.x > 0) {
+    shapes.push({
+      type: 'line', yref: 'paper', y0: 0, y1: 1,
+      xref: 'x', x0: opts.accentMarker.x, x1: opts.accentMarker.x,
+      line: {color: accent, width: 1.6, dash: 'solid'},
+    });
+    annotations.push({
+      text: opts.accentMarker.label, xref: 'x', yref: 'paper',
+      x: opts.accentMarker.x, y: 0.04,
+      xanchor: 'left', yanchor: 'bottom', showarrow: false,
+      font: {size: 10, color: accent},
+    });
+  }
+
+  // Strategy + mode annotation (top-left).
+  const tCadStr = (opts.tCadH != null && isFinite(opts.tCadH))
+    ? _fmtTcad(opts.tCadH * 3600) : '?';
+  const nStr = (opts.nFix != null && isFinite(opts.nFix)) ? _fmtNexp(opts.nFix) : '?';
+  // opts.panelTitle is "R(q)" or "R(D)" — charAt(2) extracts the inner symbol.
+  const innerSym = opts.panelTitle.charAt(2);
+  const modeLabel = (opts.mode === 'diff')
+    ? ('Differential dR<sub>det</sub>/d' + innerSym)
+    : 'Cumulative';
+  annotations.push({
+    text: opts.panelTitle + ' slice  |  N<sub>exp</sub> = ' + nStr +
+          ', t<sub>cad</sub> = ' + tCadStr,
+    xref: 'paper', yref: 'paper', x: 0.01, y: 1.0,
+    showarrow: false, xanchor: 'left', yanchor: 'top',
+    font: {size: 12, color: annotCol()},
+  });
+  annotations.push({
+    text: modeLabel,
+    xref: 'paper', yref: 'paper', x: 0.99, y: 1.0,
+    showarrow: false, xanchor: 'right', yanchor: 'top',
+    font: {size: 11, color: annotCol()},
+  });
+
+  // y-axis range from data.
+  let yRange = null;
+  let yLo = Infinity, yHi = -Infinity;
+  for (const y of yv) { if (y > 0) { if (y < yLo) yLo = y; if (y > yHi) yHi = y; } }
+  if (isFinite(yLo) && isFinite(yHi) && yLo > 0 && yHi > 0 && yHi > yLo * 1.0001) {
+    yRange = [Math.log10(yLo) - 0.1, Math.log10(yHi) + 0.1];
+  }
+
+  const layout = {
+    template: dark ? 'plotly_dark' : 'plotly_white',
+    paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
+    font: {family: "'JetBrains Mono','Cascadia Code',monospace", color: fontCol(), size: 12},
+    margin: {l: 64, r: 24, b: 48, t: 40},
+    xaxis: Object.assign(
+      {title: opts.axisLabel, type: 'log', showgrid: true, gridcolor: gridColLight()},
+      // Plotly log-axis ranges are in log10 of the data; convert here.
+      (opts.xRange && opts.xRange[0] > 0 && opts.xRange[1] > 0)
+        ? {range: [Math.log10(opts.xRange[0]), Math.log10(opts.xRange[1])], autorange: false}
+        : {autorange: true},
+    ),
+    yaxis: Object.assign(
+      {title: (opts.mode === 'diff') ? opts.yLabelDiff : opts.yLabelCum,
+       type: 'log', showgrid: true, gridcolor: gridColLight()},
+      yRange ? {range: yRange, autorange: false} : {autorange: true},
+    ),
+    showlegend: false,
+    annotations: annotations,
+    shapes: shapes,
+    hoverlabel: {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'},
+  };
+
+  Plotly.react(opts.plotId, traces, layout, {responsive: true});
+}
+
+function renderQView(data) {
+  const qNr  = data.qdview_q_nr;
+  const qDec = data.qdview_q_dec;
+  const qJ   = data.qdview_q_j;
+  const tCadH = data.qdview_t_cad_fix_h;
+  const nFix  = data.qdview_N_fix;
+
+  const guides = [];
+  if (qDec != null && isFinite(qDec)) guides.push({x: qDec, label: 'q<sub>dec</sub>'});
+  if (qJ   != null && isFinite(qJ))   guides.push({x: qJ,   label: 'q<sub>j</sub>'});
+  if (qNr  != null && isFinite(qNr))  guides.push({x: qNr,  label: 'q<sub>nr</sub>'});
+
+  const qMinSidebar = data.qdview_qmin_sidebar;
+  const accentMarker = (qMinSidebar != null && qMinSidebar > 0)
+    ? {x: qMinSidebar, label: 'q<sub>min</sub>'} : null;
+
+  _renderQDPlot({
+    plotId: 'plot-qview',
+    axisLabel: 'q',
+    xGrid: data.qdview_q_grid_flat || [],
+    yCum:  data.qdview_Rq_cum_flat  || [],
+    yDiff: data.qdview_Rq_diff_flat || [],
+    mode: _qdviewMode,
+    nFix: nFix,
+    tCadH: tCadH,
+    totalRate: data.qdview_total_rate_q,
+    guides: guides,
+    accentMarker: accentMarker,
+    panelTitle: 'R(q)',
+    hoverCum: Q_HOVER_CUM,
+    hoverDiff: Q_HOVER_DIFF,
+    yLabelCum:  'R<sub>det</sub>(q ≥ q<sub>min</sub>) [yr ⁻¹]',
+    yLabelDiff: 'dR<sub>det</sub>/dq [yr ⁻¹]',
+    // Log x-axis: lower bound matches the bridge view-grid (q_nr/200).
+    xRange: (qNr != null && isFinite(qNr) && qNr > 0)
+      ? [qNr / 200.0, qNr * 1.02] : null,
+  });
+}
+
+function renderDView(data) {
+  const dEucGpc = data.qdview_D_Euc_Gpc;
+  const tCadH = data.qdview_t_cad_fix_h;
+  const nFix  = data.qdview_N_fix;
+
+  const guides = [];
+  if (dEucGpc != null && isFinite(dEucGpc)) {
+    guides.push({x: dEucGpc, label: 'D<sub>Euc</sub>'});
+  }
+
+  const dMinSidebar = data.qdview_Dmin_Gpc_sidebar;
+  const accentMarker = (dMinSidebar != null && dMinSidebar > 0)
+    ? {x: dMinSidebar, label: 'D<sub>min</sub>'} : null;
+
+  _renderQDPlot({
+    plotId: 'plot-dview',
+    axisLabel: 'D [Gpc]',
+    xGrid: data.qdview_D_grid_Gpc_flat || [],
+    yCum:  data.qdview_RD_cum_flat     || [],
+    yDiff: data.qdview_RD_diff_flat    || [],
+    mode: _qdviewMode,
+    nFix: nFix,
+    tCadH: tCadH,
+    totalRate: data.qdview_total_rate_D,
+    guides: guides,
+    accentMarker: accentMarker,
+    panelTitle: 'R(D)',
+    hoverCum: D_HOVER_CUM,
+    hoverDiff: D_HOVER_DIFF,
+    yLabelCum:  'R<sub>det</sub>(D ≥ D<sub>min</sub>) [yr ⁻¹]',
+    yLabelDiff: 'dR<sub>det</sub>/dD [yr ⁻¹ Gpc⁻¹]',
+    // Log x-axis: lower bound matches the bridge view-grid (D_Euc/1000).
+    xRange: (dEucGpc != null && isFinite(dEucGpc) && dEucGpc > 0)
+      ? [dEucGpc / 1000.0, dEucGpc * 1.02] : null,
+  });
+}
+
 // ── Re-render all visible plots (theme change) ────────────────────────────
 function rerenderAll(data) {
   const params = readParams();
   render3DSurface(data, params);
   if (_currentTab === 'nslice') renderNSlice(data);
   if (_currentTab === 'tslice') renderTSlice(data);
+  if (_currentTab === 'qview')  renderQView(data);
+  if (_currentTab === 'dview')  renderDView(data);
 }
 
 // ── Metrics bar update ─────────────────────────────────────────────────────
@@ -1793,12 +2108,15 @@ print('Bridge ready')
     pyComputeAll    = _sbMod.compute_all;
     pyComputeNslice = _sbMod.compute_nslice;
     pyComputeTslice = _sbMod.compute_tslice;
+    pyComputeQdview = _sbMod.compute_qdview;
     setStatus('Ready — rendering initial surface…', true);
     updateGrbCounts();
     updateNexpMaxDisplay();
     updateSubnightLimitDisplay();
     updateNsliceTfixDisplay();
     updateTsliceNfixDisplay();
+    updateQdviewNfixDisplay();
+    updateQdviewTfixDisplay();
     runUpdate();
 
   } catch (e) {

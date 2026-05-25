@@ -224,3 +224,17 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
 .slice-ctrl-label{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);white-space:nowrap;min-width:80px;flex-shrink:0}
 .slice-pos-slider{flex:1;min-width:0}
 .slice-pos-value{font-family:var(--font-mono);font-size:11px;color:var(--text-mid);min-width:70px;text-align:right;flex-shrink:0}
+/* ── Shared ctrl strip for R(q) + R(D) — stacks N_exp / t_cad / View rows */
+.shared-slice-ctrl{display:flex;flex-direction:column;flex-shrink:0}
+.shared-slice-ctrl.hidden{display:none}
+/* Stacked .slice-ctrl rows: each row still gets its own top border, but the
+   second/third rows skip the top border so the rows visually merge. */
+.shared-slice-ctrl > .slice-ctrl + .slice-ctrl{border-top:none;padding-top:0}
+/* Mode-toggle row in the shared strip: small "View" label, toggle right-aligned. */
+.slice-ctrl.mode-ctrl{padding-top:4px;padding-bottom:10px}
+.slice-ctrl.mode-ctrl .mode-toggle{margin-left:auto;margin-right:0}
+.mode-toggle{display:inline-flex;height:24px;border:1px solid var(--border);border-radius:var(--r-md);background:var(--surface-2);overflow:hidden}
+.mode-btn{height:24px;padding:0 10px;border:none;border-right:1px solid var(--border);background:transparent;color:var(--text-mid);font-size:11px;cursor:pointer;transition:background var(--t-fast),color var(--t-fast)}
+.mode-btn:last-child{border-right:none}
+.mode-btn:hover{background:var(--surface-3);color:var(--text-hi)}
+.mode-btn.active{background:var(--accent);color:#fff;font-weight:600}

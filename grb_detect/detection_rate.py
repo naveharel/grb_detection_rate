@@ -767,6 +767,162 @@ class DetectionRateModel:
         invalid  = ~np.isfinite(t_exp) | (t_exp <= 0)
         return np.where(invalid, np.nan, q_med), np.where(invalid, np.nan, D_med_cm)
 
+    # ---------- Differential rates dR/dq, dR/dD (full-integral mode) ----------
+
+    def _D_eff_q_profile_scalar(
+        self,
+        i_det: int,
+        N_exp: float,
+        t_cad_s: float,
+        N_q: int,
+    ) -> tuple[np.ndarray, np.ndarray, float, float]:
+        """Helper for dR/dq, dR/dD: scalar-input D_eff(q) profile.
+
+        Returns
+        -------
+        q_vals    : (N_q,)            — q grid on (0, q_nr].
+        D_eff_norm: (N_q,)            — D̃_eff(q) = D_eff(q) / D_Euc.
+        prefactor : float             — f_Omega · θ_j² · R_int.
+        t_exp     : float (or NaN)    — exposure time; NaN if strategy is unphysical.
+        """
+        # Several model methods (F_lim_Jy, D_i, D_dec) use boolean array
+        # indexing internally — wrap the scalar inputs in 1-element arrays.
+        N_arr  = np.array([float(N_exp)])
+        t_arr  = np.array([float(t_cad_s)])
+
+        t_exp_arr = self.t_exp_s(N_arr, t_arr)
+        t_exp     = float(t_exp_arr[0])
+        if not np.isfinite(t_exp) or t_exp <= 0:
+            return (
+                np.linspace(0.0, float(self.derived.q_nr), N_q + 1)[1:],
+                np.full(N_q, np.nan),
+                float("nan"),
+                float("nan"),
+            )
+
+        F_lim_arr = self.F_lim_Jy(t_exp_arr)
+        fO_arr    = self.f_Omega(N_arr)
+        fO        = float(fO_arr[0]) if hasattr(fO_arr, "__len__") else float(fO_arr)
+
+        D_Euc   = self.phys.D_euc_cm
+        theta_j = self.phys.theta_j_rad
+        R_int   = self.phys.R_int_yr
+        q_dec   = self.derived.q_dec
+        q_j     = float(self.derived.q_j)
+        q_nr    = float(self.derived.q_nr)
+        q_td    = q_dec - 1.0
+        a_II    = float(self.pls.a_II(self.phys.p))
+        a_III   = float(self.pls.a_III(self.phys.p))
+
+        D_i_arr     = self.D_i(i_det, t_arr, F_lim_arr)
+        D_dec_arr   = self.D_dec(F_lim_arr)
+        D_i         = float(D_i_arr[0])
+        D_tilde_dec = float(D_dec_arr[0]) / D_Euc
+        D_tilde_eff = min(D_i / D_Euc, 1.0)
+
+        q_vals = np.linspace(0.0, q_nr, N_q + 1)[1:]
+        qt_g   = np.maximum(q_vals - 1.0, 0.0)
+
+        on_axis   = q_vals <  q_dec
+        phase_II  = (q_vals >= q_dec) & (q_vals < q_j)
+        phase_III = q_vals >= q_j
+
+        safe_II  = np.where(phase_II,  np.maximum(qt_g, 1e-30), 1.0)
+        safe_III = np.where(phase_III, np.maximum(qt_g, 1e-30), 1.0)
+
+        D_max_II  = D_tilde_dec * (safe_II  / q_td) ** (-a_II)
+        D_max_III = (D_tilde_dec / q_td) * (safe_III / q_td) ** (-a_III)
+
+        D_tilde_max = np.where(on_axis,  D_tilde_dec,
+                      np.where(phase_II, D_max_II,
+                                         D_max_III))
+        D_eff_norm = np.minimum(D_tilde_max, D_tilde_eff)
+
+        prefactor = fO * (theta_j ** 2) * R_int
+        return q_vals, D_eff_norm, prefactor, t_exp
+
+    def dR_dq_full_integral(
+        self,
+        i_det: int,
+        N_exp: float,
+        t_cad_s: float,
+        *,
+        q_min: float = 0.0,
+        D_min_cm: float = 0.0,
+        N_q: int = 500,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Differential rate dR/dq for the full-integral (exact) mode.
+
+        Returns
+        -------
+        q_vals : (N_q,)  — q grid on (0, q_nr].
+        dR_dq  : (N_q,)  — yr⁻¹ per unit q.  All-NaN if the strategy is
+                           t_exp-invalid (e.g. f_live · t_cad / N_exp ≤ t_overhead).
+
+        Math:
+            dR/dq = f_Omega · θ_j² · R_int · 1{q ≥ q_min} · q · max(D̃_eff(q)³ − D̃_min³, 0).
+        """
+        q_vals, D_eff_norm, prefactor, t_exp = self._D_eff_q_profile_scalar(
+            i_det, N_exp, t_cad_s, N_q
+        )
+        if not np.isfinite(t_exp):
+            return q_vals, np.full(N_q, np.nan)
+
+        D_min_norm_cubed = (float(D_min_cm) / self.phys.D_euc_cm) ** 3
+        D_shell_cubed    = np.maximum(D_eff_norm ** 3 - D_min_norm_cubed, 0.0)
+        keep             = q_vals >= float(q_min)
+        dR_dq            = np.where(keep, prefactor * q_vals * D_shell_cubed, 0.0)
+        return q_vals, dR_dq
+
+    def dR_dD_full_integral(
+        self,
+        i_det: int,
+        N_exp: float,
+        t_cad_s: float,
+        *,
+        q_min: float = 0.0,
+        D_min_cm: float = 0.0,
+        N_q: int = 500,
+        N_D: int = 200,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Differential rate dR/dD for the full-integral (exact) mode.
+
+        Returns
+        -------
+        D_grid_cm : (N_D,) — linear grid on [0, D_Euc] in cm.
+        dR_dD     : (N_D,) — yr⁻¹ per cm.  All-NaN if the strategy is t_exp-invalid.
+
+        Math (skeptic-derived; the inner q-integral contributes the 1/2):
+            dR/dD = (3/2) · f_Omega · θ_j² · R_int · D̃² · max(Q(D̃)² − q_min², 0) / D_Euc,
+        where D̃ = D/D_Euc and Q(D̃) = max{q ∈ (0, q_nr] : D̃_eff(q) ≥ D̃}.
+        Values for D < D_min_cm are zeroed out.
+        """
+        D_Euc = self.phys.D_euc_cm
+        D_grid_cm = np.linspace(0.0, D_Euc, N_D)
+
+        q_vals, D_eff_norm, prefactor, t_exp = self._D_eff_q_profile_scalar(
+            i_det, N_exp, t_cad_s, N_q
+        )
+        if not np.isfinite(t_exp):
+            return D_grid_cm, np.full(N_D, np.nan)
+
+        d_grid = D_grid_cm / D_Euc  # (N_D,) in [0, 1]
+
+        # Q(D̃) = largest q for which D_eff_norm(q) ≥ D̃.  D_eff_norm is flat on-axis
+        # (q < q_dec) then non-increasing in q, so the level set is contiguous and the
+        # "last index above" gives Q.
+        above    = D_eff_norm[np.newaxis, :] >= d_grid[:, np.newaxis]   # (N_D, N_q)
+        n_above  = np.sum(above, axis=1)                                # (N_D,)
+        last_idx = np.clip(n_above - 1, 0, q_vals.shape[0] - 1)
+        Q_vals   = np.where(n_above == 0, 0.0, q_vals[last_idx])
+
+        q_min_sq      = float(q_min) ** 2
+        Q_sq_filtered = np.maximum(Q_vals ** 2 - q_min_sq, 0.0)
+        dR_dD = (1.5 * prefactor / D_Euc) * (d_grid ** 2) * Q_sq_filtered
+
+        dR_dD = np.where(D_grid_cm >= float(D_min_cm), dR_dD, 0.0)
+        return D_grid_cm, dR_dD
+
     def compute_medians(
         self,
         i_det: int,

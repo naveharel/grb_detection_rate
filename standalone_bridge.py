@@ -527,6 +527,222 @@ def _compute_tslice_sweep(state: dict, N_fix: float) -> dict:
     }
 
 
+def _compute_qdview_sweep(
+    state: dict, N_exp_fix: float, t_cad_fix_s: float
+) -> dict:
+    """Joint R(q) + R(D) sweep at fixed strategy (N_exp, t_cad).
+
+    Returns flat lists for the q-curve and D-curve, each providing both the
+    cumulative and the differential representation (the JS toggle only re-renders;
+    no recompute). Mirrors `_compute_nslice_sweep`'s model dispatch, f_night
+    scaling and t_OH validity treatment.
+    """
+    i_det        = state["i_det"]
+    model_day    = state["model_day"]
+    model_night  = state["model_night"]
+    optical_on   = state["optical_on"]
+    full_on      = state["full_on"]
+    approx_on    = state["toh_approx"]
+    f_live_val   = float(state["f_live"])
+    f_live_night = float(state["f_live_night"])
+    f_night      = float(state["f_night"])
+    t_overhead_s = float(state["t_overhead_s"])
+    q_min        = float(state["q_min"])
+    D_min_cm     = float(state["D_min_cm"])
+
+    N_exp_fix   = float(N_exp_fix)
+    t_cad_fix_s = float(t_cad_fix_s)
+
+    is_subday_optical = (
+        optical_on and model_night is not None and t_cad_fix_s < DAY_S
+    )
+    model = model_night if is_subday_optical else model_day
+    f_night_mul     = f_night if is_subday_optical else 1.0
+    f_live_validity = f_live_night if is_subday_optical else f_live_val
+
+    # Geometry the JS render layer always needs (drawn even on invalid payloads).
+    q_dec_val = float(model.derived.q_dec)
+    q_j_val   = float(model.derived.q_j)
+    q_nr_val  = float(model.derived.q_nr)
+    D_Euc_cm  = float(model.phys.D_euc_cm)
+    D_Euc_Gpc = D_Euc_cm / GPC_TO_CM
+
+    N_q_view = 150
+    N_D_view = 100
+    # Log-spaced view grids match the log x-axes in the renderer. The lower
+    # bounds are well below any physically relevant q / D, so cumulative
+    # endpoints at the leftmost grid point are R_total to ≤ 1e-4 relative error.
+    q_grid     = np.logspace(
+        math.log10(max(q_nr_val / 200.0, 1e-3)),
+        math.log10(q_nr_val),
+        N_q_view,
+    )
+    D_grid_cm  = np.logspace(
+        math.log10(D_Euc_cm / 1000.0),
+        math.log10(D_Euc_cm),
+        N_D_view,
+    )
+    D_grid_Gpc = D_grid_cm / GPC_TO_CM
+
+    def _empty_payload() -> dict:
+        nans_q = [None] * N_q_view
+        nans_D = [None] * N_D_view
+        return {
+            "qdview_q_grid_flat":       _array_to_list(q_grid),
+            "qdview_Rq_cum_flat":       nans_q,
+            "qdview_Rq_diff_flat":      nans_q,
+            "qdview_D_grid_Gpc_flat":   _array_to_list(D_grid_Gpc),
+            "qdview_RD_cum_flat":       nans_D,
+            "qdview_RD_diff_flat":      nans_D,
+            "qdview_q_dec":             q_dec_val,
+            "qdview_q_j":               q_j_val,
+            "qdview_q_nr":              q_nr_val,
+            "qdview_D_Euc_Gpc":         D_Euc_Gpc,
+            "qdview_qmin_sidebar":      q_min,
+            "qdview_Dmin_Gpc_sidebar":  D_min_cm / GPC_TO_CM,
+            "qdview_total_rate_q":      None,
+            "qdview_total_rate_D":      None,
+            "qdview_regime_id":         None,
+            "qdview_N_fix":             N_exp_fix,
+            "qdview_t_cad_fix_s":       t_cad_fix_s,
+            "qdview_t_cad_fix_h":       t_cad_fix_s / 3600.0,
+        }
+
+    # t_OH approximation validity — same predicate as in _compute_rate.
+    if approx_on and t_overhead_s > 0:
+        if f_live_validity * t_cad_fix_s / N_exp_fix <= t_overhead_s:
+            return _empty_payload()
+
+    # rate_log10 with return_components gives us the active regime + the scalars
+    # needed for the dominant-term R(q)/R(D) closed forms (q_E, q_i, D_dec, D_i, fO).
+    # We apply the D_min cross-filter here so the regime selection / fO is in the
+    # same context as the q-view, but the q_min sweep happens analytically below.
+    N_arr = np.array([N_exp_fix])
+    t_arr = np.array([t_cad_fix_s])
+    _, comps = model.rate_log10(
+        i_det, N_arr, t_arr,
+        q_min=0.0, D_min_cm=D_min_cm,
+        return_components=True,
+    )
+
+    regime_keys = ("A1", "A2", "A3", "A4", "A5", "A6", "A7")
+    active = None
+    for k in regime_keys:
+        if bool(np.asarray(comps[k]).ravel()[0]):
+            active = k
+            break
+    if active is None:
+        return _empty_payload()
+
+    regime_id_val = float(regime_keys.index(active) + 1)
+    fO_val    = float(np.asarray(comps["f_Omega"]).ravel()[0])
+    qE_val    = float(np.asarray(comps["q_Euc"]).ravel()[0])
+    qi_val    = float(np.asarray(comps["q_i"]).ravel()[0])
+    D_dec_val = float(np.asarray(comps["D_dec_cm"]).ravel()[0])
+    D_i_val   = float(np.asarray(comps["D_i_cm"]).ravel()[0])
+
+    theta_j = float(model.phys.theta_j_rad)
+    R_int   = float(model.phys.R_int_yr)
+    base    = 0.5 * fO_val * (theta_j ** 2) * R_int
+
+    q_max_map = {
+        "A1": q_nr_val,  "A2": qE_val,    "A3": qE_val,
+        "A4": q_nr_val,  "A5": qi_val,    "A6": qi_val,
+        "A7": q_dec_val,
+    }
+    q_max_val = q_max_map[active]
+
+    if active in ("A1", "A2", "A3"):
+        D_norm_cubed_const = 1.0
+    elif active in ("A4", "A5", "A6"):
+        D_norm_cubed_const = (D_i_val / D_Euc_cm) ** 3
+    else:  # A7
+        D_norm_cubed_const = (min(D_dec_val, D_i_val) / D_Euc_cm) ** 3
+    D_eff_const_cm = (D_norm_cubed_const ** (1.0 / 3.0)) * D_Euc_cm
+
+    D_min_norm_cubed_sidebar = (D_min_cm / D_Euc_cm) ** 3
+    q_min_sq_sidebar         = q_min ** 2
+
+    # ── R(q) cumulative and differential ─────────────────────────────────────
+    if full_on:
+        q_internal, dRdq_internal = model.dR_dq_full_integral(
+            i_det, N_exp_fix, t_cad_fix_s,
+            q_min=0.0, D_min_cm=D_min_cm, N_q=500,
+        )
+        dq = float(q_internal[1] - q_internal[0])
+        # Trapezoidal cumulative from the right: R(x) = ∫_x^{q_nr} dR/dq dq.
+        trapz_cells_q = 0.5 * (dRdq_internal[:-1] + dRdq_internal[1:]) * dq
+        cum_right_q   = np.zeros_like(dRdq_internal)
+        cum_right_q[:-1] = np.flip(np.cumsum(np.flip(trapz_cells_q)))
+        Rq_cum  = np.interp(q_grid, q_internal, cum_right_q)
+        Rq_diff = np.interp(q_grid, q_internal, dRdq_internal)
+    else:
+        D_factor_q = max(D_norm_cubed_const - D_min_norm_cubed_sidebar, 0.0)
+        Rq_cum  = base * np.maximum(q_max_val ** 2 - q_grid ** 2, 0.0) * D_factor_q
+        Rq_diff = np.where(q_grid <= q_max_val,
+                           2.0 * q_grid * base * D_factor_q,
+                           0.0)
+
+    # ── R(D) cumulative and differential ─────────────────────────────────────
+    if full_on:
+        D_grid_internal_cm, dRdD_internal = model.dR_dD_full_integral(
+            i_det, N_exp_fix, t_cad_fix_s,
+            q_min=q_min, D_min_cm=0.0, N_q=500, N_D=200,
+        )
+        dD = float(D_grid_internal_cm[1] - D_grid_internal_cm[0])
+        trapz_cells_D = 0.5 * (dRdD_internal[:-1] + dRdD_internal[1:]) * dD
+        cum_right_D   = np.zeros_like(dRdD_internal)
+        cum_right_D[:-1] = np.flip(np.cumsum(np.flip(trapz_cells_D)))
+        RD_cum         = np.interp(D_grid_cm, D_grid_internal_cm, cum_right_D)
+        RD_diff_per_cm = np.interp(D_grid_cm, D_grid_internal_cm, dRdD_internal)
+        RD_diff        = RD_diff_per_cm * GPC_TO_CM   # → yr⁻¹ per Gpc
+    else:
+        q_factor_D     = max(q_max_val ** 2 - q_min_sq_sidebar, 0.0)
+        D_norm_cubed_x = (D_grid_cm / D_Euc_cm) ** 3
+        RD_cum  = base * q_factor_D * np.maximum(
+            D_norm_cubed_const - D_norm_cubed_x, 0.0
+        )
+        # Dominant-term dR/dD = 3D²/D_Euc³ · base · q_factor, in yr⁻¹/cm;
+        # convert to yr⁻¹/Gpc on the way out.
+        RD_diff_per_cm = np.where(
+            D_grid_cm <= D_eff_const_cm,
+            3.0 * (D_grid_cm ** 2) / (D_Euc_cm ** 3) * base * q_factor_D,
+            0.0,
+        )
+        RD_diff = RD_diff_per_cm * GPC_TO_CM
+
+    # f_night scaling — applies uniformly to cumulative and differential.
+    if is_subday_optical:
+        Rq_cum  = Rq_cum  * f_night_mul
+        Rq_diff = Rq_diff * f_night_mul
+        RD_cum  = RD_cum  * f_night_mul
+        RD_diff = RD_diff * f_night_mul
+
+    total_rate_q = float(Rq_cum[0]) if np.isfinite(Rq_cum[0]) else float("nan")
+    total_rate_D = float(RD_cum[0]) if np.isfinite(RD_cum[0]) else float("nan")
+
+    return {
+        "qdview_q_grid_flat":       _array_to_list(q_grid),
+        "qdview_Rq_cum_flat":       _array_to_list(Rq_cum),
+        "qdview_Rq_diff_flat":      _array_to_list(Rq_diff),
+        "qdview_D_grid_Gpc_flat":   _array_to_list(D_grid_Gpc),
+        "qdview_RD_cum_flat":       _array_to_list(RD_cum),
+        "qdview_RD_diff_flat":      _array_to_list(RD_diff),
+        "qdview_q_dec":             q_dec_val,
+        "qdview_q_j":               q_j_val,
+        "qdview_q_nr":              q_nr_val,
+        "qdview_D_Euc_Gpc":         D_Euc_Gpc,
+        "qdview_qmin_sidebar":      q_min,
+        "qdview_Dmin_Gpc_sidebar":  D_min_cm / GPC_TO_CM,
+        "qdview_total_rate_q":      _nan_to_none(total_rate_q),
+        "qdview_total_rate_D":      _nan_to_none(total_rate_D),
+        "qdview_regime_id":         regime_id_val,
+        "qdview_N_fix":             N_exp_fix,
+        "qdview_t_cad_fix_s":       t_cad_fix_s,
+        "qdview_t_cad_fix_h":       t_cad_fix_s / 3600.0,
+    }
+
+
 # ── Slice-only entry points (JS calls these on slice-slider drag) ───────────
 
 def compute_nslice(params, t_cad_fix_s) -> dict:
@@ -550,6 +766,22 @@ def compute_tslice(params, N_fix) -> dict:
     try:
         state = _build_models(params)
         payload = _compute_tslice_sweep(state, float(N_fix))
+        payload["error"] = None
+        return payload
+    except Exception:
+        import traceback
+        return {"error": traceback.format_exc()}
+
+
+def compute_qdview(params, N_exp_fix, t_cad_fix_s) -> dict:
+    """Return a joint R(q) + R(D) payload. Called from JS when the qdview
+    big sliders move — avoids a full surface+optimizer recompute.
+    """
+    try:
+        state = _build_models(params)
+        payload = _compute_qdview_sweep(
+            state, float(N_exp_fix), float(t_cad_fix_s)
+        )
         payload["error"] = None
         return payload
     except Exception:
@@ -667,6 +899,14 @@ def compute_all(params) -> dict:
 
         nslice_payload = _compute_nslice_sweep(state, t_cad_fix_s)
         tslice_payload = _compute_tslice_sweep(state, N_fix)
+
+        # qdview shares its strategy with the slice modes' defaults so the first
+        # render lines up with the optimum; per-slider drags will override.
+        qdview_nfix_log = float(params.get("qdview_nfix_log", default_nfix_log))
+        qdview_tfix_log = float(params.get("qdview_tfix_log", default_tfix_log))
+        qdview_N_fix    = 10.0 ** qdview_nfix_log
+        qdview_t_fix_s  = 10.0 ** qdview_tfix_log
+        qdview_payload  = _compute_qdview_sweep(state, qdview_N_fix, qdview_t_fix_s)
 
         # ── Derived GRB counts ───────────────────────────────────────────────
         rho      = 10.0 ** float(params["rho_grb_log10"])
@@ -787,6 +1027,8 @@ def compute_all(params) -> dict:
             "t_disc_D_med_Gpc_flat":   tslice_payload["t_disc_D_med_Gpc_flat"],
             "t_disc_regime_flat":      tslice_payload["t_disc_regime_flat"],
             "N_fix":                   tslice_payload["N_fix"],
+            # ── Joint R(q) + R(D) view payload ─────────────────────────────
+            **qdview_payload,
             "error":        None,
         }
 
