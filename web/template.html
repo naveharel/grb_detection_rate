@@ -146,6 +146,13 @@
     </div>
     %%SLIDER_DMIN%%
   </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="smin_slider" title="Survey alert-stream candidate filter: minimum required magnitude-decline rate in mag/day. 0 = no filter. 0.3 mag/day matches typical ZTF-style cuts; 1 mag/day is stricter. The cut maps to a viewing-angle cap via the post-peak power-law slope (Phase II vs III).">s<sub>min</sub> [mag/day]</label>
+      <input type="number" id="smin_input" class="param-input" min="0" max="2" step="0.05" value="0">
+    </div>
+    %%SLIDER_SMIN%%
+  </div>
   <div class="param-block" id="tnight-block" style="display:none">
     <div class="param-row">
       <label class="param-label" for="tnight_slider" title="Length of the observable astronomical night in hours">t<sub>night</sub> [hr]</label>
@@ -281,6 +288,14 @@
     <span class="switch-label" onclick="document.getElementById('full-integral-switch').click()">Full integral mode</span>
   </div>
   <p class="toggle-hint">Integrates R<sub>det</sub> over all viewing angles q ∈ [0, q<sub>nr</sub>] (thesis Eq. 39) instead of using the dominant-term approximation. Slower but more accurate.</p>
+  <div class="param-switch-row">
+    <label class="toggle-switch" for="s-mode-switch">
+      <input type="checkbox" id="s-mode-switch">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    </label>
+    <span class="switch-label" onclick="document.getElementById('s-mode-switch').click()">Continuous fading-rate definition</span>
+  </div>
+  <p class="toggle-hint">Switches s<sub>min</sub> from the discrete finite-difference Δm/Δt across the i detections (default — what real survey alert filters compute) to the instantaneous |dm/dt| at the burst peak (strategy-independent). The two coincide in the t<sub>cad</sub> → 0 limit.</p>
 </div>
 </details>
 

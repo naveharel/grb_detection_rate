@@ -116,7 +116,7 @@ document.querySelectorAll('.view-btn').forEach(btn => {
 
 // ── Slider ↔ input sync ────────────────────────────────────────────────────
 const SLIDER_IDS = [
-  'i','flive','Alog','omegaexp','toh','omega_srv','qmin','Dmin','tnight',
+  'i','flive','Alog','omegaexp','toh','omega_srv','qmin','Dmin','smin','tnight',
   'p','nu_log','Ekiso_log','n0_log','gamma0_log','thetaj','epse','epsB','deuc','rho_grb_log'
 ];
 
@@ -306,7 +306,7 @@ document.getElementById('optical-switch').addEventListener('change', function() 
 });
 
 // Other toggles
-['toh-approx-switch','regime-color-switch','full-integral-switch'].forEach(id => {
+['toh-approx-switch','regime-color-switch','full-integral-switch','s-mode-switch'].forEach(id => {
   document.getElementById(id).addEventListener('change', triggerUpdate);
 });
 
@@ -488,6 +488,8 @@ function readParams() {
     full_integral:   b('full-integral-switch'),
     qmin:            v('qmin_slider'),
     Dmin_cm:         v('Dmin_slider') * 3.085677581491367e27,  // GPC_TO_CM
+    s_min:           v('smin_slider'),
+    s_mode:          b('s-mode-switch') ? 'continuous' : 'discrete',
     toh_approx:      b('toh-approx-switch'),
     nslice_tfix_log: v('nslice-tfix-slider'),
     tslice_nfix_log: v('tslice-nfix-slider'),
@@ -2099,7 +2101,7 @@ _b.compute_all({
     'epsilon_e_log10':-1.0,'epsilon_B_log10':-2.0,'theta_j_rad':0.1,
     'gamma0_log10':2.5,'D_euc_gpc':5.28,'rho_grb_log10':2.415,
     'optical_survey':False,'color_regimes':False,
-    'full_integral':False,'qmin':0.0,'Dmin_cm':0.0,'toh_approx':False,'nx':60,'ny':80,
+    'full_integral':False,'qmin':0.0,'Dmin_cm':0.0,'s_min':0.0,'s_mode':'discrete','toh_approx':False,'nx':60,'ny':80,
 })
 print('Bridge ready')
 `);

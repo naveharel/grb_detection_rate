@@ -79,15 +79,21 @@ def _compute_rate(
     color_on: bool,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
+    s_min: float = 0.0,
+    s_mode: str = "discrete",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute (R, t_exp, q_med, D_med_Gpc, rid) for a 1-D sweep."""
     if full_integral:
         Z = model.rate_log10_full_integral(
-            i_det, N_arr, t_arr, q_min=q_min, D_min_cm=D_min_cm,
+            i_det, N_arr, t_arr,
+            q_min=q_min, D_min_cm=D_min_cm,
+            s_min=s_min, s_mode=s_mode,
         )
     else:
         Z = model.rate_log10(
-            i_det, N_arr, t_arr, q_min=q_min, D_min_cm=D_min_cm,
+            i_det, N_arr, t_arr,
+            q_min=q_min, D_min_cm=D_min_cm,
+            s_min=s_min, s_mode=s_mode,
         )
     R = np.where(np.isfinite(Z), 10.0 ** Z, np.nan)
 
@@ -110,6 +116,7 @@ def _compute_rate(
     q_med, D_med_cm = model.compute_medians(
         i_det, N_arr, t_arr, full_integral=full_integral,
         q_min=q_min, D_min_cm=D_min_cm,
+        s_min=s_min, s_mode=s_mode,
     )
     t_exp = model.t_exp_s(N_arr, t_arr)
     D_med_Gpc = D_med_cm / GPC_TO_CM
@@ -140,6 +147,8 @@ def _eval_point(
     full_integral: bool = False,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
+    s_min: float = 0.0,
+    s_mode: str = "discrete",
 ) -> tuple[float, float, float, float]:
     """Evaluate (R_det, t_exp_s, q_med, D_med_Gpc) at a single point."""
     _nan4 = (math.nan, math.nan, math.nan, math.nan)
@@ -157,10 +166,14 @@ def _eval_point(
     t_arr = np.array([t_cad_s])
     if full_integral:
         log10R = float(model.rate_log10_full_integral(
-            i_det, N_arr, t_arr, q_min=q_min, D_min_cm=D_min_cm)[0])
+            i_det, N_arr, t_arr,
+            q_min=q_min, D_min_cm=D_min_cm,
+            s_min=s_min, s_mode=s_mode)[0])
     else:
         log10R = float(model.rate_log10(
-            i_det, N_arr, t_arr, q_min=q_min, D_min_cm=D_min_cm)[0])
+            i_det, N_arr, t_arr,
+            q_min=q_min, D_min_cm=D_min_cm,
+            s_min=s_min, s_mode=s_mode)[0])
     R = 10.0 ** log10R if math.isfinite(log10R) else math.nan
     # Sub-day optical: only the nighttime fraction of detections are accessible
     if optical_on and model_night is not None and t_cad_s < DAY_S:
@@ -195,6 +208,7 @@ def _eval_point(
         qm, dm = model_day.compute_medians(
             i_det, N_arr, t_arr, full_integral=full_integral,
             q_min=q_min, D_min_cm=D_min_cm,
+            s_min=s_min, s_mode=s_mode,
         )
         q_med     = float(qm[0])
         D_med_Gpc = float(dm[0]) / GPC_TO_CM
@@ -215,6 +229,8 @@ def _build_day_line_arrays(
     full_integral: bool,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
+    s_min: float = 0.0,
+    s_mode: str = "discrete",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build flat per-day overlay arrays.
 
@@ -263,6 +279,7 @@ def _build_day_line_arrays(
         log10R = _rate(
             model_day, int(i_det), N_line, np.full_like(N_line, t_s),
             full_integral, q_min=q_min, D_min_cm=D_min_cm,
+            s_min=s_min, s_mode=s_mode,
         )
         log10R = np.asarray(log10R).reshape(1, -1).ravel()
 
@@ -275,6 +292,7 @@ def _build_day_line_arrays(
         q_med_arr, D_med_cm_arr = model_day.compute_medians(
             int(i_det), N_cols, t_arr, full_integral=full_integral,
             q_min=q_min, D_min_cm=D_min_cm,
+            s_min=s_min, s_mode=s_mode,
         )
         D_med_Gpc_arr = D_med_cm_arr / GPC_TO_CM
 
@@ -322,6 +340,9 @@ def _build_models(params) -> dict:
     full_on      = bool(params["full_integral"])
     q_min        = float(params.get("qmin", 0.0) or 0.0)
     D_min_cm     = float(params.get("Dmin_cm", 0.0) or 0.0)
+    s_min        = float(params.get("s_min", 0.0) or 0.0)
+    _s_mode_raw  = params.get("s_mode", "discrete")
+    s_mode       = str(_s_mode_raw) if _s_mode_raw in ("discrete", "continuous") else "discrete"
     toh_approx   = bool(params.get("toh_approx", False))
 
     physics_kw = dict(
@@ -371,6 +392,8 @@ def _build_models(params) -> dict:
         "full_on":      full_on,
         "q_min":        q_min,
         "D_min_cm":     D_min_cm,
+        "s_min":        s_min,
+        "s_mode":       s_mode,
         "toh_approx":   toh_approx,
         "t_night_s":    t_night_s,
         "f_night":      f_night,
@@ -397,6 +420,8 @@ def _cr_kwargs_from_state(state: dict) -> dict:
         color_on=state["color_on"],
         q_min=state["q_min"],
         D_min_cm=state["D_min_cm"],
+        s_min=state["s_min"],
+        s_mode=state["s_mode"],
     )
 
 
@@ -549,6 +574,8 @@ def _compute_qdview_sweep(
     t_overhead_s = float(state["t_overhead_s"])
     q_min        = float(state["q_min"])
     D_min_cm     = float(state["D_min_cm"])
+    s_min        = float(state["s_min"])
+    s_mode       = str(state["s_mode"])
 
     N_exp_fix   = float(N_exp_fix)
     t_cad_fix_s = float(t_cad_fix_s)
@@ -615,13 +642,15 @@ def _compute_qdview_sweep(
 
     # rate_log10 with return_components gives us the active regime + the scalars
     # needed for the dominant-term R(q)/R(D) closed forms (q_E, q_i, D_dec, D_i, fO).
-    # We apply the D_min cross-filter here so the regime selection / fO is in the
-    # same context as the q-view, but the q_min sweep happens analytically below.
+    # We apply the D_min and fading-rate cross-filters here so the regime selection
+    # and fO are in the same context as the q-view, but the q_min sweep happens
+    # analytically below.
     N_arr = np.array([N_exp_fix])
     t_arr = np.array([t_cad_fix_s])
     _, comps = model.rate_log10(
         i_det, N_arr, t_arr,
         q_min=0.0, D_min_cm=D_min_cm,
+        s_min=s_min, s_mode=s_mode,
         return_components=True,
     )
 
@@ -650,7 +679,21 @@ def _compute_qdview_sweep(
         "A4": q_nr_val,  "A5": qi_val,    "A6": qi_val,
         "A7": q_dec_val,
     }
-    q_max_val = q_max_map[active]
+    q_max_val_orig = q_max_map[active]
+
+    # Apply the fading-rate cap to the active regime's q_max.  Phase mapping
+    # mirrors `rate_log10`: A1/A2/A4/A5 → Phase III, A3/A6/A7 → Phase II.
+    q_s_II_arr, q_s_III_arr = model._q_s_fading_caps(
+        i_det, np.array([t_cad_fix_s]), s_min, s_mode,
+    )
+    q_s_II  = float(q_s_II_arr[0])
+    q_s_III = float(q_s_III_arr[0])
+    phase_for_regime = {
+        "A1": q_s_III, "A2": q_s_III, "A3": q_s_II,
+        "A4": q_s_III, "A5": q_s_III, "A6": q_s_II,
+        "A7": q_s_II,
+    }
+    q_max_val = min(q_max_val_orig, phase_for_regime[active])
 
     if active in ("A1", "A2", "A3"):
         D_norm_cubed_const = 1.0
@@ -667,7 +710,8 @@ def _compute_qdview_sweep(
     if full_on:
         q_internal, dRdq_internal = model.dR_dq_full_integral(
             i_det, N_exp_fix, t_cad_fix_s,
-            q_min=0.0, D_min_cm=D_min_cm, N_q=500,
+            q_min=0.0, D_min_cm=D_min_cm,
+            s_min=s_min, s_mode=s_mode, N_q=500,
         )
         dq = float(q_internal[1] - q_internal[0])
         # Trapezoidal cumulative from the right: R(x) = ∫_x^{q_nr} dR/dq dq.
@@ -687,7 +731,8 @@ def _compute_qdview_sweep(
     if full_on:
         D_grid_internal_cm, dRdD_internal = model.dR_dD_full_integral(
             i_det, N_exp_fix, t_cad_fix_s,
-            q_min=q_min, D_min_cm=0.0, N_q=500, N_D=200,
+            q_min=q_min, D_min_cm=0.0,
+            s_min=s_min, s_mode=s_mode, N_q=500, N_D=200,
         )
         dD = float(D_grid_internal_cm[1] - D_grid_internal_cm[0])
         trapz_cells_D = 0.5 * (dRdD_internal[:-1] + dRdD_internal[1:]) * dD
@@ -808,6 +853,8 @@ def compute_all(params) -> dict:
         full_on      = state["full_on"]
         q_min        = state["q_min"]
         D_min_cm     = state["D_min_cm"]
+        s_min        = state["s_min"]
+        s_mode       = state["s_mode"]
         toh_approx   = state["toh_approx"]
         t_night_s    = state["t_night_s"]
         f_night      = state["f_night"]
@@ -826,6 +873,7 @@ def compute_all(params) -> dict:
             optical_survey=optical_on, color_regimes=color_on,
             t_night_s=t_night_s, nx=nx, ny=ny,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
+            s_min=s_min, s_mode=s_mode,
         )
 
         if toh_approx and t_overhead_s > 0:
@@ -869,12 +917,14 @@ def compute_all(params) -> dict:
             y_min=0.0, y_max=8.0,
             optical_survey=optical_on, t_night_s=t_night_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
+            s_min=s_min, s_mode=s_mode,
             validity_fn=opt_validity_fn,
         )
         R_opt, t_exp_opt_s, q_med_opt, D_med_Gpc_opt = _eval_point(
             N_opt, t_cad_opt_s, i_det, model_day, model_night,
             f_live, f_live_night, f_night, optical_on, toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
+            s_min=s_min, s_mode=s_mode,
         )
 
         # ── ZTF reference ────────────────────────────────────────────────────
@@ -884,6 +934,7 @@ def compute_all(params) -> dict:
             N_ztf, t_cad_ztf_s, i_det, model_day, model_night,
             f_live, f_live_night, f_night, optical_on, toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
+            s_min=s_min, s_mode=s_mode,
         )
 
         # ── Slice sweeps at user-chosen positions ────────────────────────────
@@ -942,6 +993,7 @@ def compute_all(params) -> dict:
                 model_day=model_day, i_det=i_det,
                 N_cols=N_cols, t_cad_max_s=t_cad_max_s,
                 full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
+                s_min=s_min, s_mode=s_mode,
             )
             n_days, n_N = (int(day_vals.size),
                            int(day_N.shape[1]) if day_N.ndim == 2 and day_vals.size > 0 else 0)

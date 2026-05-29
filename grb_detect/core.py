@@ -361,19 +361,25 @@ def _rate(
     *,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
+    s_min: float = 0.0,
+    s_mode: str = "discrete",
 ) -> np.ndarray:
     """Dispatch to the full-integral or dominant-term rate method.
 
-    The q_min / D_min_cm filter is applied inside the chosen rate method so
-    R_total and the filter share the same approximation level.  q_min=0 and
-    D_min_cm=0 reduce to the unfiltered behavior to floating-point.
+    The q_min / D_min_cm / s_min filters are applied inside the chosen rate
+    method so R_total and the filters share the same approximation level.  At
+    q_min=0, D_min_cm=0, s_min=0 the result reduces to the unfiltered behavior.
     """
     if full_integral:
         return model.rate_log10_full_integral(
-            i_det, N_exp, t_cad_s, q_min=q_min, D_min_cm=D_min_cm,
+            i_det, N_exp, t_cad_s,
+            q_min=q_min, D_min_cm=D_min_cm,
+            s_min=s_min, s_mode=s_mode,
         )
     return model.rate_log10(
-        i_det, N_exp, t_cad_s, q_min=q_min, D_min_cm=D_min_cm,
+        i_det, N_exp, t_cad_s,
+        q_min=q_min, D_min_cm=D_min_cm,
+        s_min=s_min, s_mode=s_mode,
     )
 
 
@@ -390,6 +396,8 @@ def compute_surface(
     full_integral: bool = False,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
+    s_min: float = 0.0,
+    s_mode: str = "discrete",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
     """Compute the log-rate surface on a (log N_exp, log t_cad) grid.
 
@@ -438,12 +446,14 @@ def compute_surface(
         is_subday = t_cad_eff < float(DAY_S)
 
         Z_day = _rate(model_day, i_det, N_exp, t_cad_eff, full_integral,
-                      q_min=q_min, D_min_cm=D_min_cm)
+                      q_min=q_min, D_min_cm=D_min_cm,
+                      s_min=s_min, s_mode=s_mode)
 
         if model_night is None:
             raise RuntimeError("model_night is required when optical_survey=True")
         Z_night = _rate(model_night, i_det, N_exp, t_cad_eff, full_integral,
-                        q_min=q_min, D_min_cm=D_min_cm)
+                        q_min=q_min, D_min_cm=D_min_cm,
+                        s_min=s_min, s_mode=s_mode)
 
         # Sub-day: only the nighttime fraction of the sky is observable each
         # cadence. model_night carries instrument.f_live = f_live / f_night
@@ -456,7 +466,8 @@ def compute_surface(
     else:
         t_cad_eff = t_cad_s
         Z_raw = _rate(model_day, i_det, N_exp, t_cad_eff, full_integral,
-                      q_min=q_min, D_min_cm=D_min_cm)
+                      q_min=q_min, D_min_cm=D_min_cm,
+                      s_min=s_min, s_mode=s_mode)
 
     # Display mask for the plotted surface only
     Z_plot = np.where(np.isfinite(Z_raw) & (Z_raw >= ZMIN_DISPLAY_LOG10), Z_raw, np.nan)
@@ -493,6 +504,7 @@ def compute_surface(
     q_med_grid, D_med_cm_grid = model_day.compute_medians(
         i_det, N_exp, t_cad_eff, full_integral=full_integral,
         q_min=q_min, D_min_cm=D_min_cm,
+        s_min=s_min, s_mode=s_mode,
     )
     D_med_Gpc_grid  = D_med_cm_grid / GPC_TO_CM
 
@@ -531,6 +543,8 @@ def maximize_log_surface_iterative(
     full_integral: bool = False,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
+    s_min: float = 0.0,
+    s_mode: str = "discrete",
     n0x: int = 180,
     n0y: int = 220,
     n_refine: int = 3,
@@ -579,9 +593,11 @@ def maximize_log_surface_iterative(
 
         is_subday = t_eff < float(DAY_S)
         Z_day   = _rate(model_day,   i_det, N, t_eff, full_integral,
-                        q_min=q_min, D_min_cm=D_min_cm)
+                        q_min=q_min, D_min_cm=D_min_cm,
+                        s_min=s_min, s_mode=s_mode)
         Z_night = _rate(model_night, i_det, N, t_eff, full_integral,
-                        q_min=q_min, D_min_cm=D_min_cm)
+                        q_min=q_min, D_min_cm=D_min_cm,
+                        s_min=s_min, s_mode=s_mode)
         # model_night was built with f_live = f_live / f_night, so Z_night
         # already uses the within-night-rescaled t_exp; the f_night factor
         # below covers night-time accessibility.
@@ -625,7 +641,8 @@ def maximize_log_surface_iterative(
         N2, t2 = np.meshgrid(N, t_days)
 
         Z = _rate(model_day, i_det, N2, t2, full_integral,
-                  q_min=q_min, D_min_cm=D_min_cm)
+                  q_min=q_min, D_min_cm=D_min_cm,
+                  s_min=s_min, s_mode=s_mode)
         if validity_fn is not None:
             Z = np.where(validity_fn(N2, t2), Z, np.nan)
         if not np.any(np.isfinite(Z)):
@@ -644,7 +661,8 @@ def maximize_log_surface_iterative(
             N = 10 ** X
             t = 10 ** Y
             Z = _rate(model_day, i_det, N, t, full_integral,
-                      q_min=q_min, D_min_cm=D_min_cm)
+                      q_min=q_min, D_min_cm=D_min_cm,
+                      s_min=s_min, s_mode=s_mode)
             Z = np.where(np.isfinite(Z), Z, np.nan)
             if validity_fn is not None:
                 Z = np.where(validity_fn(N, t), Z, np.nan)

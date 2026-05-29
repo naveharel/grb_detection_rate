@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Test caches
+.pytest_cache/
+
 # Virtual environments
 .venv/
 venv/
@@ -31,6 +34,9 @@ sources/
 # Claude Code context files (project-specific, not for version control)
 .claude/
 CLAUDE.md
+docs/architecture.md
+docs/physics_model.md
+docs/ui_reference.md
 
 # Stray home-directory paths accidentally tracked
 ~/.claude/

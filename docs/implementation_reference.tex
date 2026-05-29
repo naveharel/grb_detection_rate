@@ -361,6 +361,63 @@ p(q)\propto q\cdot\bigl[D_{\rm eff}(q)^3-(D_{\rm min}/D_{\rm euc})^3\bigr]_+\cdo
 \]
 which is \emph{not} simply $\propto q$, so the analytic formula~\eqref{eq:filter_medians} no longer applies; the median is found by cumulative trapezoidal integration of this weighted form. See \texttt{compute\_medians\_numerical}.
 
+\subsection{Fading-rate filter $s_{\rm min}$}
+\label{sec:filter_smin}
+
+Real optical transient surveys filter their alert streams to ``afterglow-like'' candidates by requiring a measured magnitude decline faster than some threshold $s_{\rm min}$ in mag/day; common values are $0.3$ (ZTF-style) and $1$ (stricter). The filter is exposed as a third sidebar parameter alongside $q_{\rm min}$ and $D_{\rm min}$, with two modes that coincide in the $t_{\rm cad}\to 0$ limit.
+
+\paragraph{Setup.} Post-peak, the lightcurve obeys $F(t)\propto t^\alpha$ with $\alpha<0$, so
+\[
+m(t)=-2.5\alpha\log_{10}(t/t_p)+\text{const},\qquad
+\frac{dm}{dt}=-\frac{2.5\,\alpha}{t\,\ln 10}\;\text{mag/s}.
+\]
+For an off-axis viewer at $\tilde q$, the dominant-term assumption is that the first of the $i$ detections lands near the peak: $t_{\rm first}\approx t_p(\tilde q)$.
+
+\paragraph{Discrete (per-cadence) mode.} The measured slope across the $i$ detections is
+\begin{equation}
+\label{eq:s_meas_discrete}
+s_{\rm meas}=-2.5\,\alpha\,\log_{10}\!\left(1+\frac{(i-1)\,t_{\rm cad}}{t_p}\right)\frac{\text{DAY\_S}}{(i-1)\,t_{\rm cad}}\;\;\text{[mag/day]}.
+\end{equation}
+Imposing $s_{\rm meas}\ge s_{\rm min}$ and solving for the maximum $t_p$ that still passes, with $A=2.5|\alpha|$ and $E=s_{\rm min}(i-1)t_{\rm cad}/(\text{DAY\_S}\cdot A)$:
+\begin{equation}
+\label{eq:tps_discrete}
+t_{p,s}=\frac{(i-1)\,t_{\rm cad}}{10^E-1}.
+\end{equation}
+This is strategy-dependent: long $t_{\rm cad}$ shrinks $t_{p,s}$ (the survey can no longer resolve the slope). At $i=1$ the slope is undefined and the cut is bypassed.
+
+\paragraph{Continuous (instantaneous) mode.} Evaluate $|dm/dt|$ at the peak directly and require it to exceed $s_{\rm min}$:
+\begin{equation}
+\label{eq:tps_continuous}
+t_{p,s}=\frac{2.5\,|\alpha|\,\text{DAY\_S}}{s_{\rm min}\,\ln 10}.
+\end{equation}
+Strategy-independent; defined for all $i$.
+
+\paragraph{Limit equivalence.} As $t_{\rm cad}\to 0$, $E\to 0$ and $10^E-1\approx E\ln 10$, so~\eqref{eq:tps_discrete} reduces to~\eqref{eq:tps_continuous}:
+\[
+t_{p,s}\to\frac{(i-1)\,t_{\rm cad}}{E\ln 10}=\frac{2.5\,|\alpha|\,\text{DAY\_S}}{s_{\rm min}\,\ln 10}.
+\]
+The continuous mode is the high-cadence limit of the discrete mode.
+
+\paragraph{Mapping to a $q$-cap.} The model's $q_i$ relation (\S\,Viewing-angle parameterisation) gives $t_p(\tilde q)=t_j\tilde q^{8/3}$ in Phase~II and $t_j\tilde q^2$ in Phase~III. Inverting:
+\begin{equation}
+\label{eq:qs_phase}
+\tilde q_{s,\rm II}=\left(\frac{t_{p,s,\rm II}}{t_j}\right)^{3/8},\qquad
+\tilde q_{s,\rm III}=\left(\frac{t_{p,s,\rm III}}{t_j}\right)^{1/2},
+\end{equation}
+where $\alpha$ in $t_{p,s}$ is the phase-specific temporal slope: $\alpha_{\rm II}=-3(p-1)/4$, $\alpha_{\rm III}=-p$ for PLS~G, and $\alpha_{\rm II}=-(3p-2)/4$, $\alpha_{\rm III}=-p$ for PLS~H.
+
+\paragraph{Substitution in the rate formulas.} The cut acts on each regime's effective $q_{\rm max}$ exactly like a phase-mapped cap: the seven dominant-term rates~\eqref{eq:filter_dominant} become
+\[
+r_k = \tfrac{1}{2}f_\Omega\theta_j^2 R_{\rm int}\cdot
+\bigl[\min(q_{\rm max,\,k},\,q_{s,\,\Phi(k)})^2-q_{\rm min}^2\bigr]_+\cdot
+\bigl[(D_{\rm eff,\,k}/D_{\rm euc})^3-(D_{\rm min}/D_{\rm euc})^3\bigr]_+,
+\]
+with phase assignment $\Phi$: A1, A2, A4, A5 $\to$ Phase~III; A3, A6, A7 $\to$ Phase~II. In the full-integral form~\eqref{eq:filter_full}, the integrand picks up an additional factor $\mathbf{1}\{q\le q_{s,\,\Phi(q)}\}$ where the phase of each integration point $q$ is determined by the existing on-axis / Phase~II / Phase~III masks (Section~\ref{sec:filters}). At $s_{\rm min}=0$ all $q_{s,\rm phase}=+\infty$ and the rates collapse to the unfiltered baseline to floating point.
+
+When the phase~II cap falls below $q_j=2$ but the phase~III cap exceeds $q_j$ (i.e. the cut bites Phase~II but spares Phase~III), the surviving viewing-angle set is the union of two disjoint intervals. The dominant-term formula handles this naturally via the per-regime phase assignment; the full-integral mode handles it via the point-wise indicator inside the integrand. In the median computation (\texttt{compute\_medians\_numerical}) we therefore switch from the closed-form $(Q^2-q_{\rm min}^2)/2$ aggregator to a direct trapezoidal q-integral, which remains valid for non-contiguous survival sets.
+
+\paragraph{Implementation reference.} \texttt{DetectionRateModel.\_q\_s\_fading\_caps()} returns the phase-resolved $q_{s,\rm II}$ and $q_{s,\rm III}$ arrays (broadcastable to the strategy grid). It is called once per rate evaluation and the resulting caps are min'd into each regime's $q_{\rm max}$. The same helper drives \texttt{compute\_medians}, \texttt{dR\_dq\_full\_integral}, and \texttt{dR\_dD\_full\_integral}.
+
 \subsection{Legacy off-axis-only mode (deprecated)}
 \label{sec:filters_legacy}
 

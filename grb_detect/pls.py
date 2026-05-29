@@ -51,6 +51,19 @@ class PLSModel(Protocol):
     def a_III(self, p: float) -> float:
         """Exponent a_III(p) controlling the phase-III scaling of F_p(q)."""
 
+    def alpha_II_temporal(self, p: float) -> float:
+        """Temporal flux index in phase II: F(t) ∝ t^{alpha_II_temporal}.
+
+        Distinct from a_II, which is the q-angular scaling of the off-axis peak
+        flux. The two are linked via t_p ∝ q̃^{8/3}, giving a_II = (8/3)|alpha|.
+        """
+
+    def alpha_III_temporal(self, p: float) -> float:
+        """Temporal flux index in phase III: F(t) ∝ t^{alpha_III_temporal}.
+
+        For the standard jet-break approximation this is -p in both PLS G and PLS H.
+        """
+
     def F_dec_Jy(
         self,
         phys: AfterglowPhysicalParams,
@@ -77,6 +90,13 @@ class PLSG:
 
     def a_III(self, p: float) -> float:  # noqa: N802
         return p
+
+    def alpha_II_temporal(self, p: float) -> float:  # noqa: N802
+        # F(t) ∝ t^{-3(p-1)/4} in phase II (cf. F_dec t-scaling below).
+        return -3.0 * (p - 1.0) / 4.0
+
+    def alpha_III_temporal(self, p: float) -> float:  # noqa: N802
+        return -p
 
     def F_dec_Jy(
         self,
@@ -168,6 +188,12 @@ class PLSH:
         # Phase III temporal slope is -p in the Tier-1 jet-break approximation,
         # giving F_p \propto \tilde{q}^{-2p}.
         return p
+
+    def alpha_II_temporal(self, p: float) -> float:  # noqa: N802
+        return -(3.0 * p - 2.0) / 4.0
+
+    def alpha_III_temporal(self, p: float) -> float:  # noqa: N802
+        return -p
 
     def F_dec_Jy(
         self,
