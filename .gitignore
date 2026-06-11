@@ -28,6 +28,12 @@ dist/
 # Outputs
 *.png
 
+# Generated publication figures (scripts are tracked; outputs are regenerated).
+# Ignore the contents (incl. PDFs, which *.png above does not catch) but keep the
+# directory via .gitkeep. Use /* not / so the negation can re-include .gitkeep.
+figures/output/*
+!figures/output/.gitkeep
+
 # Physics reference documents (large PDFs, copyrighted)
 sources/
 

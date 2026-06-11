@@ -1,0 +1,12 @@
+# Dependencies for the publication-figure subsystem (figures/) ONLY.
+# The in-browser app build (build_standalone.py) stays stdlib + numpy and does NOT
+# need these. numpy is already provided by the environment.
+#
+# Install into the project venv:
+#   .venv\Scripts\python -m pip install -r requirements-figures.txt
+#
+# Note: the figure style defaults to LaTeX text rendering (text.usetex). That also
+# requires a system TeX toolchain (latex + dvipng), e.g. MiKTeX or TeX Live — this is
+# NOT a pip package. Without it, figures fall back to matplotlib mathtext (STIX).
+
+matplotlib>=3.10
