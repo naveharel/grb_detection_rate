@@ -67,6 +67,13 @@ let _currentTheme = 'dark';
 // the cumulative view is essentially the sidebar q_min/D_min filter visualised.
 let _qdviewMode = 'diff';
 
+// TEMP-FDEC-OVERRIDE — begin
+let _fdecOverride = false;  // true while the user's F_dec value overrides physics
+// Physics sliders that feed F_dec (pls.py F_dec_Jy inputs + t_dec via Gamma0).
+// NOT thetaj / rho_grb_log — they don't enter F_dec.
+const FDEC_FEEDER_IDS = ['p','nu_log','Ekiso_log','n0_log','gamma0_log','epse','epsB','deuc'];
+// TEMP-FDEC-OVERRIDE — end
+
 // ── Status indicator (top-right of metrics strip) ─────────────────────────
 function setStatus(msg, spinning = false, isError = false) {
   const el = document.getElementById('metric-status');
@@ -116,8 +123,9 @@ document.querySelectorAll('.view-btn').forEach(btn => {
 
 // ── Slider ↔ input sync ────────────────────────────────────────────────────
 const SLIDER_IDS = [
-  'i','flive','Alog','omegaexp','toh','omega_srv','qmin','Dmin','smin','tnight',
-  'p','nu_log','Ekiso_log','n0_log','gamma0_log','thetaj','epse','epsB','deuc','rho_grb_log'
+  'i','flive','Alog','omegaexp','toh','omega_srv','qmin','Dmin','sfade','srise','tnight',
+  'p','nu_log','Ekiso_log','n0_log','gamma0_log','thetaj','epse','epsB','deuc','rho_grb_log',
+  'fdec_log', // TEMP-FDEC-OVERRIDE
 ];
 
 // Effective minimum: respects optional `data-min-floor` on the .cs-wrap, which
@@ -160,6 +168,8 @@ function syncFromSlider(id) {
   if (id === 'Alog') updateMagDisplay();
   if (id === 'flive') _updateTnightFloor();
   if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
+  if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
+  if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
   _checkPresetDrift();
   triggerUpdate();
 }
@@ -186,6 +196,8 @@ function syncFromInput(id) {
   if (id === 'Alog') updateMagDisplay();
   if (id === 'flive') _updateTnightFloor();
   if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
+  if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
+  if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
   _checkPresetDrift();
   triggerUpdate();
 }
@@ -437,6 +449,7 @@ document.getElementById('preset-select').addEventListener('change', function() {
   _presetApplying = false;
   updateGrbCounts();
   _updateTnightFloor();
+  _fdecOverride = false; _updateFdecNote();  // TEMP-FDEC-OVERRIDE — presets return to physics-derived F_dec
   triggerUpdate();
 });
 
@@ -488,13 +501,15 @@ function readParams() {
     full_integral:   b('full-integral-switch'),
     qmin:            v('qmin_slider'),
     Dmin_cm:         v('Dmin_slider') * 3.085677581491367e27,  // GPC_TO_CM
-    s_min:           v('smin_slider'),
+    s_fade:          v('sfade_slider'),
+    s_rise:          v('srise_slider'),
     s_mode:          b('s-mode-switch') ? 'continuous' : 'discrete',
     toh_approx:      b('toh-approx-switch'),
     nslice_tfix_log: v('nslice-tfix-slider'),
     tslice_nfix_log: v('tslice-nfix-slider'),
     qdview_nfix_log: v('qdview-nfix-slider'),
     qdview_tfix_log: v('qdview-tfix-slider'),
+    F_dec_override_Jy: _fdecOverride ? Math.pow(10, v('fdec_log_slider')) : null,  // TEMP-FDEC-OVERRIDE
     nx: 120, ny: 150,
   };
 }
@@ -623,6 +638,27 @@ function _updateTnightFloorNote() {
   }
 }
 
+// TEMP-FDEC-OVERRIDE — begin
+function _updateFdecNote() {
+  const el = document.getElementById('fdec-override-note');
+  if (el) el.style.display = _fdecOverride ? 'block' : 'none';
+}
+function _clearFdecOverride() {
+  if (!_fdecOverride) return;
+  _fdecOverride = false;
+  _updateFdecNote();
+}
+{
+  const resetLink = document.getElementById('fdec-override-reset');
+  if (resetLink) resetLink.addEventListener('click', e => {
+    e.preventDefault();
+    _fdecOverride = false;
+    _updateFdecNote();
+    triggerUpdate();   // recompute without override; snap happens on payload return
+  });
+}
+// TEMP-FDEC-OVERRIDE — end
+
 // ── Derived GRB count display (instant, no Python needed) ─────────────────
 function updateGrbCounts() {
   const rho = Math.pow(10, parseFloat(document.getElementById('rho_grb_log_slider').value));
@@ -749,13 +785,14 @@ function buildSharedData(data) {
   shared.dMed2d = data.D_med_Gpc_flat ? reshape(data.D_med_Gpc_flat, ny, nx) : null;
 
   // Plotly's 3D Surface customdata is indexed [j, i, k] (transposed from the
-  // (ny, nx, 3) per-cell tensor). Build (nx, ny, 3).
+  // (ny, nx, 3) per-cell tensor). Build (nx, ny, 3). Cells are pre-formatted
+  // strings (see cdNum) so null extras can never surface a literal template.
   if (shared.tExp2d && shared.qMed2d && shared.dMed2d) {
     const cd = new Array(nx);
     for (let j = 0; j < nx; j++) {
       const col = new Array(ny);
       for (let i = 0; i < ny; i++) {
-        col[i] = [shared.tExp2d[i][j], shared.qMed2d[i][j], shared.dMed2d[i][j]];
+        col[i] = [cdNum(shared.tExp2d[i][j]), cdNum(shared.qMed2d[i][j]), cdNum(shared.dMed2d[i][j])];
       }
       cd[j] = col;
     }
@@ -786,60 +823,85 @@ function buildSharedData(data) {
   return shared;
 }
 
+// ── Hover customdata formatting ────────────────────────────────────────────
+// Customdata cells are pre-formatted STRINGS: Plotly renders the raw
+// '%{customdata[i]:...}' token literally when a referenced cell is null, so
+// numeric cells + d3 format specs turn any missing value into template
+// garbage in the tooltip. Strings always substitute; missing values show '—'.
+// Templates below therefore reference customdata WITHOUT format specs.
+function fmtG(v, digits) {
+  // Python "%.Ng"-style: toPrecision with trailing-zero trim.
+  const s = Number(v).toPrecision(digits || 3);
+  return s.indexOf('.') >= 0 && s.indexOf('e') < 0 ? s.replace(/\.?0+$/, '') : s;
+}
+function cdNum(v, digits) {
+  return (v != null && isFinite(v)) ? fmtG(v, digits) : '—';
+}
+function cdPct(v) {
+  return (v != null && isFinite(v)) ? (100 * v).toFixed(1) + '%' : '—';
+}
+
 // ── Standardized hovertemplates ────────────────────────────────────────────
 const XYZ_HOVER =
   'N<sub>exp</sub> = %{x:.4g}<br>' +
   't<sub>cad</sub> = %{y:.4g} hr<br>' +
-  't<sub>exp</sub> = %{customdata[0]:.3g} s<br>' +
-  'q<sub>med</sub> = %{customdata[1]:.3g}<br>' +
-  'D<sub>med</sub> = %{customdata[2]:.3g} Gpc<br>' +
+  't<sub>exp</sub> = %{customdata[0]} s<br>' +
+  'q<sub>med</sub> = %{customdata[1]}<br>' +
+  'D<sub>med</sub> = %{customdata[2]} Gpc<br>' +
+  'R<sub>det</sub> = %{z:.4g} yr ⁻¹' +
+  '<extra></extra>';
+
+// Fallback for traces whose per-point extras are unavailable (x/y/z only).
+const XYZ_HOVER_BASIC =
+  'N<sub>exp</sub> = %{x:.4g}<br>' +
+  't<sub>cad</sub> = %{y:.4g} hr<br>' +
   'R<sub>det</sub> = %{z:.4g} yr ⁻¹' +
   '<extra></extra>';
 
 // N-slice: N_exp=x, R_det=y; customdata=[t_cad_hr, t_exp, q_med, D_med_Gpc]
 const N_HOVER =
   'N<sub>exp</sub> = %{x:.4g}<br>' +
-  't<sub>cad</sub> = %{customdata[0]:.4g} hr<br>' +
-  't<sub>exp</sub> = %{customdata[1]:.3g} s<br>' +
-  'q<sub>med</sub> = %{customdata[2]:.3g}<br>' +
-  'D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>' +
+  't<sub>cad</sub> = %{customdata[0]} hr<br>' +
+  't<sub>exp</sub> = %{customdata[1]} s<br>' +
+  'q<sub>med</sub> = %{customdata[2]}<br>' +
+  'D<sub>med</sub> = %{customdata[3]} Gpc<br>' +
   'R<sub>det</sub> = %{y:.4g} yr ⁻¹' +
   '<extra></extra>';
 
 // T-slice: t_cad=x, R_det=y; customdata=[N_exp, t_exp, q_med, D_med_Gpc]
 const T_HOVER =
-  'N<sub>exp</sub> = %{customdata[0]:.4g}<br>' +
+  'N<sub>exp</sub> = %{customdata[0]}<br>' +
   't<sub>cad</sub> = %{x:.4g} hr<br>' +
-  't<sub>exp</sub> = %{customdata[1]:.3g} s<br>' +
-  'q<sub>med</sub> = %{customdata[2]:.3g}<br>' +
-  'D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>' +
+  't<sub>exp</sub> = %{customdata[1]} s<br>' +
+  'q<sub>med</sub> = %{customdata[2]}<br>' +
+  'D<sub>med</sub> = %{customdata[3]} Gpc<br>' +
   'R<sub>det</sub> = %{y:.4g} yr ⁻¹' +
   '<extra></extra>';
 
 // R(q) cumulative: x=q, y=R(q≥x); customdata=[N_exp, t_cad_h, fraction_of_total]
 const Q_HOVER_CUM =
   'q ≥ %{x:.3g}<br>' +
-  'N<sub>exp</sub> = %{customdata[0]:.4g}, t<sub>cad</sub> = %{customdata[1]:.4g} hr<br>' +
+  'N<sub>exp</sub> = %{customdata[0]}, t<sub>cad</sub> = %{customdata[1]} hr<br>' +
   'R<sub>det</sub>(q≥x) = %{y:.4g} yr ⁻¹<br>' +
-  'Fraction of total = %{customdata[2]:.1%}' +
+  'Fraction of total = %{customdata[2]}' +
   '<extra></extra>';
 // R(q) differential: x=q, y=dR/dq; customdata=[N_exp, t_cad_h]
 const Q_HOVER_DIFF =
   'q = %{x:.3g}<br>' +
-  'N<sub>exp</sub> = %{customdata[0]:.4g}, t<sub>cad</sub> = %{customdata[1]:.4g} hr<br>' +
+  'N<sub>exp</sub> = %{customdata[0]}, t<sub>cad</sub> = %{customdata[1]} hr<br>' +
   'dR<sub>det</sub>/dq = %{y:.4g} yr ⁻¹' +
   '<extra></extra>';
 // R(D) cumulative: x=D [Gpc], y=R(D≥x); customdata=[N_exp, t_cad_h, fraction_of_total]
 const D_HOVER_CUM =
   'D ≥ %{x:.3g} Gpc<br>' +
-  'N<sub>exp</sub> = %{customdata[0]:.4g}, t<sub>cad</sub> = %{customdata[1]:.4g} hr<br>' +
+  'N<sub>exp</sub> = %{customdata[0]}, t<sub>cad</sub> = %{customdata[1]} hr<br>' +
   'R<sub>det</sub>(D≥x) = %{y:.4g} yr ⁻¹<br>' +
-  'Fraction of total = %{customdata[2]:.1%}' +
+  'Fraction of total = %{customdata[2]}' +
   '<extra></extra>';
 // R(D) differential: x=D [Gpc], y=dR/dD; customdata=[N_exp, t_cad_h]
 const D_HOVER_DIFF =
   'D = %{x:.3g} Gpc<br>' +
-  'N<sub>exp</sub> = %{customdata[0]:.4g}, t<sub>cad</sub> = %{customdata[1]:.4g} hr<br>' +
+  'N<sub>exp</sub> = %{customdata[0]}, t<sub>cad</sub> = %{customdata[1]} hr<br>' +
   'dR<sub>det</sub>/dD = %{y:.4g} yr ⁻¹ Gpc⁻¹' +
   '<extra></extra>';
 
@@ -914,17 +976,9 @@ function markerHover3D(label, t_exp_s, q_med, D_med_Gpc) {
   const okTexp = t_exp_s   != null && isFinite(t_exp_s);
   const okQ    = q_med     != null && isFinite(q_med);
   const okD    = D_med_Gpc != null && isFinite(D_med_Gpc);
-  const toG = (v) => {
-    // Python "%.3g" → JS toPrecision(3) with trailing-zero trim is close enough; the
-    // template actually formats at display time via Plotly, but here we need the number
-    // inline because these are scalar markers, not per-point customdata. Use Number.
-    const s = Number(v).toPrecision(3);
-    // Strip trailing zeros after decimal point, and trailing '.' if it ends with one.
-    return s.indexOf('.') >= 0 && s.indexOf('e') < 0 ? s.replace(/\.?0+$/, '') : s;
-  };
-  const texpStr = okTexp ? ('<br>t<sub>exp</sub> = ' + toG(t_exp_s) + ' s') : '';
-  const qStr    = okQ    ? ('<br>q<sub>med</sub> = ' + toG(q_med)) : '';
-  const dStr    = okD    ? ('<br>D<sub>med</sub> = ' + toG(D_med_Gpc) + ' Gpc') : '';
+  const texpStr = okTexp ? ('<br>t<sub>exp</sub> = ' + fmtG(t_exp_s) + ' s') : '';
+  const qStr    = okQ    ? ('<br>q<sub>med</sub> = ' + fmtG(q_med)) : '';
+  const dStr    = okD    ? ('<br>D<sub>med</sub> = ' + fmtG(D_med_Gpc) + ' Gpc') : '';
   return (
     label +
     '<br>N<sub>exp</sub> = %{x:.4g}' +
@@ -1039,7 +1093,7 @@ function addDay3DLines(traces, shared, params, zmaxLog) {
     const xG   = good.map(j => Nrow[j]);
     const yG   = good.map(_ => yHr);
     const zG   = good.map(j => Rrow[j]);
-    const cdG  = good.map(j => [tErow[j], qErow[j], dErow[j]]);
+    const cdG  = good.map(j => [cdNum(tErow[j]), cdNum(qErow[j]), cdNum(dErow[j])]);
 
     if (regimeMode && ridRow) {
       const ridG = good.map(j => ridRow[j]);
@@ -1136,9 +1190,14 @@ function render3DSurface(data, params) {
         showscale: false, connectgaps: false, showlegend: false,
         lighting: {ambient: 0.75, diffuse: 0.75, specular: 0.08, roughness: 0.95},
         lightposition: {x: 100, y: 200, z: 0},
-        hovertemplate: XYZ_HOVER,
       };
-      if (surfCustomdata3D) trace.customdata = surfCustomdata3D;
+      // XYZ_HOVER references customdata — attach them together or not at all.
+      if (surfCustomdata3D) {
+        trace.customdata = surfCustomdata3D;
+        trace.hovertemplate = XYZ_HOVER;
+      } else {
+        trace.hovertemplate = XYZ_HOVER_BASIC;
+      }
       traces.push(trace);
     }
     REGIME_HEX.forEach((col, i) => traces.push({
@@ -1162,9 +1221,14 @@ function render3DSurface(data, params) {
         tickvals: [-2, -1, 0, 1, 2, 3, 4],
         ticktext: ['0.01', '0.1', '1', '10', '100', '1k', '10k'],
       },
-      hovertemplate: XYZ_HOVER,
     };
-    if (surfCustomdata3D) trace.customdata = surfCustomdata3D;
+    // XYZ_HOVER references customdata — attach them together or not at all.
+    if (surfCustomdata3D) {
+      trace.customdata = surfCustomdata3D;
+      trace.hovertemplate = XYZ_HOVER;
+    } else {
+      trace.hovertemplate = XYZ_HOVER_BASIC;
+    }
     traces.push(trace);
   }
 
@@ -1285,10 +1349,10 @@ function renderNSlice(data) {
     zv.push(z);
     ridV.push(ridArr.length ? ridArr[c] : null);
     cdV.push([
-      tCadRow,
-      teArr.length ? teArr[c] : null,
-      qmArr.length ? qmArr[c] : null,
-      dmArr.length ? dmArr[c] : null,
+      cdNum(tCadRow, 4),
+      cdNum(teArr.length ? teArr[c] : null),
+      cdNum(qmArr.length ? qmArr[c] : null),
+      cdNum(dmArr.length ? dmArr[c] : null),
     ]);
   }
 
@@ -1338,7 +1402,7 @@ function renderNSlice(data) {
     }
     const R_at_N_opt = zv[optIdx];
     if (isFinite(R_at_N_opt) && R_at_N_opt > 0) {
-      const cd = cdV[optIdx] || [tCadRow, null, null, null];
+      const cd = cdV[optIdx] || [cdNum(tCadRow, 4), '—', '—', '—'];
       traces.push({
         type: 'scatter', x: [data.N_opt], y: [R_at_N_opt],
         mode: 'markers',
@@ -1347,10 +1411,10 @@ function renderNSlice(data) {
         customdata: [cd],
         hovertemplate:
           'N<sub>exp,opt</sub> = %{x:.4g}<br>' +
-          't<sub>cad</sub> = %{customdata[0]:.4g} hr<br>' +
-          't<sub>exp</sub> = %{customdata[1]:.3g} s<br>' +
-          'q<sub>med</sub> = %{customdata[2]:.3g}<br>' +
-          'D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>' +
+          't<sub>cad</sub> = %{customdata[0]} hr<br>' +
+          't<sub>exp</sub> = %{customdata[1]} s<br>' +
+          'q<sub>med</sub> = %{customdata[2]}<br>' +
+          'D<sub>med</sub> = %{customdata[3]} Gpc<br>' +
           'R<sub>det</sub> = %{y:.4g} yr ⁻¹' +
           '<extra>Opt. N<sub>exp</sub></extra>',
         hoverlabel: hl,
@@ -1485,10 +1549,10 @@ function renderTSlice(data) {
     rCont.push(z);
     ridCont.push(ridContArr.length ? ridContArr[i] : null);
     cdCont.push([
-      N_opt_col,
-      tecContArr.length ? tecContArr[i] : null,
-      qmContArr.length  ? qmContArr[i]  : null,
-      dmContArr.length  ? dmContArr[i]  : null,
+      cdNum(N_opt_col, 4),
+      cdNum(tecContArr.length ? tecContArr[i] : null),
+      cdNum(qmContArr.length  ? qmContArr[i]  : null),
+      cdNum(dmContArr.length  ? dmContArr[i]  : null),
     ]);
   }
 
@@ -1508,10 +1572,10 @@ function renderTSlice(data) {
     rDisc.push(z);
     ridDisc.push(ridDiscArr.length ? ridDiscArr[i] : null);
     cdDisc.push([
-      N_opt_col,
-      tecDiscArr.length ? tecDiscArr[i] : null,
-      qmDiscArr.length  ? qmDiscArr[i]  : null,
-      dmDiscArr.length  ? dmDiscArr[i]  : null,
+      cdNum(N_opt_col, 4),
+      cdNum(tecDiscArr.length ? tecDiscArr[i] : null),
+      cdNum(qmDiscArr.length  ? qmDiscArr[i]  : null),
+      cdNum(dmDiscArr.length  ? dmDiscArr[i]  : null),
     ]);
   }
 
@@ -1627,13 +1691,13 @@ function renderTSlice(data) {
         mode: 'markers',
         marker: {size: 12, color: AMBER, symbol: 'diamond', line: {width: 1.5, color: 'white'}},
         name: 'Opt. t<sub>cad</sub>',
-        customdata: [cdSrc || [N_opt_col, null, null, null]],
+        customdata: [cdSrc || [cdNum(N_opt_col, 4), '—', '—', '—']],
         hovertemplate:
-          'N<sub>exp</sub> = %{customdata[0]:.4g}<br>' +
+          'N<sub>exp</sub> = %{customdata[0]}<br>' +
           't<sub>cad,opt</sub> = %{x:.4g} hr<br>' +
-          't<sub>exp</sub> = %{customdata[1]:.3g} s<br>' +
-          'q<sub>med</sub> = %{customdata[2]:.3g}<br>' +
-          'D<sub>med</sub> = %{customdata[3]:.3g} Gpc<br>' +
+          't<sub>exp</sub> = %{customdata[1]} s<br>' +
+          'q<sub>med</sub> = %{customdata[2]}<br>' +
+          'D<sub>med</sub> = %{customdata[3]} Gpc<br>' +
           'R<sub>det</sub> = %{y:.4g} yr ⁻¹' +
           '<extra>Opt. t<sub>cad</sub></extra>',
         hoverlabel: hl,
@@ -1787,7 +1851,7 @@ function _renderQDPlot(opts) {
     if (!isFinite(x) || !isFinite(y) || !(y > 0)) continue;
     xv.push(x); yv.push(y);
     const frac = (opts.mode === 'cum' && totalR != null) ? y / totalR : null;
-    cdV.push([opts.nFix, opts.tCadH, frac]);
+    cdV.push([cdNum(opts.nFix, 4), cdNum(opts.tCadH, 4), cdPct(frac)]);
   }
 
   const traces = [];
@@ -2041,6 +2105,20 @@ function updateDerivedDisplays(data) {
     else                 { val = Fj * 1e9; unit = 'nJy'; }
     document.getElementById('fnu-tdec-display').innerHTML =
       'F<sub>ν</sub>(t<sub>dec</sub>,D<sub>Euc</sub>) = ' + val.toPrecision(3) + ' ' + unit;
+    // TEMP-FDEC-OVERRIDE — begin: follower snap (silent — no 'input' dispatch).
+    // The F_dec_override_applied echo guards against a stale in-flight override
+    // compute returning after the user cleared the override.
+    if (!_fdecOverride && !data.F_dec_override_applied) {
+      const sl  = document.getElementById('fdec_log_slider');
+      const inp = document.getElementById('fdec_log_input');
+      if (sl && Fj > 0) {
+        sl.value = Math.log10(Fj);   // native range snaps to step grid + clamps
+        if (inp) inp.value = sl.value;
+        updateSliderVisual(sl);
+      }
+    }
+    _updateFdecNote();
+    // TEMP-FDEC-OVERRIDE — end
   }
 }
 
@@ -2101,7 +2179,7 @@ _b.compute_all({
     'epsilon_e_log10':-1.0,'epsilon_B_log10':-2.0,'theta_j_rad':0.1,
     'gamma0_log10':2.5,'D_euc_gpc':5.28,'rho_grb_log10':2.415,
     'optical_survey':False,'color_regimes':False,
-    'full_integral':False,'qmin':0.0,'Dmin_cm':0.0,'s_min':0.0,'s_mode':'discrete','toh_approx':False,'nx':60,'ny':80,
+    'full_integral':False,'qmin':0.0,'Dmin_cm':0.0,'s_fade':0.0,'s_rise':0.0,'s_mode':'discrete','toh_approx':False,'nx':60,'ny':80,
 })
 print('Bridge ready')
 `);

@@ -40,6 +40,13 @@ from .survey import N_exp_max, exposure_time_s, is_strategy_physical, limiting_f
 # Tolerance used to make boundary cases robust (e.g. N_exp = N_exp_max exactly)
 _REGION_BOUNDARY_EPS: float = 1e-12
 
+# Memory budget for the full-integral q-chunks: max float64 elements per
+# (n_chunk, *grid) intermediate (2e6 el ≈ 16 MiB; ~15 concurrent slabs in the
+# s_rise > 0 branch of _weighted_D_volume → ~250 MiB peak, safe inside
+# Pyodide's WASM32 ~4 GiB address space independent of the strategy-grid
+# size).  Read at call time so tests can monkeypatch it.
+_FULL_INTEGRAL_CHUNK_ELEMS: int = 2_000_000
+
 
 @dataclass(frozen=True)
 class DerivedAfterglowScales:
@@ -330,46 +337,42 @@ class DetectionRateModel:
         return {"A0": A0, "A1": A1, "A2": A2, "A3": A3, "A4": A4, "A5": A5, "A6": A6, "A7": A7}
 
     # ---------- Fading-rate filter ----------
-    def _q_s_fading_caps(
+    def _t_first_caps(
         self,
         i_det: int,
         t_cad_s: np.ndarray,
-        s_min: float,
+        s_fade: float,
         s_mode: str,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Phase-resolved viewing-angle caps imposed by a fading-rate filter.
+        """Phase-resolved caps on the first-detection time from the s_fade filter.
 
         Real surveys reject candidates that don't fade fast enough across their
-        i detections.  Modeling this as a cut on either the finite-difference
-        slope ("discrete") or the instantaneous slope ("continuous"), we invert
-        to an upper bound on the burst's peak time t_p, then map t_p → q̃ via
-        the model's q_i() relation.
+        i detections.  For a post-peak power law F(t) ∝ t^α (α < 0) the measured
+        slope between t_first and t_last = t_first + (i−1) t_cad depends only on
+        t_first (not on t_p separately):
+            s_meas = −2.5 α · log10(1 + (i−1) t_cad / t_first) · DAY_S / ((i−1) t_cad).
+        Requiring s_meas ≥ s_fade and solving for the latest admissible first
+        detection gives (discrete mode):
+            t_f,s = (i−1) t_cad / (10^E − 1),  E = s_fade (i−1) t_cad / (DAY_S · 2.5|α|).
+        The continuous version uses |dm/dt|(t_first) = 2.5|α|/(t_first · ln10·sec/day):
+            t_f,s = 2.5|α| DAY_S / (s_fade · ln10).
+        Pass ⇔ t_first ≤ t_f,s.
 
         Returns
         -------
-        q_s_II, q_s_III : ndarray
-            Upper q-caps for Phase II and Phase III viewers, broadcast to the
-            shape of t_cad_s.  +∞ means "no cap" (cut bypassed).
-
-        Derivation
-        ----------
-        Post-peak F(t) ∝ t^α with α < 0.  Setting t_first ≈ t_p(q) and
-        t_last = t_p + (i−1) t_cad, the measured fading rate is
-            s_meas = −2.5 α · log10(1 + (i−1) t_cad / t_p) · DAY_S / ((i−1) t_cad).
-        Requiring s_meas ≥ s_min and solving for t_p,s gives (A1):
-            t_p,s = (i−1) t_cad / (10^E − 1),  E = s_min (i−1) t_cad / (DAY_S · 2.5|α|).
-        The continuous version uses |dm/dt|(t_p) = 2.5|α|/(t_p · ln10·sec/day), so (B1):
-            t_p,s = 2.5|α| DAY_S / (s_min · ln10).
-        Both pass to q̃_s via t_p = t_j · q̃^β with β = 3/8 (II) or 1/2 (III).
+        t_f_s_II, t_f_s_III : ndarray
+            Latest admissible first-detection time [s] for Phase II and Phase
+            III viewers, broadcast to the shape of t_cad_s.  +∞ = cut bypassed
+            (s_fade ≤ 0, or i_det < 2 in discrete mode where the slope is
+            undefined).
         """
         t_cad_arr = np.asarray(t_cad_s, dtype=float)
-        out_shape = t_cad_arr.shape if t_cad_arr.shape != () else (1,)
 
         # Bypass conditions.
-        s_min_f = float(s_min)
+        s_fade_f = float(s_fade)
         i_det_i = int(i_det)
         no_cut = (
-            s_min_f <= 0.0
+            s_fade_f <= 0.0
             or (s_mode == "discrete" and i_det_i < 2)
         )
         if no_cut:
@@ -377,7 +380,6 @@ class DetectionRateModel:
             return inf_arr, inf_arr
 
         p = self.phys.p
-        t_j = float(self.derived.t_j_s)
         LN10 = float(np.log(10.0))
 
         # |α| in temporal sense (positive numbers).
@@ -385,28 +387,309 @@ class DetectionRateModel:
         A_III = 2.5 * abs(float(self.pls.alpha_III_temporal(p)))
 
         if s_mode == "continuous":
-            t_p_s_II  = A_II  * DAY_S / (s_min_f * LN10)
-            t_p_s_III = A_III * DAY_S / (s_min_f * LN10)
-            t_p_s_II_arr  = np.full(t_cad_arr.shape, t_p_s_II,  dtype=float)
-            t_p_s_III_arr = np.full(t_cad_arr.shape, t_p_s_III, dtype=float)
+            t_f_s_II  = A_II  * DAY_S / (s_fade_f * LN10)
+            t_f_s_III = A_III * DAY_S / (s_fade_f * LN10)
+            t_f_s_II_arr  = np.full(t_cad_arr.shape, t_f_s_II,  dtype=float)
+            t_f_s_III_arr = np.full(t_cad_arr.shape, t_f_s_III, dtype=float)
         else:  # "discrete"
-            # dt = (i−1) · t_cad ; E_phase = s_min · dt / (DAY_S · A_phase)
+            # dt = (i−1) · t_cad ; E_phase = s_fade · dt / (DAY_S · A_phase)
             dt = float(i_det_i - 1) * t_cad_arr
-            E_II  = s_min_f * dt / (DAY_S * A_II)
-            E_III = s_min_f * dt / (DAY_S * A_III)
+            E_II  = s_fade_f * dt / (DAY_S * A_II)
+            E_III = s_fade_f * dt / (DAY_S * A_III)
             # 10^E − 1 = expm1(E·ln10); numerically robust for small E.
             denom_II  = np.expm1(E_II  * LN10)
             denom_III = np.expm1(E_III * LN10)
             # When denom → 0 (e.g. t_cad → 0) the cut becomes effectively absent.
             tiny = 1e-300
-            t_p_s_II_arr  = np.where(denom_II  > tiny, dt / np.maximum(denom_II,  tiny), np.inf)
-            t_p_s_III_arr = np.where(denom_III > tiny, dt / np.maximum(denom_III, tiny), np.inf)
+            t_f_s_II_arr  = np.where(denom_II  > tiny, dt / np.maximum(denom_II,  tiny), np.inf)
+            t_f_s_III_arr = np.where(denom_III > tiny, dt / np.maximum(denom_III, tiny), np.inf)
 
-        # Map t_p,s → q̃_s → q_s per phase.  +∞ in → +∞ out (no cap).
+        return t_f_s_II_arr, t_f_s_III_arr
+
+    def _q_s_fading_caps(
+        self,
+        i_det: int,
+        t_cad_s: np.ndarray,
+        s_fade: float,
+        s_mode: str,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Phase-resolved viewing-angle caps imposed by the fading-rate filter.
+
+        Best-case (dominant-term) form of the s_fade cut: the first detection is
+        assumed to land at the light-curve peak, t_first ≈ t_p(q), so the
+        first-detection cap t_f,s of `_t_first_caps` becomes a cap on the peak
+        time and maps to an upper viewing-angle bound via t_p = t_j · q̃^β with
+        β = 8/3 (II) or 2 (III):
+            q_s = 1 + (t_f,s / t_j)^{1/β}.
+        This is exact in the t_cad → 0 limit of the uniform-start model and an
+        optimistic upper bound otherwise; the full-integral path uses the
+        uniform-start survival probability `_fading_survival` instead.
+
+        Returns
+        -------
+        q_s_II, q_s_III : ndarray
+            Upper q-caps for Phase II and Phase III viewers, broadcast to the
+            shape of t_cad_s.  +∞ means "no cap" (cut bypassed).
+        """
+        t_f_s_II, t_f_s_III = self._t_first_caps(i_det, t_cad_s, s_fade, s_mode)
+        t_j = float(self.derived.t_j_s)
+
+        # Map t_f,s → q̃_s → q_s per phase.  +∞ in → +∞ out (no cap).
         with np.errstate(over="ignore"):
-            q_s_II  = 1.0 + (t_p_s_II_arr  / t_j) ** (3.0 / 8.0)
-            q_s_III = 1.0 + (t_p_s_III_arr / t_j) ** 0.5
+            q_s_II  = 1.0 + (t_f_s_II  / t_j) ** (3.0 / 8.0)
+            q_s_III = 1.0 + (t_f_s_III / t_j) ** 0.5
         return q_s_II, q_s_III
+
+    def _fading_survival(
+        self,
+        q: np.ndarray,
+        i_det: int,
+        t_cad_s: np.ndarray,
+        s_fade: float,
+        s_mode: str,
+    ) -> np.ndarray:
+        """Pointwise pass probability of the s_fade filter for a uniform start.
+
+        Generalizes the best-case t_first ≈ t_p(q) assumption: the survey's
+        visit schedule has a random phase relative to the burst, so the first
+        post-peak detection lands at t_first = t_p + u with u ~ U(0, t_cad).
+        Pass ⇔ t_first ≤ t_f,s (see `_t_first_caps`), giving
+
+            P(q) = clip( (t_f,s − t_p(q)) / t_cad, 0, 1 ),
+            t_p(q) = t_j · max(q − 1, 0)^β,  β = 8/3 (II), 2 (III).
+
+        The effective peak time carries the physical t_dec floor,
+        t_p,eff = max(t_j·q̃₊^β, t_dec) (see `_t_p_eff`) — exact for on-axis
+        viewers since t_j·q̃_dec^{8/3} = t_dec identically; for the fade weight
+        the floor matters only at O(t_dec/t_cad).  On-axis viewers (q < q_dec)
+        are lumped with Phase II, and P → 1 at the old hard cap's t_cad → 0
+        limit.  When t_f,s < t_cad even on-axis bursts pass only with
+        probability ≈ t_f,s/t_cad: with a long cadence the afterglow is usually
+        caught late, when its mag/day decline is slow.
+
+        Parameters
+        ----------
+        q : ndarray
+            Viewing-angle grid, broadcastable against t_cad_s (e.g. shape
+            (N_q, *grid) against (*grid)).
+
+        Returns
+        -------
+        P : ndarray
+            Pass probability in [0, 1], broadcast of q against t_cad_s.
+            Exactly 1.0 everywhere when the cut is bypassed.
+        """
+        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        q_arr = np.asarray(q, dtype=float)
+
+        s_fade_f = float(s_fade)
+        i_det_i = int(i_det)
+        no_cut = (
+            s_fade_f <= 0.0
+            or (s_mode == "discrete" and i_det_i < 2)
+        )
+        if no_cut:
+            shape = np.broadcast(q_arr, t_cad_arr).shape
+            return np.ones(shape, dtype=float)
+
+        t_f_s_II, t_f_s_III = self._t_first_caps(i_det, t_cad_arr, s_fade, s_mode)
+        q_j = float(self.derived.q_j)
+
+        t_p_eff = self._t_p_eff(q_arr)
+        # clip() maps a per-element t_f,s = +∞ (expm1 underflow) to exactly 1.0,
+        # so the bypass stays bit-neutral under multiplication.
+        with np.errstate(invalid="ignore", over="ignore"):
+            P_II  = np.clip((t_f_s_II  - t_p_eff) / t_cad_arr, 0.0, 1.0)
+            P_III = np.clip((t_f_s_III - t_p_eff) / t_cad_arr, 0.0, 1.0)
+        # On-axis (q < q_dec) lumped with Phase II, mirroring the full-integral
+        # phase masks (on_axis | phase_II ⇔ q < q_j).
+        return np.where(q_arr < q_j, P_II, P_III)
+
+    def _t_p_eff(self, q: np.ndarray) -> np.ndarray:
+        """Effective peak time max(t_j·q̃₊^β, t_dec), β = 8/3 (q < q_j) else 2.
+
+        The t_dec floor is exact for on-axis viewers: t_j·q̃_dec^{8/3} = t_dec
+        identically, so the floor binds precisely for q ≤ q_dec (where the
+        model's light curve peaks at t_dec with the constant D̃_dec horizon)
+        and is a no-op for q ≥ q_dec.
+        """
+        q_arr = np.asarray(q, dtype=float)
+        t_j = float(self.derived.t_j_s)
+        t_dec = float(self.derived.t_dec_s)
+        q_j = float(self.derived.q_j)
+        qt = np.maximum(q_arr - 1.0, 0.0)
+        t_p = np.where(q_arr < q_j, t_j * qt ** (8.0 / 3.0), t_j * qt ** 2.0)
+        return np.maximum(t_p, t_dec)
+
+    def _rise_eta(
+        self,
+        t_cad_s: np.ndarray,
+        s_rise: float,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Rise-filter flux-limit boost η and its inverse square root.
+
+        A previous non-detection one cadence before the first detection,
+        bounded by the limiting magnitude, implies a rise rate of at least
+        (m_lim − m_first)/t_cad.  Requiring that to exceed s_rise [mag/day] is
+        equivalent to F(t_first) ≥ η·F_lim with
+            η = 10^E,  E = s_rise · t_cad / (2.5 · DAY_S).
+        Returns (η, η^{−1/2}); the inverse root is computed directly as
+        10^{−E/2} so it underflows gracefully to 0.0 where η overflows to +∞.
+        Bypass (s_rise ≤ 0) returns (ones, ones).
+        """
+        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        s_rise_f = float(s_rise)
+        if s_rise_f <= 0.0:
+            ones = np.ones(t_cad_arr.shape, dtype=float)
+            return ones, ones
+        E = s_rise_f * t_cad_arr / (2.5 * DAY_S)
+        with np.errstate(over="ignore"):
+            eta = 10.0 ** E
+        inv_sqrt_eta = 10.0 ** (-0.5 * E)
+        return eta, inv_sqrt_eta
+
+    def _rise_fade_windows(
+        self,
+        q: np.ndarray,
+        i_det: int,
+        t_cad_s: np.ndarray,
+        s_fade: float,
+        s_rise: float,
+        s_mode: str,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """Shared per-point quantities for the joint fade+rise weights.
+
+        Returns (t_p_eff, t_fs_sel, k_sel, inv_sqrt_eta): the floored peak
+        time, the phase-selected fade cap on t_first (+∞ when the fade cut is
+        bypassed), the phase-selected exponent k = 2/|α_phase| of the
+        limit-crossing time t_lim = t_p,eff·(D̃_0/D̃)^k, and the rise boost's
+        η^{−1/2}.  Phase split at q_j (on-axis lumped with Phase II).
+        """
+        q_arr = np.asarray(q, dtype=float)
+        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        p = self.phys.p
+        q_j = float(self.derived.q_j)
+        is_II = q_arr < q_j
+
+        t_p_eff = self._t_p_eff(q_arr)
+        t_fs_II, t_fs_III = self._t_first_caps(i_det, t_cad_arr, s_fade, s_mode)
+        t_fs_sel = np.where(is_II, t_fs_II, t_fs_III)
+
+        k_II = 2.0 / abs(float(self.pls.alpha_II_temporal(p)))
+        k_III = 2.0 / abs(float(self.pls.alpha_III_temporal(p)))
+        k_sel = np.where(is_II, k_II, k_III)
+
+        _, inv_sqrt_eta = self._rise_eta(t_cad_arr, s_rise)
+        return t_p_eff, t_fs_sel, k_sel, inv_sqrt_eta
+
+    def _joint_survival(
+        self,
+        q: np.ndarray,
+        D_tilde: np.ndarray,
+        D_tilde_max: np.ndarray,
+        i_det: int,
+        t_cad_s: np.ndarray,
+        s_fade: float,
+        s_rise: float,
+        s_mode: str,
+    ) -> np.ndarray:
+        """Pointwise joint fade+rise pass probability for a uniform start.
+
+        Both cuts are conditions on the SAME uniform start offset u
+        (comonotone, not independent), so the joint probability is the min of
+        the two admissible windows, not their product:
+
+            pass_fade ⇔ u ≤ t_f,s − t_p,eff
+            pass_rise ⇔ u ≤ t_lim(q, D̃) − t_p,eff
+            w = clip( min(t_f,s, t_lim) − t_p,eff, 0, t_cad ) / t_cad,
+
+        where t_lim = t_p,eff·(D̃_0/D̃)^k is the time the light curve fades to
+        the raised limit η·F_lim, D̃_0(q) = D̃_max(q)·η^{−1/2}, k = 2/|α_phase|.
+
+        `D_tilde` and `D_tilde_max` are distances normalized to D_euc.  With
+        s_rise ≤ 0 this delegates to `_fading_survival` (bit-compatible).
+        """
+        if float(s_rise) <= 0.0:
+            return self._fading_survival(q, i_det, t_cad_s, s_fade, s_mode)
+
+        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        t_p_eff, t_fs_sel, k_sel, ise = self._rise_fade_windows(
+            q, i_det, t_cad_arr, s_fade, s_rise, s_mode
+        )
+        D0 = np.asarray(D_tilde_max, dtype=float) * ise
+        D_safe = np.maximum(np.asarray(D_tilde, dtype=float), 1e-300)
+        with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+            t_lim = t_p_eff * (D0 / D_safe) ** k_sel
+            w = np.clip(
+                (np.minimum(t_fs_sel, t_lim) - t_p_eff) / t_cad_arr, 0.0, 1.0
+            )
+        return w
+
+    def _weighted_D_volume(
+        self,
+        q: np.ndarray,
+        D_tilde_max: np.ndarray,
+        D_eff: np.ndarray,
+        D_min_norm: float,
+        i_det: int,
+        t_cad_s: np.ndarray,
+        s_fade: float,
+        s_rise: float,
+        s_mode: str,
+    ) -> np.ndarray:
+        """Closed-form joint-weighted D-volume for the full-integral q-integrand.
+
+        Replaces max(D_eff³ − D̃_min³, 0)·P_fade with
+
+            V_w(q) = ∫_{D̃_min}^{D̃_eff(q)} 3D̃² · w(q, D̃) dD̃,
+
+        w being the joint survival of `_joint_survival`.  Since the rise
+        window w_r(D̃) = clip(t_lim − t_p,eff, 0, t_cad) decreases with D̃ and
+        the fade window w_f is D̃-independent, w = min(w_f, w_r)/t_cad is a
+        constant piece followed by a power-law ramp and zero:
+
+            w_f  = clip(t_f,s − t_p,eff, 0, t_cad)          (0 ⇒ V_w = 0)
+            D̃_c = D̃_0·(t_p,eff/(t_p,eff + w_f))^{1/k}       (ramp start)
+            V_w  = (w_f/t_cad)·[min(D̃_eff, D̃_c)³ − D̃_min³]₊
+                 + (t_p,eff/t_cad)·[G(U) − G(L)]
+            G(D̃) = 3·D̃_0^k·D̃^{3−k}/(3−k) − D̃³
+            U = min(D̃_eff, D̃_0);  L = min(max(D̃_min, D̃_c), U)
+
+        with k = 2/|α_phase| < 3 always (p > 2 ⇒ k_II ≤ 8/3·1/(p−1) < 3,
+        k_III = 2/p < 1), so the (3−k) pole is unreachable.  With s_rise ≤ 0
+        this reproduces the fade-only product exactly (bit-compatible).
+        """
+        if float(s_rise) <= 0.0:
+            P_fade = self._fading_survival(q, i_det, t_cad_s, s_fade, s_mode)
+            return np.maximum(D_eff ** 3 - D_min_norm ** 3, 0.0) * P_fade
+
+        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        t_p_eff, t_fs_sel, k_sel, ise = self._rise_fade_windows(
+            q, i_det, t_cad_arr, s_fade, s_rise, s_mode
+        )
+        D0 = np.asarray(D_tilde_max, dtype=float) * ise
+        D_eff_arr = np.asarray(D_eff, dtype=float)
+        D_min_n = float(D_min_norm)
+        D_min3 = D_min_n ** 3
+
+        with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+            # Fade window [s], clipped; t_fs = +∞ (bypass) → exactly t_cad.
+            w_f = np.clip(t_fs_sel - t_p_eff, 0.0, t_cad_arr)
+            # Ramp start: where the rise window first drops to w_f.
+            D_c = D0 * (t_p_eff / (t_p_eff + w_f)) ** (1.0 / k_sel)
+
+            term_const = (w_f / t_cad_arr) * np.maximum(
+                np.minimum(D_eff_arr, D_c) ** 3 - D_min3, 0.0
+            )
+
+            U = np.minimum(D_eff_arr, D0)
+            L = np.minimum(np.maximum(D_min_n, D_c), U)
+            expo = 3.0 - k_sel
+            G_U = 3.0 * D0 ** k_sel * U ** expo / expo - U ** 3
+            G_L = 3.0 * D0 ** k_sel * L ** expo / expo - L ** 3
+            term_ramp = (t_p_eff / t_cad_arr) * np.maximum(G_U - G_L, 0.0)
+
+        return term_const + term_ramp
 
     def rate_log10(
         self,
@@ -416,7 +699,8 @@ class DetectionRateModel:
         *,
         q_min: float = 0.0,
         D_min_cm: float = 0.0,
-        s_min: float = 0.0,
+        s_fade: float = 0.0,
+        s_rise: float = 0.0,
         s_mode: str = "discrete",
         return_components: bool = False,
     ) -> np.ndarray | Tuple[np.ndarray, Dict[str, np.ndarray]]:
@@ -435,16 +719,34 @@ class DetectionRateModel:
             viewing-angle parameter q ≥ q_min and source distance D ≥ D_min_cm.
             Each regime's rate gets clipping factors max(q_max² − q_min², 0)
             and max(D_eff³ − D_min³, 0).  Default 0 / 0 = no filter.
-        s_min : float, optional
+        s_fade : float, optional
             Minimum required fading rate of the i-detection light-curve segment
-            in mag/day.  Translates to a phase-resolved upper q-cap via
-            `_q_s_fading_caps()`.  Default 0 = no fading filter.
+            in mag/day.  In this dominant-term (closed-form) mode it translates
+            to a best-case phase-resolved upper q-cap via `_q_s_fading_caps()`
+            (first detection assumed at the peak); the full-integral mode uses
+            the uniform-start survival probability `_fading_survival()` instead.
+            Default 0 = no fading filter.
+        s_rise : float, optional
+            Minimum required rise rate in mag/day implied by a previous-visit
+            non-detection at the limiting magnitude: (m_lim − m_first)/t_cad ≥
+            s_rise ⇔ F(t_first) ≥ η·F_lim with η = 10^(s_rise·t_cad/2.5 DAY_S)
+            (see `_rise_eta`).  In this dominant-term mode (first detection at
+            the peak) the raised limit shifts the flux-limited boundaries:
+            q_Euc → q_Euc(η F_lim), the A4-A6 boundary → q_Euc(η F_lim (D_i/
+            D_euc)²) (the angle where D_max(q)/√η = D_i; equals q_i at η = 1),
+            and A7's D_dec → D_dec·η^{−1/2}.  Each of r1-r6 is the max of the
+            angular-truncated term and an on-axis term [q ≤ q_dec, D ≤ D_dec·
+            η^{−1/2}] — two closed-form lower bounds of the pass volume; the
+            max keeps the deep-cut limit correct (rates → 0 instead of
+            saturating when the boundary angle collapses to q = 1).  Unlike the
+            fade filter, applies at i_det = 1 too.  Default 0 = off.
         s_mode : {"discrete", "continuous"}, optional
-            Whether s_min is interpreted as Δm/Δt across the i detections
+            Whether s_fade is interpreted as Δm/Δt across the i detections
             ("discrete", default — matches real survey alert filters and is
-            undefined at i_det = 1, bypassed there) or |dm/dt| at the peak
-            ("continuous", strategy-independent).  The two coincide in the
-            t_cad → 0 limit.
+            undefined at i_det = 1, bypassed there) or |dm/dt| at the first
+            detection ("continuous").  The two coincide in the t_cad → 0 limit.
+            Fade-only: the rise measurement is inherently a previous-visit
+            finite difference.
 
         Returns
         -------
@@ -492,35 +794,90 @@ class DetectionRateModel:
         def _D_factor(D_norm_cubed: np.ndarray | float) -> np.ndarray:
             return np.maximum(D_norm_cubed - D_min_norm_cubed, 0.0)
 
-        # Fading-rate q-caps.  +∞ at s_min=0 (or i_det<2 in discrete mode) so the
+        # Fading-rate q-caps.  +∞ at s_fade=0 (or i_det<2 in discrete mode) so the
         # np.minimum() below collapses to the original q_max and rates are unchanged.
-        q_s_II, q_s_III = self._q_s_fading_caps(i_det, t_cad_b, s_min, s_mode)
+        q_s_II, q_s_III = self._q_s_fading_caps(i_det, t_cad_b, s_fade, s_mode)
 
-        # Effective q_max per regime: phase-mapped fading cap min'd with the
-        # regime's original geometric bound.  A1/A2/A4/A5 sit in Phase III (q > q_j),
-        # A3/A6/A7 in Phase II.
+        # Rise-rate boundaries at the raised limit η·F_lim (previous-visit
+        # non-detection).  Bypass (s_rise ≤ 0) → +∞ caps and zero on-axis
+        # alternative terms, keeping every r_k value bit-identical to the
+        # fade-only path (min/max with ∞/0 are exact no-ops on non-negatives).
+        s_rise_on = float(s_rise) > 0.0
+        if s_rise_on:
+            eta, ise = self._rise_eta(t_cad_b, s_rise)
+            with np.errstate(over="ignore", invalid="ignore"):
+                qE_r = self.q_Euc(eta * F_lim)
+                q_ri = self.q_Euc(eta * F_lim * (D_i / D_euc) ** 2)
+            D_dec_r = D_dec * ise
+            # The q_Euc-extrapolated boundary is the true flux boundary only
+            # while it sits above q_dec; below the crossing the on-axis D̃_dec
+            # plateau makes the angular box overcount, so the angular term is
+            # zeroed and the on-axis term takes over.  At the crossing
+            # (qE_r = q_dec ⇔ D_dec·η^{−1/2} = D_eff-scale) the two terms are
+            # equal, so np.maximum() below stays continuous in s_rise.
+            valid_E = qE_r >= q_dec_val
+            valid_i = q_ri >= q_dec_val
+        else:
+            qE_r = q_ri = np.inf
+            D_dec_r = np.inf
+            valid_E = valid_i = True
+
+        # Effective q_max per regime: phase-mapped fading cap and rise boundary
+        # min'd with the regime's original geometric bound.  Fade phase map:
+        # A1/A2/A4/A5 sit in Phase III (q > q_j), A3/A6/A7 in Phase II.  Rise
+        # boundary: qE_r for the flux-limited A1-A3, q_ri for the cadence-
+        # limited A4-A6 (r1/r4 split the previously shared q_nr cap).
         q_nr_eff   = np.minimum(q_nr_val,  q_s_III)
-        qE_eff_III = np.minimum(qE,        q_s_III)
-        qE_eff_II  = np.minimum(qE,        q_s_II)
-        qi_eff_III = np.minimum(qi,        q_s_III)
-        qi_eff_II  = np.minimum(qi,        q_s_II)
+        q_nr_eff_1 = np.minimum(q_nr_eff,  qE_r)
+        q_nr_eff_4 = np.minimum(q_nr_eff,  q_ri)
+        qE_eff_III = np.minimum(np.minimum(qE, q_s_III), qE_r)
+        qE_eff_II  = np.minimum(np.minimum(qE, q_s_II),  qE_r)
+        qi_eff_III = np.minimum(np.minimum(qi, q_s_III), q_ri)
+        qi_eff_II  = np.minimum(np.minimum(qi, q_s_II),  q_ri)
         q_dec_eff  = np.minimum(q_dec_val, q_s_II)
 
         # Region rates (linear), un-simplified so the q² / D³ factors are explicit.
         # r1's pre-filter form `fO * R_int` exploits θ_j² · q_nr² = 2; we re-introduce
         # the explicit factors here so the filter can clip them generically.
-        D_eff7 = np.minimum(D_dec, D_i) / D_euc
+        D_eff7 = np.minimum(np.minimum(D_dec, D_i), D_dec_r) / D_euc
         D_norm_cubed_A123 = 1.0                                    # D̃_eff = 1 (D_Euc cap)
         D_norm_cubed_A456 = (D_i / D_euc) ** 3                     # D̃_eff = D_i / D_euc
-        D_norm_cubed_A7   = D_eff7 ** 3                            # D̃_eff = min(D_dec, D_i)/D_euc
+        D_norm_cubed_A7   = D_eff7 ** 3                            # D̃_eff = min(D_dec, D_i, D_dec_r)/D_euc
+
+        # On-axis alternative terms for the rise cut (deep-cut correctness):
+        # counts the [q ≤ q_dec, D ≤ D_dec·η^{−1/2}] sub-volume, which survives
+        # after the raised-limit boundary angle collapses to q = 1.  Each term
+        # is a closed-form lower bound of the true pass volume; np.maximum()
+        # below is the dominant-term selection between the two.
+        if s_rise_on:
+            D_tilde_dec_r = D_dec_r / D_euc
+
+            def _onaxis_term(q_max_geo, D_tilde_eff_reg):
+                q_hi = np.minimum(np.minimum(q_dec_val, q_max_geo), q_s_II)
+                D_hi = np.minimum(D_tilde_eff_reg, D_tilde_dec_r)
+                return _q_factor(q_hi ** 2) * _D_factor(D_hi ** 3)
+
+            D_tilde_i = D_i / D_euc
+            t_on_1  = _onaxis_term(q_nr_val, 1.0)
+            t_on_23 = _onaxis_term(qE,       1.0)
+            t_on_4  = _onaxis_term(q_nr_val, D_tilde_i)
+            t_on_56 = _onaxis_term(qi,       D_tilde_i)
+        else:
+            t_on_1 = t_on_23 = t_on_4 = t_on_56 = 0.0
 
         base = 0.5 * fO * (theta_j ** 2) * R_int
-        r1 = base * _q_factor(q_nr_eff   ** 2) * _D_factor(D_norm_cubed_A123)
-        r2 = base * _q_factor(qE_eff_III ** 2) * _D_factor(D_norm_cubed_A123)
-        r3 = base * _q_factor(qE_eff_II  ** 2) * _D_factor(D_norm_cubed_A123)
-        r4 = base * _q_factor(q_nr_eff   ** 2) * _D_factor(D_norm_cubed_A456)
-        r5 = base * _q_factor(qi_eff_III ** 2) * _D_factor(D_norm_cubed_A456)
-        r6 = base * _q_factor(qi_eff_II  ** 2) * _D_factor(D_norm_cubed_A456)
+
+        def _ang(term, valid):
+            # Angular term, zeroed where the extrapolated rise boundary is
+            # fictitious (below q_dec).  valid=True (bypass) → exact no-op.
+            return np.where(valid, term, 0.0)
+
+        r1 = base * np.maximum(_ang(_q_factor(q_nr_eff_1 ** 2) * _D_factor(D_norm_cubed_A123), valid_E), t_on_1)
+        r2 = base * np.maximum(_ang(_q_factor(qE_eff_III ** 2) * _D_factor(D_norm_cubed_A123), valid_E), t_on_23)
+        r3 = base * np.maximum(_ang(_q_factor(qE_eff_II  ** 2) * _D_factor(D_norm_cubed_A123), valid_E), t_on_23)
+        r4 = base * np.maximum(_ang(_q_factor(q_nr_eff_4 ** 2) * _D_factor(D_norm_cubed_A456), valid_i), t_on_4)
+        r5 = base * np.maximum(_ang(_q_factor(qi_eff_III ** 2) * _D_factor(D_norm_cubed_A456), valid_i), t_on_56)
+        r6 = base * np.maximum(_ang(_q_factor(qi_eff_II  ** 2) * _D_factor(D_norm_cubed_A456), valid_i), t_on_56)
         r7 = base * _q_factor(q_dec_eff  ** 2) * _D_factor(D_norm_cubed_A7)
 
         # Convert to log10 safely.
@@ -577,7 +934,8 @@ class DetectionRateModel:
         *,
         q_min: float = 0.0,
         D_min_cm: float = 0.0,
-        s_min: float = 0.0,
+        s_fade: float = 0.0,
+        s_rise: float = 0.0,
         s_mode: str = "discrete",
         N_q: int = 500,
     ) -> np.ndarray:
@@ -600,12 +958,29 @@ class DetectionRateModel:
             Lower bounds on viewing-angle parameter and source distance.  Only the
             shell q ≥ q_min, D_min ≤ D ≤ D_eff(q) contributes to the integral.
             Default 0 / 0 = no filter.
-        s_min, s_mode : float, str, optional
-            Fading-rate filter — see `rate_log10` and `_q_s_fading_caps`.  Adds a
-            phase-resolved indicator `q ≤ q_s,phase(q)` to the integrand.
+        s_fade, s_rise, s_mode : float, float, str, optional
+            Fading- and rise-rate filters — see `rate_log10`, `_joint_survival`
+            and `_weighted_D_volume`.  The D-volume of each q-point carries the
+            joint uniform-start survival weight (min of the fade and rise
+            windows over the same start offset; a continuous weight — the
+            dominant-term mode keeps the best-case hard boundaries instead).
         N_q : int
             Number of integration points along q.  500 gives <0.3% numerical error
             relative to the analytic limit for typical parameters.
+
+        Notes
+        -----
+        The (N_q, *shape) integration tensors are materialized in q-chunks of
+        at most `_FULL_INTEGRAL_CHUNK_ELEMS` float64 elements each.  Adjacent
+        chunks share their boundary q-point, so the accumulated per-chunk
+        trapezoids equal the full-grid trapezoid exactly (additivity of the
+        trapezoid rule over contiguous subintervals); results can differ from
+        the unchunked form only by float summation order, and single-chunk
+        calls (small grids — every scalar/1-D caller at the default budget)
+        are bit-identical.  This bounds peak memory to a few hundred MiB for
+        arbitrarily large strategy grids — required under Pyodide's WASM32
+        ~4 GiB address space; the residual O(grid) footprint of the
+        grid-shaped arrays is irreducible.
         """
 
         N_exp   = np.asarray(N_exp,   dtype=float)
@@ -633,56 +1008,67 @@ class DetectionRateModel:
         D_tilde_dec  = self.D_dec(F_lim) / D_Euc   # shape
         D_tilde_eff  = np.minimum(D_i / D_Euc, 1.0) # shape, capped at 1
 
-        # q grid: shape (N_q,) broadcast over (*shape) via reshape
-        q_vals = np.linspace(0.0, q_nr, N_q + 1)[1:]  # skip q=0 to avoid q̃=−1
-        dq     = q_vals[1] - q_vals[0]
-        ndim   = len(shape)
-        q_g    = q_vals.reshape((-1,) + (1,) * ndim)  # (N_q, *shape)
-        qt_g   = np.maximum(q_g - 1.0, 0.0)           # q̃ = q − 1
-
-        # Piecewise D̃_max(q):
-        #   q < q_dec  → D̃_dec (on-axis, constant)
-        #   q_dec≤q<q_j → D̃_dec * (q̃/q̃_dec)^{-a_II}   (Phase II)
-        #   q≥q_j       → (D̃_dec/q̃_dec) * (q̃/q̃_dec)^{-a_III}  (Phase III)
-        on_axis   = q_g <  q_dec
-        phase_II  = (q_g >= q_dec) & (q_g < q_j)
-        phase_III = q_g >= q_j
-
-        # Guard against zero denominators in masked regions
-        safe_II  = np.where(phase_II,  np.maximum(qt_g, 1e-30), 1.0)
-        safe_III = np.where(phase_III, np.maximum(qt_g, 1e-30), 1.0)
-
-        D_max_II  = D_tilde_dec * (safe_II  / q_td) ** (-a_II)
-        D_max_III = (D_tilde_dec / q_td) * (safe_III / q_td) ** (-a_III)
-
-        D_tilde_max = np.where(on_axis,  D_tilde_dec,
-                      np.where(phase_II, D_max_II,
-                                         D_max_III))
-
-        # Effective detectable distance: min(D̃_max, D̃_eff)
-        D_eff = np.minimum(D_tilde_max, D_tilde_eff)  # (N_q, *shape)
-
         # Trapezoidal integral: ∫_{q_min}^{q_nr} q * max(D̃_eff^3 − D̃_min^3, 0) dq
-        # At q_min=0, D_min=0 the indicator and the max() reduce to 1 and D̃_eff³,
+        # At q_min=0, D_min=0 the weight and the max() reduce to 1 and D̃_eff³,
         # so the integral matches the pre-filter form exactly.
-        D_min_norm_cubed = (float(D_min_cm) / D_Euc) ** 3
-        D_shell_cubed = np.maximum(D_eff ** 3 - D_min_norm_cubed, 0.0)
+        D_min_norm = float(D_min_cm) / D_Euc
+        q_min_f    = float(q_min)
 
-        # Fading-rate filter: phase-resolved q-caps q_s,phase.  +∞ when bypassed
-        # (s_min=0 or i_det<2 in discrete mode), in which case the indicator is True
-        # everywhere and the integrand is bit-identical to the pre-cut form.  Treat
-        # on-axis (q < q_dec) as the Phase-II extrapolation — on-axis viewers have
-        # t_p → t_dec ≪ t_p,s for any reasonable s_min, so they always pass.
-        q_s_II, q_s_III = self._q_s_fading_caps(i_det, t_cad_b, s_min, s_mode)
-        q_s_II_b  = q_s_II[np.newaxis,  ...]
-        q_s_III_b = q_s_III[np.newaxis, ...]
-        q_keep_fade = (
-            ((on_axis | phase_II) & (q_g <= q_s_II_b))
-            | (phase_III & (q_g <= q_s_III_b))
-        )
-        q_keep = (q_g >= float(q_min)) & q_keep_fade
-        integrand = np.where(q_keep, q_g * D_shell_cubed, 0.0)   # (N_q, *shape)
-        I = np.trapezoid(integrand, q_vals, axis=0)             # shape
+        # q grid: shape (N_q,).  The (n_chunk, *shape) tensors below are built
+        # in memory-bounded q-chunks (see the docstring's memory note).
+        # Adjacent chunks share their boundary q-point (each chunk starts at
+        # the previous chunk's last point), so summing the per-chunk
+        # trapezoids covers every q-interval exactly once — additivity of the
+        # trapezoid rule over contiguous subintervals.
+        q_vals    = np.linspace(0.0, q_nr, N_q + 1)[1:]  # skip q=0 to avoid q̃=−1
+        ndim      = len(shape)
+        grid_size = max(1, int(np.prod(shape, dtype=np.int64)))
+        n_chunk   = max(2, int(_FULL_INTEGRAL_CHUNK_ELEMS) // grid_size)
+
+        I     = np.zeros(shape, dtype=float)
+        n_q   = int(q_vals.size)
+        start = 0
+        while start < n_q - 1:
+            stop = min(start + n_chunk, n_q)          # ≥ start + 2
+            q_c  = q_vals[start:stop]
+            q_g  = q_c.reshape((-1,) + (1,) * ndim)   # (n_chunk, *shape)
+            qt_g = np.maximum(q_g - 1.0, 0.0)         # q̃ = q − 1
+
+            # Piecewise D̃_max(q):
+            #   q < q_dec  → D̃_dec (on-axis, constant)
+            #   q_dec≤q<q_j → D̃_dec * (q̃/q̃_dec)^{-a_II}   (Phase II)
+            #   q≥q_j       → (D̃_dec/q̃_dec) * (q̃/q̃_dec)^{-a_III}  (Phase III)
+            on_axis   = q_g <  q_dec
+            phase_II  = (q_g >= q_dec) & (q_g < q_j)
+            phase_III = q_g >= q_j
+
+            # Guard against zero denominators in masked regions
+            safe_II  = np.where(phase_II,  np.maximum(qt_g, 1e-30), 1.0)
+            safe_III = np.where(phase_III, np.maximum(qt_g, 1e-30), 1.0)
+
+            D_max_II  = D_tilde_dec * (safe_II  / q_td) ** (-a_II)
+            D_max_III = (D_tilde_dec / q_td) * (safe_III / q_td) ** (-a_III)
+
+            D_tilde_max = np.where(on_axis,  D_tilde_dec,
+                          np.where(phase_II, D_max_II,
+                                             D_max_III))
+
+            # Effective detectable distance: min(D̃_max, D̃_eff)
+            D_eff = np.minimum(D_tilde_max, D_tilde_eff)  # (n_chunk, *shape)
+
+            # Fade + rise filters: joint uniform-start survival weight folded
+            # into the closed-form D-volume of each q-point (see
+            # `_weighted_D_volume`).  With s_rise = 0 this is exactly
+            # max(D_eff³ − D̃_min³, 0)·P_fade, and with s_fade = 0 too it is
+            # bit-identical to the pre-filter integrand.
+            V_w = self._weighted_D_volume(
+                q_g, D_tilde_max, D_eff, D_min_norm,
+                i_det, t_cad_b, s_fade, s_rise, s_mode,
+            )
+            q_keep = q_g >= q_min_f
+            integrand = np.where(q_keep, q_g * V_w, 0.0)   # (n_chunk, *shape)
+            I += np.trapezoid(integrand, q_c, axis=0)      # shape
+            start = stop - 1
 
         R = fO * (theta_j ** 2) * R_int * I
         R = np.where(np.isfinite(t_exp), R, np.nan)
@@ -698,7 +1084,8 @@ class DetectionRateModel:
         *,
         q_min: float = 0.0,
         D_min_cm: float = 0.0,
-        s_min: float = 0.0,
+        s_fade: float = 0.0,
+        s_rise: float = 0.0,
         s_mode: str = "discrete",
     ) -> tuple[np.ndarray, np.ndarray]:
         """Median q and D for the dominant-term (normal) mode.
@@ -711,8 +1098,13 @@ class DetectionRateModel:
         When the filter excludes all weight in a regime (q_min ≥ q_max or
         D_min ≥ D_eff_const), both medians are NaN.
 
-        The fading-rate filter (s_min, s_mode — see `rate_log10`) is applied by
-        substituting each regime's q_max with min(q_max, q_s,phase).
+        The fading-rate filter (s_fade, s_mode — see `rate_log10`) is applied by
+        substituting each regime's q_max with min(q_max, q_s,phase) — the
+        best-case hard cap; the rise-rate filter (s_rise) likewise substitutes
+        the raised-limit boundaries qE_r / q_ri into q_max and D_dec·η^{−1/2}
+        into A7's D_eff (per-regime descriptive form — no on-axis max-term
+        here).  The full-integral medians use the uniform-start survival
+        weights instead.
 
         Returns
         -------
@@ -740,31 +1132,44 @@ class DetectionRateModel:
         masks = self.region_masks(i_det, N_exp_b, t_cad_b, include_unphysical=False)
 
         # Fading-rate q-caps (per phase). +∞ when bypassed → minima below are no-ops.
-        q_s_II, q_s_III = self._q_s_fading_caps(i_det, t_cad_b, s_min, s_mode)
+        q_s_II, q_s_III = self._q_s_fading_caps(i_det, t_cad_b, s_fade, s_mode)
 
-        # Effective q_max per regime (geometric bound ∧ phase-mapped fading cap).
-        q_nr_III_eff   = np.minimum(q_nr,  q_s_III)
-        qE_III_eff     = np.minimum(q_E,   q_s_III)
-        qE_II_eff      = np.minimum(q_E,   q_s_II)
-        qi_III_eff     = np.minimum(qi,    q_s_III)
-        qi_II_eff      = np.minimum(qi,    q_s_II)
+        # Rise-rate boundaries at the raised limit (see `rate_log10`).
+        if float(s_rise) > 0.0:
+            eta, ise = self._rise_eta(t_cad_b, s_rise)
+            with np.errstate(over="ignore", invalid="ignore"):
+                qE_r = self.q_Euc(eta * F_lim)
+                q_ri = self.q_Euc(eta * F_lim * (D_i / D_Euc) ** 2)
+            D_dec_r = D_dec * ise
+        else:
+            qE_r = q_ri = np.inf
+            D_dec_r = np.inf
+
+        # Effective q_max per regime (geometric bound ∧ phase-mapped fading cap
+        # ∧ rise boundary; r1/r4 split the shared q_nr cap on the rise side).
+        q_nr_III_eff_1 = np.minimum(np.minimum(q_nr, q_s_III), qE_r)
+        q_nr_III_eff_4 = np.minimum(np.minimum(q_nr, q_s_III), q_ri)
+        qE_III_eff     = np.minimum(np.minimum(q_E,  q_s_III), qE_r)
+        qE_II_eff      = np.minimum(np.minimum(q_E,  q_s_II),  qE_r)
+        qi_III_eff     = np.minimum(np.minimum(qi,   q_s_III), q_ri)
+        qi_II_eff      = np.minimum(np.minimum(qi,   q_s_II),  q_ri)
         q_dec_eff      = np.minimum(q_dec, q_s_II)
 
         # q_max: upper integration limit per regime
         q_max = np.full(shape, np.nan, dtype=float)
-        q_max = np.where(masks["A1"], q_nr_III_eff, q_max)
-        q_max = np.where(masks["A2"], qE_III_eff,   q_max)
-        q_max = np.where(masks["A3"], qE_II_eff,    q_max)
-        q_max = np.where(masks["A4"], q_nr_III_eff, q_max)
-        q_max = np.where(masks["A5"], qi_III_eff,   q_max)
-        q_max = np.where(masks["A6"], qi_II_eff,    q_max)
-        q_max = np.where(masks["A7"], q_dec_eff,    q_max)
+        q_max = np.where(masks["A1"], q_nr_III_eff_1, q_max)
+        q_max = np.where(masks["A2"], qE_III_eff,     q_max)
+        q_max = np.where(masks["A3"], qE_II_eff,      q_max)
+        q_max = np.where(masks["A4"], q_nr_III_eff_4, q_max)
+        q_max = np.where(masks["A5"], qi_III_eff,     q_max)
+        q_max = np.where(masks["A6"], qi_II_eff,      q_max)
+        q_max = np.where(masks["A7"], q_dec_eff,      q_max)
 
         # D_eff_const: constant effective distance per regime
         D_eff_const = np.full(shape, np.nan, dtype=float)
         D_eff_const = np.where(masks["A1"] | masks["A2"] | masks["A3"], D_Euc,  D_eff_const)
         D_eff_const = np.where(masks["A4"] | masks["A5"] | masks["A6"], D_i,   D_eff_const)
-        D_eff_const = np.where(masks["A7"], np.minimum(D_dec, D_i), D_eff_const)
+        D_eff_const = np.where(masks["A7"], np.minimum(np.minimum(D_dec, D_i), D_dec_r), D_eff_const)
 
         # p(q) ∝ q on [q_min, q_max] → median q² = (q_max² + q_min²)/2.
         # p(D) ∝ D² on [D_min, D_eff_const] → median D³ = (D_eff_const³ + D_min³)/2.
@@ -795,16 +1200,20 @@ class DetectionRateModel:
         *,
         q_min: float = 0.0,
         D_min_cm: float = 0.0,
-        s_min: float = 0.0,
+        s_fade: float = 0.0,
+        s_rise: float = 0.0,
         s_mode: str = "discrete",
     ) -> tuple[np.ndarray, np.ndarray]:
         """Median q and D for the full-integral mode, computed numerically.
 
         Uses the same D_eff(q) = min(D_max(q), D_tilde_eff) profile as
         rate_log10_full_integral.  Integrand for marginal q (filtered):
-        w(q) = 1{q ≥ q_min} · q · max(D_eff³ − D̃_min³, 0).
-        Marginal D (filtered): p(D) ∝ D² · max(Q(D)² − q_min², 0) restricted to
-        D ≥ D_min, where Q(D) = max{q : D_eff(q) ≥ D}.
+        w(q) = 1{q ≥ q_min} · q · V_w(q),
+        with V_w the joint fade+rise weighted D-volume of `_weighted_D_volume`
+        (= max(D_eff³ − D̃_min³, 0)·P_fade when the rise cut is off).  Marginal
+        D (filtered): p(D) ∝ D² · ∫ q · 1{D_eff(q) ≥ D} · 1{q ≥ q_min} ·
+        w_joint(q, D̃) dq restricted to D ≥ D_min, with w_joint the pointwise
+        joint survival of `_joint_survival`.
 
         Returns
         -------
@@ -857,24 +1266,20 @@ class DetectionRateModel:
         # Filter: only q ≥ q_min and D ≥ D_min count.  At q_min=0, D_min=0
         # the integrand below reduces to the original q · D_eff³.
         q_min_f = float(q_min)
-        q_min_sq = q_min_f ** 2
         D_min_norm = float(D_min_cm) / D_Euc
-        D_min_norm_cubed = D_min_norm ** 3
 
-        # Fading-rate q-caps (broadcast against q_g's (N_q, *shape) grid).
-        q_s_II_arr, q_s_III_arr = self._q_s_fading_caps(i_det, t_cad_b, s_min, s_mode)
-        q_s_II_b  = q_s_II_arr[np.newaxis,  ...]
-        q_s_III_b = q_s_III_arr[np.newaxis, ...]
-        q_keep_fade = (
-            ((on_axis | phase_II) & (q_g <= q_s_II_b))
-            | (phase_III & (q_g <= q_s_III_b))
-        )
-        q_keep_mask = (q_g >= q_min_f) & q_keep_fade                         # (N_q, 1, ...)
+        # Fade + rise filters: joint uniform-start survival weights — continuous,
+        # not hard cuts (see `_weighted_D_volume` / `_joint_survival`; both
+        # reduce to the fade-only forms at s_rise = 0, and to 1 when bypassed).
+        q_keep_mask = q_g >= q_min_f                                         # (N_q, 1, ...)
 
         # ── Median q ──────────────────────────────────────────────────────────
-        # Filtered marginal: w(q) = 1{q ≥ q_min} · 1{fading-cut} · q · max(D_eff³ − D̃_min³, 0).
-        D_shell_cubed = np.maximum(D_eff ** 3 - D_min_norm_cubed, 0.0)
-        w_q        = np.where(q_keep_mask, q_g * D_shell_cubed, 0.0)         # (N_q, *shape)
+        # Filtered marginal: w(q) = 1{q ≥ q_min} · q · V_w(q).
+        V_w = self._weighted_D_volume(
+            q_g, D_tilde_max, D_eff, D_min_norm,
+            i_det, t_cad_b, s_fade, s_rise, s_mode,
+        )
+        w_q        = np.where(q_keep_mask, q_g * V_w, 0.0)                   # (N_q, *shape)
         cumsum_q   = np.cumsum(w_q, axis=0)
         total_q    = cumsum_q[-1:] + 1e-300
         idx_q      = np.argmax(cumsum_q / total_q >= 0.5, axis=0)            # (*shape)
@@ -882,23 +1287,29 @@ class DetectionRateModel:
         q_med      = np.where(has_weight, q_vals[idx_q], np.nan)
 
         # ── Median D ──────────────────────────────────────────────────────────
-        # p(D) ∝ D² · ∫_{q_min}^{q_nr} q · 1{D_eff(q) ≥ D} · 1{fading-cut} dq, restricted
-        # to D ≥ D_min.  Without the fading cut and on the contiguous slope of D_eff,
-        # the q-integral reduces to (Q(D)² − q_min²)/2 (the analytic form).  With the cut
-        # active, the integration domain may have a gap (Phase II fail / Phase III pass),
-        # so we integrate numerically.
+        # p(D) ∝ D² · ∫_{q_min}^{q_nr} q · 1{D_eff(q) ≥ D} · w_joint(q, D̃) dq,
+        # restricted to D ≥ D_min.  Without the filters and on the contiguous
+        # slope of D_eff, the q-integral reduces to (Q(D)² − q_min²)/2 (the
+        # analytic form).  With a filter active the integrand carries the
+        # continuous joint survival weight, so we integrate numerically.
         D_eff_max  = np.maximum(D_eff.max(axis=0), 1e-30)  # (*shape)
         D_eff_norm = D_eff / D_eff_max[np.newaxis, ...]    # (N_q, *shape), in [0, 1]
 
         N_D    = 100
         d_grid = np.linspace(1.0 / N_D, 1.0, N_D)     # normalized D levels, (N_D,)
 
-        # For each d, q-integral ∫ q · 1{D_eff_norm ≥ d} · 1{q_keep_mask} dq.
+        # For each d, q-integral ∫ q · 1{D_eff_norm ≥ d} · 1{q ≥ q_min} · w_joint dq.
         # Stored as twice the integral so the semantic matches the original Q² − q_min².
+        # NOTE: d is normalized to D_eff_max, so the physical D̃ (units of D_euc)
+        # passed to the pointwise weight is d · D_eff_max.
         Q_sq_eff = np.empty((N_D,) + shape, dtype=float)
         for j, d in enumerate(d_grid):
-            above_and_keep = (D_eff_norm >= d) & q_keep_mask           # (N_q, *shape)
-            integrand_q    = np.where(above_and_keep, q_g, 0.0)        # (N_q, *shape)
+            above_and_keep = (D_eff_norm >= d) & q_keep_mask                  # (N_q, *shape)
+            w_joint = self._joint_survival(
+                q_g, d * D_eff_max[np.newaxis, ...], D_tilde_max,
+                i_det, t_cad_b, s_fade, s_rise, s_mode,
+            )
+            integrand_q    = np.where(above_and_keep, q_g * w_joint, 0.0)     # (N_q, *shape)
             Q_sq_eff[j]    = 2.0 * np.trapezoid(integrand_q, q_vals, axis=0)
 
         d_g      = d_grid.reshape((-1,) + (1,) * ndim)
@@ -926,15 +1337,17 @@ class DetectionRateModel:
         N_exp: float,
         t_cad_s: float,
         N_q: int,
-    ) -> tuple[np.ndarray, np.ndarray, float, float]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
         """Helper for dR/dq, dR/dD: scalar-input D_eff(q) profile.
 
         Returns
         -------
-        q_vals    : (N_q,)            — q grid on (0, q_nr].
-        D_eff_norm: (N_q,)            — D̃_eff(q) = D_eff(q) / D_Euc.
-        prefactor : float             — f_Omega · θ_j² · R_int.
-        t_exp     : float (or NaN)    — exposure time; NaN if strategy is unphysical.
+        q_vals     : (N_q,)            — q grid on (0, q_nr].
+        D_eff_norm : (N_q,)            — D̃_eff(q) = D_eff(q) / D_Euc.
+        D_tilde_max: (N_q,)            — flux-limited D̃_max(q) profile (for the
+                                         rise-filter weights).
+        prefactor  : float             — f_Omega · θ_j² · R_int.
+        t_exp      : float (or NaN)    — exposure time; NaN if strategy is unphysical.
         """
         # Several model methods (F_lim_Jy, D_i, D_dec) use boolean array
         # indexing internally — wrap the scalar inputs in 1-element arrays.
@@ -946,6 +1359,7 @@ class DetectionRateModel:
         if not np.isfinite(t_exp) or t_exp <= 0:
             return (
                 np.linspace(0.0, float(self.derived.q_nr), N_q + 1)[1:],
+                np.full(N_q, np.nan),
                 np.full(N_q, np.nan),
                 float("nan"),
                 float("nan"),
@@ -990,7 +1404,7 @@ class DetectionRateModel:
         D_eff_norm = np.minimum(D_tilde_max, D_tilde_eff)
 
         prefactor = fO * (theta_j ** 2) * R_int
-        return q_vals, D_eff_norm, prefactor, t_exp
+        return q_vals, D_eff_norm, D_tilde_max, prefactor, t_exp
 
     def dR_dq_full_integral(
         self,
@@ -1000,7 +1414,8 @@ class DetectionRateModel:
         *,
         q_min: float = 0.0,
         D_min_cm: float = 0.0,
-        s_min: float = 0.0,
+        s_fade: float = 0.0,
+        s_rise: float = 0.0,
         s_mode: str = "discrete",
         N_q: int = 500,
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -1013,36 +1428,26 @@ class DetectionRateModel:
                            t_exp-invalid (e.g. f_live · t_cad / N_exp ≤ t_overhead).
 
         Math:
-            dR/dq = f_Omega · θ_j² · R_int · 1{q ≥ q_min} · 1{fading} · q · max(D̃_eff(q)³ − D̃_min³, 0).
+            dR/dq = f_Omega · θ_j² · R_int · 1{q ≥ q_min} · q · V_w(q),
+        with V_w the joint fade+rise weighted D-volume (see
+        `_weighted_D_volume`; = max(D̃_eff³ − D̃_min³, 0)·P_fade at s_rise = 0).
         """
-        q_vals, D_eff_norm, prefactor, t_exp = self._D_eff_q_profile_scalar(
+        q_vals, D_eff_norm, D_tilde_max, prefactor, t_exp = self._D_eff_q_profile_scalar(
             i_det, N_exp, t_cad_s, N_q
         )
         if not np.isfinite(t_exp):
             return q_vals, np.full(N_q, np.nan)
 
-        D_min_norm_cubed = (float(D_min_cm) / self.phys.D_euc_cm) ** 3
-        D_shell_cubed    = np.maximum(D_eff_norm ** 3 - D_min_norm_cubed, 0.0)
-        keep             = q_vals >= float(q_min)
+        D_min_norm = float(D_min_cm) / self.phys.D_euc_cm
+        keep       = q_vals >= float(q_min)
 
-        # Fading-rate q-caps (scalar t_cad → scalar q_s per phase).
-        q_s_II_arr, q_s_III_arr = self._q_s_fading_caps(
-            i_det, np.array([float(t_cad_s)]), s_min, s_mode
-        )
-        q_s_II  = float(q_s_II_arr[0])
-        q_s_III = float(q_s_III_arr[0])
-        q_dec   = float(self.derived.q_dec)
-        q_j     = float(self.derived.q_j)
-        on_axis   = q_vals <  q_dec
-        phase_II  = (q_vals >= q_dec) & (q_vals < q_j)
-        phase_III = q_vals >= q_j
-        q_keep_fade = (
-            ((on_axis | phase_II) & (q_vals <= q_s_II))
-            | (phase_III & (q_vals <= q_s_III))
+        # Joint fade+rise weighted D-volume (scalar t_cad → (N_q,) weight).
+        V_w = self._weighted_D_volume(
+            q_vals, D_tilde_max, D_eff_norm, D_min_norm,
+            i_det, np.array([float(t_cad_s)]), s_fade, s_rise, s_mode,
         )
 
-        dR_dq = np.where(keep & q_keep_fade,
-                         prefactor * q_vals * D_shell_cubed, 0.0)
+        dR_dq = np.where(keep, prefactor * q_vals * V_w, 0.0)
         return q_vals, dR_dq
 
     def dR_dD_full_integral(
@@ -1053,7 +1458,8 @@ class DetectionRateModel:
         *,
         q_min: float = 0.0,
         D_min_cm: float = 0.0,
-        s_min: float = 0.0,
+        s_fade: float = 0.0,
+        s_rise: float = 0.0,
         s_mode: str = "discrete",
         N_q: int = 500,
         N_D: int = 200,
@@ -1067,15 +1473,18 @@ class DetectionRateModel:
 
         Math (skeptic-derived; the inner q-integral contributes the 1/2):
             dR/dD = (3 · f_Omega · θ_j² · R_int / D_Euc) · D̃² ·
-                    ∫_{q_min}^{q_nr} q · 1{D_eff(q) ≥ D̃} · 1{fading} dq.
-        Without the fading cut and along the contiguous slope of D_eff(q), the inner
-        integral reduces to (Q(D̃)² − q_min²)/2 with Q = max{q : D_eff(q) ≥ D̃}.
+                    ∫_{q_min}^{q_nr} q · 1{D_eff(q) ≥ D̃} · w_joint(q, D̃) dq,
+        with w_joint the pointwise joint fade+rise survival of
+        `_joint_survival` (≡ 1 when both cuts are bypassed; the rise part makes
+        it genuinely D̃-dependent).  Without the filters and along the
+        contiguous slope of D_eff(q), the inner integral reduces to
+        (Q(D̃)² − q_min²)/2 with Q = max{q : D_eff(q) ≥ D̃}.
         Values for D < D_min_cm are zeroed out.
         """
         D_Euc = self.phys.D_euc_cm
         D_grid_cm = np.linspace(0.0, D_Euc, N_D)
 
-        q_vals, D_eff_norm, prefactor, t_exp = self._D_eff_q_profile_scalar(
+        q_vals, D_eff_norm, D_tilde_max, prefactor, t_exp = self._D_eff_q_profile_scalar(
             i_det, N_exp, t_cad_s, N_q
         )
         if not np.isfinite(t_exp):
@@ -1083,28 +1492,18 @@ class DetectionRateModel:
 
         d_grid = D_grid_cm / D_Euc  # (N_D,) in [0, 1]
 
-        # Fading-rate q-caps (scalar t_cad → scalar q_s per phase).
-        q_s_II_arr, q_s_III_arr = self._q_s_fading_caps(
-            i_det, np.array([float(t_cad_s)]), s_min, s_mode
-        )
-        q_s_II  = float(q_s_II_arr[0])
-        q_s_III = float(q_s_III_arr[0])
-        q_dec   = float(self.derived.q_dec)
-        q_j     = float(self.derived.q_j)
-        on_axis   = q_vals <  q_dec
-        phase_II  = (q_vals >= q_dec) & (q_vals < q_j)
-        phase_III = q_vals >= q_j
-        q_keep_fade = (
-            ((on_axis | phase_II) & (q_vals <= q_s_II))
-            | (phase_III & (q_vals <= q_s_III))
-        )                                                              # (N_q,)
-        q_keep = (q_vals >= float(q_min)) & q_keep_fade                # (N_q,)
-        q_keep_f = q_keep.astype(float)                                # for broadcasting
+        # Joint fade+rise survival on the (N_D, N_q) grid — d_grid IS D̃ here.
+        w_joint = self._joint_survival(
+            q_vals[np.newaxis, :], d_grid[:, np.newaxis],
+            D_tilde_max[np.newaxis, :],
+            i_det, np.array([float(t_cad_s)]), s_fade, s_rise, s_mode,
+        )                                                                # (N_D, N_q)
+        q_keep_f = (q_vals >= float(q_min)).astype(float)                # (N_q,)
 
         # q-integral per d.  Vectorised over (N_D, N_q) — D_eff_norm has no shape
         # beyond N_q for this scalar-strategy entry point, so memory is modest.
         above    = D_eff_norm[np.newaxis, :] >= d_grid[:, np.newaxis]    # (N_D, N_q)
-        integrand_q = q_vals[np.newaxis, :] * above * q_keep_f[np.newaxis, :]
+        integrand_q = q_vals[np.newaxis, :] * above * w_joint * q_keep_f[np.newaxis, :]
         q_integral = np.trapezoid(integrand_q, q_vals, axis=1)           # (N_D,)
 
         dR_dD = (3.0 * prefactor / D_Euc) * (d_grid ** 2) * q_integral
@@ -1121,7 +1520,8 @@ class DetectionRateModel:
         N_q: int = 200,
         q_min: float = 0.0,
         D_min_cm: float = 0.0,
-        s_min: float = 0.0,
+        s_fade: float = 0.0,
+        s_rise: float = 0.0,
         s_mode: str = "discrete",
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return (q_med, D_med_cm) using analytic (normal) or numerical (full-integral) formula."""
@@ -1129,12 +1529,12 @@ class DetectionRateModel:
             return self.compute_medians_numerical(
                 i_det, N_exp, t_cad_s, N_q,
                 q_min=q_min, D_min_cm=D_min_cm,
-                s_min=s_min, s_mode=s_mode,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
             )
         return self.compute_medians_analytic(
             i_det, N_exp, t_cad_s,
             q_min=q_min, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
 
     # ---------- Analytic optimal strategy (from  ) ----------

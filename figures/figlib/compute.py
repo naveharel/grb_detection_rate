@@ -60,7 +60,8 @@ def q_median_at(
     full_integral: bool = False,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
-    s_min: float = 0.0,
+    s_fade: float = 0.0,
+    s_rise: float = 0.0,
     s_mode: str = "discrete",
     scalar: bool = True,
 ):
@@ -74,7 +75,7 @@ def q_median_at(
     q_med, _ = model.compute_medians(
         int(i_det), N, t,
         full_integral=full_integral,
-        q_min=q_min, D_min_cm=D_min_cm, s_min=s_min, s_mode=s_mode,
+        q_min=q_min, D_min_cm=D_min_cm, s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
     )
     if scalar and q_med.size == 1:
         return float(q_med[0])
@@ -90,7 +91,8 @@ def medians_at(
     full_integral: bool = False,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
-    s_min: float = 0.0,
+    s_fade: float = 0.0,
+    s_rise: float = 0.0,
     s_mode: str = "discrete",
     scalar: bool = True,
 ):
@@ -100,7 +102,7 @@ def medians_at(
     q_med, D_med_cm = model.compute_medians(
         int(i_det), N, t,
         full_integral=full_integral,
-        q_min=q_min, D_min_cm=D_min_cm, s_min=s_min, s_mode=s_mode,
+        q_min=q_min, D_min_cm=D_min_cm, s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
     )
     D_med_Gpc = D_med_cm / GPC_TO_CM
     if scalar and q_med.size == 1:
@@ -117,7 +119,8 @@ def rate_at(
     full_integral: bool = False,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
-    s_min: float = 0.0,
+    s_fade: float = 0.0,
+    s_rise: float = 0.0,
     s_mode: str = "discrete",
     scalar: bool = True,
 ):
@@ -130,11 +133,11 @@ def rate_at(
     t = _as_arr(t_cad_s)
     if full_integral:
         logR = model.rate_log10_full_integral(
-            int(i_det), N, t, q_min=q_min, D_min_cm=D_min_cm, s_min=s_min, s_mode=s_mode,
+            int(i_det), N, t, q_min=q_min, D_min_cm=D_min_cm, s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
     else:
         logR = model.rate_log10(
-            int(i_det), N, t, q_min=q_min, D_min_cm=D_min_cm, s_min=s_min, s_mode=s_mode,
+            int(i_det), N, t, q_min=q_min, D_min_cm=D_min_cm, s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
     logR = np.asarray(logR, dtype=float)
     R = np.where(np.isfinite(logR), 10.0 ** logR, np.nan)

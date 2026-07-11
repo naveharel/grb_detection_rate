@@ -6,6 +6,8 @@ None so that Pyodide's .toJs() produces JS null, which Plotly treats as a gap.
 """
 from __future__ import annotations
 
+import copy         # TEMP-FDEC-OVERRIDE
+import dataclasses  # TEMP-FDEC-OVERRIDE
 import math
 
 import numpy as np
@@ -79,7 +81,8 @@ def _compute_rate(
     color_on: bool,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
-    s_min: float = 0.0,
+    s_fade: float = 0.0,
+    s_rise: float = 0.0,
     s_mode: str = "discrete",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute (R, t_exp, q_med, D_med_Gpc, rid) for a 1-D sweep."""
@@ -87,13 +90,13 @@ def _compute_rate(
         Z = model.rate_log10_full_integral(
             i_det, N_arr, t_arr,
             q_min=q_min, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
     else:
         Z = model.rate_log10(
             i_det, N_arr, t_arr,
             q_min=q_min, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
     R = np.where(np.isfinite(Z), 10.0 ** Z, np.nan)
 
@@ -116,7 +119,7 @@ def _compute_rate(
     q_med, D_med_cm = model.compute_medians(
         i_det, N_arr, t_arr, full_integral=full_integral,
         q_min=q_min, D_min_cm=D_min_cm,
-        s_min=s_min, s_mode=s_mode,
+        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
     )
     t_exp = model.t_exp_s(N_arr, t_arr)
     D_med_Gpc = D_med_cm / GPC_TO_CM
@@ -147,7 +150,8 @@ def _eval_point(
     full_integral: bool = False,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
-    s_min: float = 0.0,
+    s_fade: float = 0.0,
+    s_rise: float = 0.0,
     s_mode: str = "discrete",
 ) -> tuple[float, float, float, float]:
     """Evaluate (R_det, t_exp_s, q_med, D_med_Gpc) at a single point."""
@@ -168,12 +172,12 @@ def _eval_point(
         log10R = float(model.rate_log10_full_integral(
             i_det, N_arr, t_arr,
             q_min=q_min, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode)[0])
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)[0])
     else:
         log10R = float(model.rate_log10(
             i_det, N_arr, t_arr,
             q_min=q_min, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode)[0])
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)[0])
     R = 10.0 ** log10R if math.isfinite(log10R) else math.nan
     # Sub-day optical: only the nighttime fraction of detections are accessible
     if optical_on and model_night is not None and t_cad_s < DAY_S:
@@ -203,12 +207,14 @@ def _eval_point(
         if f_live_validity * t_cad_s / N_exp <= t_overhead_s:
             return _nan4
 
-    # Medians — use model_day for consistency with compute_surface
+    # Medians — same model dispatch as the rate (and compute_surface): on the
+    # sub-day optical branch model_night carries f_live = f_live / f_night, so
+    # only it describes the detected population behind the reported rate.
     try:
-        qm, dm = model_day.compute_medians(
+        qm, dm = model.compute_medians(
             i_det, N_arr, t_arr, full_integral=full_integral,
             q_min=q_min, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
         q_med     = float(qm[0])
         D_med_Gpc = float(dm[0]) / GPC_TO_CM
@@ -229,7 +235,8 @@ def _build_day_line_arrays(
     full_integral: bool,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
-    s_min: float = 0.0,
+    s_fade: float = 0.0,
+    s_rise: float = 0.0,
     s_mode: str = "discrete",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build flat per-day overlay arrays.
@@ -279,7 +286,7 @@ def _build_day_line_arrays(
         log10R = _rate(
             model_day, int(i_det), N_line, np.full_like(N_line, t_s),
             full_integral, q_min=q_min, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
         log10R = np.asarray(log10R).reshape(1, -1).ravel()
 
@@ -292,7 +299,7 @@ def _build_day_line_arrays(
         q_med_arr, D_med_cm_arr = model_day.compute_medians(
             int(i_det), N_cols, t_arr, full_integral=full_integral,
             q_min=q_min, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
         D_med_Gpc_arr = D_med_cm_arr / GPC_TO_CM
 
@@ -320,6 +327,26 @@ def _build_day_line_arrays(
     return day_vals, N_flat, R_flat, rid_flat, t_exp_flat, q_med_flat, D_med_Gpc_flat
 
 
+# ── TEMP-FDEC-OVERRIDE — begin ───────────────────────────────────────────────
+# Inlined equivalent of figures/figlib/overrides.set_F_dec (figures/ is not
+# bundled into the Pyodide zip — build_standalone.py zips only grb_detect/ +
+# this file). Copy-on-write is mandatory: make_rate_model is lru_cached;
+# mutating the cached instance would corrupt every other holder. Scaling
+# F_dec/F_j/F_nr by the same factor k is exactly equivalent to a native
+# rebuild with A_log -= log10(k) (pinned by tests/test_fdec_override.py).
+def _apply_F_dec_override(model, F_dec_Jy: float):
+    d = model.derived
+    F_cur = float(d.F_dec_Jy)
+    if not (F_cur > 0.0):
+        return model
+    k = float(F_dec_Jy) / F_cur
+    m = copy.copy(model)
+    m._derived = dataclasses.replace(
+        d, F_dec_Jy=d.F_dec_Jy * k, F_j_Jy=d.F_j_Jy * k, F_nr_Jy=d.F_nr_Jy * k)
+    return m
+# ── TEMP-FDEC-OVERRIDE — end ─────────────────────────────────────────────────
+
+
 # ── Shared model builder (used by compute_all, compute_nslice, compute_tslice)
 
 def _build_models(params) -> dict:
@@ -340,7 +367,8 @@ def _build_models(params) -> dict:
     full_on      = bool(params["full_integral"])
     q_min        = float(params.get("qmin", 0.0) or 0.0)
     D_min_cm     = float(params.get("Dmin_cm", 0.0) or 0.0)
-    s_min        = float(params.get("s_min", 0.0) or 0.0)
+    s_fade        = float(params.get("s_fade", 0.0) or 0.0)
+    s_rise        = float(params.get("s_rise", 0.0) or 0.0)
     _s_mode_raw  = params.get("s_mode", "discrete")
     s_mode       = str(_s_mode_raw) if _s_mode_raw in ("discrete", "continuous") else "discrete"
     toh_approx   = bool(params.get("toh_approx", False))
@@ -380,6 +408,18 @@ def _build_models(params) -> dict:
         if optical_on else None
     )
 
+    # TEMP-FDEC-OVERRIDE — begin
+    _fdec_ov = params.get("F_dec_override_Jy", None)   # absent or JS null → None
+    fdec_override_applied = False
+    if _fdec_ov is not None:
+        _fdec_ov = float(_fdec_ov)
+        if math.isfinite(_fdec_ov) and _fdec_ov > 0.0:
+            model_day = _apply_F_dec_override(model_day, _fdec_ov)
+            if model_night is not None:
+                model_night = _apply_F_dec_override(model_night, _fdec_ov)
+            fdec_override_applied = True
+    # TEMP-FDEC-OVERRIDE — end
+
     N_exp_max = model_day.instrument.omega_survey_max_sr / model_day.instrument.omega_exp_sr
 
     return {
@@ -392,7 +432,8 @@ def _build_models(params) -> dict:
         "full_on":      full_on,
         "q_min":        q_min,
         "D_min_cm":     D_min_cm,
-        "s_min":        s_min,
+        "s_fade":        s_fade,
+        "s_rise":        s_rise,
         "s_mode":       s_mode,
         "toh_approx":   toh_approx,
         "t_night_s":    t_night_s,
@@ -404,6 +445,7 @@ def _build_models(params) -> dict:
         "omega_exp":    omega_exp,
         "model_day":    model_day,
         "model_night":  model_night,
+        "fdec_override_applied": fdec_override_applied,  # TEMP-FDEC-OVERRIDE
     }
 
 
@@ -420,7 +462,8 @@ def _cr_kwargs_from_state(state: dict) -> dict:
         color_on=state["color_on"],
         q_min=state["q_min"],
         D_min_cm=state["D_min_cm"],
-        s_min=state["s_min"],
+        s_fade=state["s_fade"],
+        s_rise=state["s_rise"],
         s_mode=state["s_mode"],
     )
 
@@ -574,7 +617,8 @@ def _compute_qdview_sweep(
     t_overhead_s = float(state["t_overhead_s"])
     q_min        = float(state["q_min"])
     D_min_cm     = float(state["D_min_cm"])
-    s_min        = float(state["s_min"])
+    s_fade        = float(state["s_fade"])
+    s_rise        = float(state["s_rise"])
     s_mode       = str(state["s_mode"])
 
     N_exp_fix   = float(N_exp_fix)
@@ -650,7 +694,7 @@ def _compute_qdview_sweep(
     _, comps = model.rate_log10(
         i_det, N_arr, t_arr,
         q_min=0.0, D_min_cm=D_min_cm,
-        s_min=s_min, s_mode=s_mode,
+        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         return_components=True,
     )
 
@@ -684,7 +728,7 @@ def _compute_qdview_sweep(
     # Apply the fading-rate cap to the active regime's q_max.  Phase mapping
     # mirrors `rate_log10`: A1/A2/A4/A5 → Phase III, A3/A6/A7 → Phase II.
     q_s_II_arr, q_s_III_arr = model._q_s_fading_caps(
-        i_det, np.array([t_cad_fix_s]), s_min, s_mode,
+        i_det, np.array([t_cad_fix_s]), s_fade, s_mode,
     )
     q_s_II  = float(q_s_II_arr[0])
     q_s_III = float(q_s_III_arr[0])
@@ -693,14 +737,34 @@ def _compute_qdview_sweep(
         "A4": q_s_III, "A5": q_s_III, "A6": q_s_II,
         "A7": q_s_II,
     }
-    q_max_val = min(q_max_val_orig, phase_for_regime[active])
+
+    # Rise-rate boundaries (mirrors `rate_log10`): qE_r for the flux-limited
+    # A1-A3, q_ri for the cadence-limited A4-A6, D_dec·η^{−1/2} for A7.  The
+    # dominant view keeps the separable regime form (single capped q_max and
+    # regime-constant D_eff), so the deep-cut on-axis max-term of the rate
+    # surface is not reproduced here — use full-integral mode for that corner.
+    rise_cap = float("inf")
+    D_dec_r_cm = float("inf")
+    if s_rise > 0.0:
+        F_lim_val = float(np.asarray(comps["F_lim_Jy"]).ravel()[0])
+        eta_a, ise_a = model._rise_eta(np.array([t_cad_fix_s]), s_rise)
+        with np.errstate(over="ignore", invalid="ignore"):
+            qE_r = float(model.q_Euc(np.array([eta_a[0] * F_lim_val]))[0])
+            q_ri = float(model.q_Euc(np.array(
+                [eta_a[0] * F_lim_val * (D_i_val / D_Euc_cm) ** 2]))[0])
+        D_dec_r_cm = D_dec_val * float(ise_a[0])
+        rise_cap = {"A1": qE_r, "A2": qE_r, "A3": qE_r,
+                    "A4": q_ri, "A5": q_ri, "A6": q_ri,
+                    "A7": float("inf")}[active]
+
+    q_max_val = min(q_max_val_orig, phase_for_regime[active], rise_cap)
 
     if active in ("A1", "A2", "A3"):
         D_norm_cubed_const = 1.0
     elif active in ("A4", "A5", "A6"):
         D_norm_cubed_const = (D_i_val / D_Euc_cm) ** 3
     else:  # A7
-        D_norm_cubed_const = (min(D_dec_val, D_i_val) / D_Euc_cm) ** 3
+        D_norm_cubed_const = (min(D_dec_val, D_i_val, D_dec_r_cm) / D_Euc_cm) ** 3
     D_eff_const_cm = (D_norm_cubed_const ** (1.0 / 3.0)) * D_Euc_cm
 
     D_min_norm_cubed_sidebar = (D_min_cm / D_Euc_cm) ** 3
@@ -711,7 +775,7 @@ def _compute_qdview_sweep(
         q_internal, dRdq_internal = model.dR_dq_full_integral(
             i_det, N_exp_fix, t_cad_fix_s,
             q_min=0.0, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode, N_q=500,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode, N_q=500,
         )
         dq = float(q_internal[1] - q_internal[0])
         # Trapezoidal cumulative from the right: R(x) = ∫_x^{q_nr} dR/dq dq.
@@ -732,7 +796,7 @@ def _compute_qdview_sweep(
         D_grid_internal_cm, dRdD_internal = model.dR_dD_full_integral(
             i_det, N_exp_fix, t_cad_fix_s,
             q_min=q_min, D_min_cm=0.0,
-            s_min=s_min, s_mode=s_mode, N_q=500, N_D=200,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode, N_q=500, N_D=200,
         )
         dD = float(D_grid_internal_cm[1] - D_grid_internal_cm[0])
         trapz_cells_D = 0.5 * (dRdD_internal[:-1] + dRdD_internal[1:]) * dD
@@ -853,7 +917,8 @@ def compute_all(params) -> dict:
         full_on      = state["full_on"]
         q_min        = state["q_min"]
         D_min_cm     = state["D_min_cm"]
-        s_min        = state["s_min"]
+        s_fade        = state["s_fade"]
+        s_rise        = state["s_rise"]
         s_mode       = state["s_mode"]
         toh_approx   = state["toh_approx"]
         t_night_s    = state["t_night_s"]
@@ -873,7 +938,7 @@ def compute_all(params) -> dict:
             optical_survey=optical_on, color_regimes=color_on,
             t_night_s=t_night_s, nx=nx, ny=ny,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
 
         if toh_approx and t_overhead_s > 0:
@@ -917,14 +982,14 @@ def compute_all(params) -> dict:
             y_min=0.0, y_max=8.0,
             optical_survey=optical_on, t_night_s=t_night_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
             validity_fn=opt_validity_fn,
         )
         R_opt, t_exp_opt_s, q_med_opt, D_med_Gpc_opt = _eval_point(
             N_opt, t_cad_opt_s, i_det, model_day, model_night,
             f_live, f_live_night, f_night, optical_on, toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
 
         # ── ZTF reference ────────────────────────────────────────────────────
@@ -934,7 +999,7 @@ def compute_all(params) -> dict:
             N_ztf, t_cad_ztf_s, i_det, model_day, model_night,
             f_live, f_live_night, f_night, optical_on, toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
 
         # ── Slice sweeps at user-chosen positions ────────────────────────────
@@ -993,7 +1058,7 @@ def compute_all(params) -> dict:
                 model_day=model_day, i_det=i_det,
                 N_cols=N_cols, t_cad_max_s=t_cad_max_s,
                 full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
-                s_min=s_min, s_mode=s_mode,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
             )
             n_days, n_N = (int(day_vals.size),
                            int(day_N.shape[1]) if day_N.ndim == 2 and day_vals.size > 0 else 0)
@@ -1046,6 +1111,7 @@ def compute_all(params) -> dict:
             "R_toward_day": float(R_toward_day),
             "t_dec_s":      t_dec_s_val,
             "F_nu_tdec_Jy": F_nu_tdec_Jy,
+            "F_dec_override_applied": bool(state["fdec_override_applied"]),  # TEMP-FDEC-OVERRIDE
             "N_exp_max":    float(N_exp_max),
             "gap_lo_h":     _nan_to_none(gap_lo_h) if gap_lo_h is not None else None,
             "gap_hi_h":     _nan_to_none(gap_hi_h) if gap_hi_h is not None else None,

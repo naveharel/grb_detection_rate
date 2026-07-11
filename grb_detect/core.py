@@ -361,25 +361,26 @@ def _rate(
     *,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
-    s_min: float = 0.0,
+    s_fade: float = 0.0,
+    s_rise: float = 0.0,
     s_mode: str = "discrete",
 ) -> np.ndarray:
     """Dispatch to the full-integral or dominant-term rate method.
 
-    The q_min / D_min_cm / s_min filters are applied inside the chosen rate
+    The q_min / D_min_cm / s_fade / s_rise filters are applied inside the chosen rate
     method so R_total and the filters share the same approximation level.  At
-    q_min=0, D_min_cm=0, s_min=0 the result reduces to the unfiltered behavior.
+    q_min=0, D_min_cm=0, s_fade=0 the result reduces to the unfiltered behavior.
     """
     if full_integral:
         return model.rate_log10_full_integral(
             i_det, N_exp, t_cad_s,
             q_min=q_min, D_min_cm=D_min_cm,
-            s_min=s_min, s_mode=s_mode,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
     return model.rate_log10(
         i_det, N_exp, t_cad_s,
         q_min=q_min, D_min_cm=D_min_cm,
-        s_min=s_min, s_mode=s_mode,
+        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
     )
 
 
@@ -396,9 +397,13 @@ def compute_surface(
     full_integral: bool = False,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
-    s_min: float = 0.0,
+    s_fade: float = 0.0,
+    s_rise: float = 0.0,
     s_mode: str = "discrete",
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
+) -> tuple[
+    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None,
+    np.ndarray, np.ndarray, np.ndarray,
+]:
     """Compute the log-rate surface on a (log N_exp, log t_cad) grid.
 
     Returns X, Y as LINEAR coordinates (N_exp and t_cad in seconds) so Plotly can
@@ -447,13 +452,13 @@ def compute_surface(
 
         Z_day = _rate(model_day, i_det, N_exp, t_cad_eff, full_integral,
                       q_min=q_min, D_min_cm=D_min_cm,
-                      s_min=s_min, s_mode=s_mode)
+                      s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
 
         if model_night is None:
             raise RuntimeError("model_night is required when optical_survey=True")
         Z_night = _rate(model_night, i_det, N_exp, t_cad_eff, full_integral,
                         q_min=q_min, D_min_cm=D_min_cm,
-                        s_min=s_min, s_mode=s_mode)
+                        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
 
         # Sub-day: only the nighttime fraction of the sky is observable each
         # cadence. model_night carries instrument.f_live = f_live / f_night
@@ -467,7 +472,7 @@ def compute_surface(
         t_cad_eff = t_cad_s
         Z_raw = _rate(model_day, i_det, N_exp, t_cad_eff, full_integral,
                       q_min=q_min, D_min_cm=D_min_cm,
-                      s_min=s_min, s_mode=s_mode)
+                      s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
 
     # Display mask for the plotted surface only
     Z_plot = np.where(np.isfinite(Z_raw) & (Z_raw >= ZMIN_DISPLAY_LOG10), Z_raw, np.nan)
@@ -498,14 +503,29 @@ def compute_surface(
             fill_regimes(model_day, np.ones_like(Z_raw, dtype=bool))
 
     # ── Per-point extras: t_exp, median q, median D ──────────────────────────
-    # model_day and model_night share identical instrument parameters; use model_day.
-    # t_exp uses t_cad_eff (optical-corrected cadence) to match the rate computation.
-    t_exp_grid      = model_day.t_exp_s(N_exp, t_cad_eff)
-    q_med_grid, D_med_cm_grid = model_day.compute_medians(
+    # Extras must use the same model dispatch as the rate: model_night carries
+    # instrument.f_live = f_live / f_night, so on sub-day optical cells only
+    # model_night yields the t_exp / medians of the population the plotted rate
+    # describes (model_day's t_exp can even be ≤ 0 there → NaN medians on drawn
+    # cells). t_exp uses t_cad_eff (optical-corrected cadence) to match the rate.
+    t_exp_day = model_day.t_exp_s(N_exp, t_cad_eff)
+    q_med_day, D_med_cm_day = model_day.compute_medians(
         i_det, N_exp, t_cad_eff, full_integral=full_integral,
         q_min=q_min, D_min_cm=D_min_cm,
-        s_min=s_min, s_mode=s_mode,
+        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
     )
+    if optical_survey:
+        t_exp_night = model_night.t_exp_s(N_exp, t_cad_eff)
+        q_med_night, D_med_cm_night = model_night.compute_medians(
+            i_det, N_exp, t_cad_eff, full_integral=full_integral,
+            q_min=q_min, D_min_cm=D_min_cm,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+        )
+        t_exp_grid    = np.where(is_subday, t_exp_night, t_exp_day)
+        q_med_grid    = np.where(is_subday, q_med_night, q_med_day)
+        D_med_cm_grid = np.where(is_subday, D_med_cm_night, D_med_cm_day)
+    else:
+        t_exp_grid, q_med_grid, D_med_cm_grid = t_exp_day, q_med_day, D_med_cm_day
     D_med_Gpc_grid  = D_med_cm_grid / GPC_TO_CM
 
     # Return linear coordinates for true log axes
@@ -543,7 +563,8 @@ def maximize_log_surface_iterative(
     full_integral: bool = False,
     q_min: float = 0.0,
     D_min_cm: float = 0.0,
-    s_min: float = 0.0,
+    s_fade: float = 0.0,
+    s_rise: float = 0.0,
     s_mode: str = "discrete",
     n0x: int = 180,
     n0y: int = 220,
@@ -594,10 +615,10 @@ def maximize_log_surface_iterative(
         is_subday = t_eff < float(DAY_S)
         Z_day   = _rate(model_day,   i_det, N, t_eff, full_integral,
                         q_min=q_min, D_min_cm=D_min_cm,
-                        s_min=s_min, s_mode=s_mode)
+                        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
         Z_night = _rate(model_night, i_det, N, t_eff, full_integral,
                         q_min=q_min, D_min_cm=D_min_cm,
-                        s_min=s_min, s_mode=s_mode)
+                        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
         # model_night was built with f_live = f_live / f_night, so Z_night
         # already uses the within-night-rescaled t_exp; the f_night factor
         # below covers night-time accessibility.
@@ -642,7 +663,7 @@ def maximize_log_surface_iterative(
 
         Z = _rate(model_day, i_det, N2, t2, full_integral,
                   q_min=q_min, D_min_cm=D_min_cm,
-                  s_min=s_min, s_mode=s_mode)
+                  s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
         if validity_fn is not None:
             Z = np.where(validity_fn(N2, t2), Z, np.nan)
         if not np.any(np.isfinite(Z)):
@@ -662,7 +683,7 @@ def maximize_log_surface_iterative(
             t = 10 ** Y
             Z = _rate(model_day, i_det, N, t, full_integral,
                       q_min=q_min, D_min_cm=D_min_cm,
-                      s_min=s_min, s_mode=s_mode)
+                      s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
             Z = np.where(np.isfinite(Z), Z, np.nan)
             if validity_fn is not None:
                 Z = np.where(validity_fn(N, t), Z, np.nan)

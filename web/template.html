@@ -148,10 +148,17 @@
   </div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="smin_slider" title="Survey alert-stream candidate filter: minimum required magnitude-decline rate in mag/day. 0 = no filter. 0.3 mag/day matches typical ZTF-style cuts; 1 mag/day is stricter. The cut maps to a viewing-angle cap via the post-peak power-law slope (Phase II vs III).">s<sub>min</sub> [mag/day]</label>
-      <input type="number" id="smin_input" class="param-input" min="0" max="2" step="0.05" value="0">
+      <label class="param-label" for="sfade_slider" title="Survey alert-stream candidate filter: minimum required magnitude-decline (fading) rate in mag/day. 0 = no filter. 0.3 mag/day matches typical ZTF-style cuts; 1 mag/day is stricter. In the closed-form mode the cut is a best-case viewing-angle cap (first detection at the light-curve peak); in Full integral mode it is applied as a survival probability for a uniformly random observation start within one cadence of the peak — a soft weight under which long cadences suppress even on-axis bursts.">s<sub>fade</sub> [mag/day]</label>
+      <input type="number" id="sfade_input" class="param-input" min="0" max="2" step="0.05" value="0">
     </div>
-    %%SLIDER_SMIN%%
+    %%SLIDER_SFADE%%
+  </div>
+  <div class="param-block">
+    <div class="param-row">
+      <label class="param-label" for="srise_slider" title="Survey alert-stream candidate filter: minimum implied rise rate in mag/day from the previous visit's non-detection at the limiting magnitude, (m_lim - m_first)/t_cad >= s_rise — equivalent to requiring the first detection be a factor 10^(s_rise·t_cad/2.5 d) brighter than the limit. 0 = no filter. Applies even at i = 1 (needs only the previous visit + first detection); grows exponentially stricter with cadence. Closed-form mode shifts the flux-limited boundaries to the raised limit (best-case start at the peak); Full integral mode applies the uniform-start survival weight jointly with s_fade (same random start time).">s<sub>rise</sub> [mag/day]</label>
+      <input type="number" id="srise_input" class="param-input" min="0" max="2" step="0.05" value="0">
+    </div>
+    %%SLIDER_SRISE%%
   </div>
   <div class="param-block" id="tnight-block" style="display:none">
     <div class="param-row">
@@ -230,6 +237,16 @@
     <span id="tdec-display" class="grb-derived-val" title="Deceleration time t_dec from the user's E_k,iso, n₀, Γ₀ (Euclidean ζ=1/3 branch)">t<sub>dec</sub> = —</span>
     <span id="fnu-tdec-display" class="grb-derived-val" title="On-axis spectral flux density at t_dec, viewed from D_Euc at observing frequency ν (PLS G, Eq. 24)">F<sub>ν</sub>(t<sub>dec</sub>,D<sub>Euc</sub>) = —</span>
   </div>
+  <!-- TEMP-FDEC-OVERRIDE — begin (delete whole block on removal) -->
+  <div class="param-block" id="fdec-override-block">
+    <div class="param-row">
+      <label class="param-label" for="fdec_log_slider" title="TEMPORARY dev control: log10 of the flux normalization F_nu(t_dec, D_Euc) in Jy. Follows the physics-derived value; drag or type to override. Changing any upstream physics parameter (p, nu, E_k,iso, n0, Gamma0, eps_e, eps_B, D_Euc) clears the override.">log F<sub>ν</sub>(t<sub>dec</sub>,D<sub>Euc</sub>) [Jy]</label>
+      <input type="number" id="fdec_log_input" class="param-input" min="-6" max="6" step="0.01" value="0.37">
+    </div>
+    %%SLIDER_FDEC_LOG%%
+    <div id="fdec-override-note" style="display:none"><span class="derived-info warning">override active — <a href="#" id="fdec-override-reset">reset to physics</a></span></div>
+  </div>
+  <!-- TEMP-FDEC-OVERRIDE — end -->
   <div class="param-group-label" style="margin-top:10px">Cosmological model</div>
   <div class="param-block">
     <div class="param-row">
@@ -287,7 +304,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('full-integral-switch').click()">Full integral mode</span>
   </div>
-  <p class="toggle-hint">Integrates R<sub>det</sub> over all viewing angles q ∈ [0, q<sub>nr</sub>] (thesis Eq. 39) instead of using the dominant-term approximation. Slower but more accurate.</p>
+  <p class="toggle-hint">Integrates R<sub>det</sub> over all viewing angles q ∈ [0, q<sub>nr</sub>] (thesis Eq. 39) instead of using the dominant-term approximation. Slower but more accurate. With s<sub>fade</sub> or s<sub>rise</sub> &gt; 0 the cuts are applied as a joint uniform-start survival weight here (vs. the best-case hard boundaries of the closed-form mode), so rates sit somewhat lower.</p>
   <div class="param-switch-row">
     <label class="toggle-switch" for="s-mode-switch">
       <input type="checkbox" id="s-mode-switch">
@@ -295,7 +312,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('s-mode-switch').click()">Continuous fading-rate definition</span>
   </div>
-  <p class="toggle-hint">Switches s<sub>min</sub> from the discrete finite-difference Δm/Δt across the i detections (default — what real survey alert filters compute) to the instantaneous |dm/dt| at the burst peak (strategy-independent). The two coincide in the t<sub>cad</sub> → 0 limit.</p>
+  <p class="toggle-hint">Switches s<sub>fade</sub> from the discrete finite-difference Δm/Δt across the i detections (default — what real survey alert filters compute) to the instantaneous |dm/dt| at the first detection (strategy-independent). The two coincide in the t<sub>cad</sub> → 0 limit.</p>
 </div>
 </details>
 

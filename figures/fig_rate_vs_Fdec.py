@@ -8,8 +8,8 @@ fixed. The override is the physically-faithful flux-only rescaling implemented i
 Two curves, identical ZTF configuration (optical survey mode on; at the 2-day operating
 point the sub-day f_night factor is inactive, so the day model is app-faithful):
   * solid  — ZTF standard parameters only.
-  * dashed — same, plus the fading-rate filter s_min = 0.3 mag/day (discrete mode).
-The filter can only lower the rate (monotone in s_min), so the dashed curve sits at or
+  * dashed — same, plus the fading-rate filter s_fade = 0.3 mag/day (discrete mode).
+The filter can only lower the rate (monotone in s_fade), so the dashed curve sits at or
 below the solid one; the gap at the fiducial F_dec is the rate ZTF gives up to the cut.
 
 Physics shown: at ZTF's fiducial parameters the detection is *cadence-limited*
@@ -42,7 +42,7 @@ DEX_BELOW, DEX_ABOVE, N_PTS = 2.5, 5.5, 700
 
 # Fading-rate filter for the dashed curve. Discrete mode is the engine/app default and
 # the correct model for survey alert-stream fading cuts (well-defined at ZTF i_det=10).
-S_MIN, S_MODE = 0.3, "discrete"
+S_FADE, S_MODE = 0.3, "discrete"
 
 
 def make_figure():
@@ -57,16 +57,16 @@ def make_figure():
 
     # Rate at the fiducial F_dec, with and without the fading filter (the ZTF point).
     R0_fid = compute.rate_at(model, N_ztf, t_cad_ztf_s, i_det)
-    R1_fid = compute.rate_at(model, N_ztf, t_cad_ztf_s, i_det, s_min=S_MIN, s_mode=S_MODE)
+    R1_fid = compute.rate_at(model, N_ztf, t_cad_ztf_s, i_det, s_fade=S_FADE, s_mode=S_MODE)
 
     # Sweep F_dec, overriding ONLY the normalization at each step.
     F_Jy = np.logspace(np.log10(F_fid_Jy) - DEX_BELOW,
                        np.log10(F_fid_Jy) + DEX_ABOVE, N_PTS)
     overridden = [overrides.set_F_dec(model, F) for F in F_Jy]
     R0 = np.array([compute.rate_at(m, N_ztf, t_cad_ztf_s, i_det) for m in overridden])
-    R1 = np.array([compute.rate_at(m, N_ztf, t_cad_ztf_s, i_det, s_min=S_MIN, s_mode=S_MODE)
+    R1 = np.array([compute.rate_at(m, N_ztf, t_cad_ztf_s, i_det, s_fade=S_FADE, s_mode=S_MODE)
                    for m in overridden])
-    # Regime family from the baseline (geometric) regime — independent of s_min, so a
+    # Regime family from the baseline (geometric) regime — independent of s_fade, so a
     # single set of bands applies to both curves.
     families = [compute.regime_family(compute.regime_id_at(m, N_ztf, t_cad_ztf_s, i_det))
                 for m in overridden]
@@ -127,7 +127,7 @@ def main():
     R0, R1 = info["R0_fid"], info["R1_fid"]
     print(f"F_dec (fiducial)            = {info['F_fid_Jy']*1e3:.4g} mJy")
     print(f"R_det (ZTF, no filter)      = {R0:.4g} yr^-1")
-    print(f"R_det (ZTF, s_min=0.3)      = {R1:.4g} yr^-1")
+    print(f"R_det (ZTF, s_fade=0.3)      = {R1:.4g} yr^-1")
     if np.isfinite(R0) and R0 > 0 and np.isfinite(R1):
         print(f"ratio  (filtered / baseline) = {R1 / R0:.4f}")
     print("wrote:", *[str(p) for p in paths])

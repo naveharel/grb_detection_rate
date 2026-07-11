@@ -361,62 +361,145 @@ p(q)\propto q\cdot\bigl[D_{\rm eff}(q)^3-(D_{\rm min}/D_{\rm euc})^3\bigr]_+\cdo
 \]
 which is \emph{not} simply $\propto q$, so the analytic formula~\eqref{eq:filter_medians} no longer applies; the median is found by cumulative trapezoidal integration of this weighted form. See \texttt{compute\_medians\_numerical}.
 
-\subsection{Fading-rate filter $s_{\rm min}$}
-\label{sec:filter_smin}
+\subsection{Fading-rate filter $s_{\rm fade}$}
+\label{sec:filter_sfade}
 
-Real optical transient surveys filter their alert streams to ``afterglow-like'' candidates by requiring a measured magnitude decline faster than some threshold $s_{\rm min}$ in mag/day; common values are $0.3$ (ZTF-style) and $1$ (stricter). The filter is exposed as a third sidebar parameter alongside $q_{\rm min}$ and $D_{\rm min}$, with two modes that coincide in the $t_{\rm cad}\to 0$ limit.
+Real optical transient surveys filter their alert streams to ``afterglow-like'' candidates by requiring a measured magnitude decline faster than some threshold $s_{\rm fade}$ in mag/day; common values are $0.3$ (ZTF-style) and $1$ (stricter). The filter is exposed as a third sidebar parameter alongside $q_{\rm min}$ and $D_{\rm min}$, with two modes that coincide in the $t_{\rm cad}\to 0$ limit.
 
 \paragraph{Setup.} Post-peak, the lightcurve obeys $F(t)\propto t^\alpha$ with $\alpha<0$, so
 \[
 m(t)=-2.5\alpha\log_{10}(t/t_p)+\text{const},\qquad
 \frac{dm}{dt}=-\frac{2.5\,\alpha}{t\,\ln 10}\;\text{mag/s}.
 \]
-For an off-axis viewer at $\tilde q$, the dominant-term assumption is that the first of the $i$ detections lands near the peak: $t_{\rm first}\approx t_p(\tilde q)$.
+The survey samples this lightcurve starting at the first post-peak detection $t_{\rm first}\ge t_p$ and ending at $t_{\rm last}=t_{\rm first}+(i-1)\,t_{\rm cad}$. A key identity: for a pure power law the measured slope between $t_{\rm first}$ and $t_{\rm last}$ depends only on $t_{\rm first}$ and the baseline $(i-1)\,t_{\rm cad}$ --- not on $t_p$ separately --- so the cut inverts cleanly to a cap on the \emph{first-detection time}.
 
 \paragraph{Discrete (per-cadence) mode.} The measured slope across the $i$ detections is
 \begin{equation}
 \label{eq:s_meas_discrete}
-s_{\rm meas}=-2.5\,\alpha\,\log_{10}\!\left(1+\frac{(i-1)\,t_{\rm cad}}{t_p}\right)\frac{\text{DAY\_S}}{(i-1)\,t_{\rm cad}}\;\;\text{[mag/day]}.
+s_{\rm meas}=-2.5\,\alpha\,\log_{10}\!\left(1+\frac{(i-1)\,t_{\rm cad}}{t_{\rm first}}\right)\frac{\text{DAY\_S}}{(i-1)\,t_{\rm cad}}\;\;\text{[mag/day]}.
 \end{equation}
-Imposing $s_{\rm meas}\ge s_{\rm min}$ and solving for the maximum $t_p$ that still passes, with $A=2.5|\alpha|$ and $E=s_{\rm min}(i-1)t_{\rm cad}/(\text{DAY\_S}\cdot A)$:
+Imposing $s_{\rm meas}\ge s_{\rm fade}$ and solving for the latest $t_{\rm first}$ that still passes, with $A=2.5|\alpha|$ and $E=s_{\rm fade}(i-1)t_{\rm cad}/(\text{DAY\_S}\cdot A)$:
 \begin{equation}
-\label{eq:tps_discrete}
-t_{p,s}=\frac{(i-1)\,t_{\rm cad}}{10^E-1}.
+\label{eq:tfs_discrete}
+t_{f,s}=\frac{(i-1)\,t_{\rm cad}}{10^E-1},\qquad\text{pass}\iff t_{\rm first}\le t_{f,s}.
 \end{equation}
-This is strategy-dependent: long $t_{\rm cad}$ shrinks $t_{p,s}$ (the survey can no longer resolve the slope). At $i=1$ the slope is undefined and the cut is bypassed.
+This is strategy-dependent: long $t_{\rm cad}$ shrinks $t_{f,s}$ (the survey can no longer resolve the slope). At $i=1$ the slope is undefined and the cut is bypassed.
 
-\paragraph{Continuous (instantaneous) mode.} Evaluate $|dm/dt|$ at the peak directly and require it to exceed $s_{\rm min}$:
+\paragraph{Continuous (instantaneous) mode.} Evaluate $|dm/dt|$ at the first detection directly and require it to exceed $s_{\rm fade}$:
 \begin{equation}
-\label{eq:tps_continuous}
-t_{p,s}=\frac{2.5\,|\alpha|\,\text{DAY\_S}}{s_{\rm min}\,\ln 10}.
+\label{eq:tfs_continuous}
+t_{f,s}=\frac{2.5\,|\alpha|\,\text{DAY\_S}}{s_{\rm fade}\,\ln 10}.
 \end{equation}
 Strategy-independent; defined for all $i$.
 
-\paragraph{Limit equivalence.} As $t_{\rm cad}\to 0$, $E\to 0$ and $10^E-1\approx E\ln 10$, so~\eqref{eq:tps_discrete} reduces to~\eqref{eq:tps_continuous}:
+\paragraph{Limit equivalence.} As $t_{\rm cad}\to 0$, $E\to 0$ and $10^E-1\approx E\ln 10$, so~\eqref{eq:tfs_discrete} reduces to~\eqref{eq:tfs_continuous}:
 \[
-t_{p,s}\to\frac{(i-1)\,t_{\rm cad}}{E\ln 10}=\frac{2.5\,|\alpha|\,\text{DAY\_S}}{s_{\rm min}\,\ln 10}.
+t_{f,s}\to\frac{(i-1)\,t_{\rm cad}}{E\ln 10}=\frac{2.5\,|\alpha|\,\text{DAY\_S}}{s_{\rm fade}\,\ln 10}.
 \]
 The continuous mode is the high-cadence limit of the discrete mode.
 
-\paragraph{Mapping to a $q$-cap.} The model's $q_i$ relation (\S\,Viewing-angle parameterisation) gives $t_p(\tilde q)=t_j\tilde q^{8/3}$ in Phase~II and $t_j\tilde q^2$ in Phase~III. Inverting:
+\paragraph{Dominant-term treatment: best-case start.} In the closed-form (dominant-term) rate mode we assume the first detection lands at the peak, $t_{\rm first}\approx t_p(\tilde q)$, so $t_{f,s}$ caps the peak time itself. The model's $q_i$ relation (\S\,Viewing-angle parameterisation) gives $t_p(\tilde q)=t_j\tilde q^{8/3}$ in Phase~II and $t_j\tilde q^2$ in Phase~III. Inverting:
 \begin{equation}
 \label{eq:qs_phase}
-\tilde q_{s,\rm II}=\left(\frac{t_{p,s,\rm II}}{t_j}\right)^{3/8},\qquad
-\tilde q_{s,\rm III}=\left(\frac{t_{p,s,\rm III}}{t_j}\right)^{1/2},
+\tilde q_{s,\rm II}=\left(\frac{t_{f,s,\rm II}}{t_j}\right)^{3/8},\qquad
+\tilde q_{s,\rm III}=\left(\frac{t_{f,s,\rm III}}{t_j}\right)^{1/2},
 \end{equation}
-where $\alpha$ in $t_{p,s}$ is the phase-specific temporal slope: $\alpha_{\rm II}=-3(p-1)/4$, $\alpha_{\rm III}=-p$ for PLS~G, and $\alpha_{\rm II}=-(3p-2)/4$, $\alpha_{\rm III}=-p$ for PLS~H.
-
-\paragraph{Substitution in the rate formulas.} The cut acts on each regime's effective $q_{\rm max}$ exactly like a phase-mapped cap: the seven dominant-term rates~\eqref{eq:filter_dominant} become
+where $\alpha$ in $t_{f,s}$ is the phase-specific temporal slope: $\alpha_{\rm II}=-3(p-1)/4$, $\alpha_{\rm III}=-p$ for PLS~G, and $\alpha_{\rm II}=-(3p-2)/4$, $\alpha_{\rm III}=-p$ for PLS~H. The cut then acts on each regime's effective $q_{\rm max}$ as a phase-mapped hard cap: the seven dominant-term rates~\eqref{eq:filter_dominant} become
 \[
 r_k = \tfrac{1}{2}f_\Omega\theta_j^2 R_{\rm int}\cdot
 \bigl[\min(q_{\rm max,\,k},\,q_{s,\,\Phi(k)})^2-q_{\rm min}^2\bigr]_+\cdot
 \bigl[(D_{\rm eff,\,k}/D_{\rm euc})^3-(D_{\rm min}/D_{\rm euc})^3\bigr]_+,
 \]
-with phase assignment $\Phi$: A1, A2, A4, A5 $\to$ Phase~III; A3, A6, A7 $\to$ Phase~II. In the full-integral form~\eqref{eq:filter_full}, the integrand picks up an additional factor $\mathbf{1}\{q\le q_{s,\,\Phi(q)}\}$ where the phase of each integration point $q$ is determined by the existing on-axis / Phase~II / Phase~III masks (Section~\ref{sec:filters}). At $s_{\rm min}=0$ all $q_{s,\rm phase}=+\infty$ and the rates collapse to the unfiltered baseline to floating point.
+with phase assignment $\Phi$: A1, A2, A4, A5 $\to$ Phase~III; A3, A6, A7 $\to$ Phase~II. As shown next, this best-case treatment is the exact $t_{\rm cad}\to 0$ limit of the uniform-start model and an optimistic upper bound otherwise --- consistent with the dominant-term philosophy of keeping the rate expressions closed-form.
 
-When the phase~II cap falls below $q_j=2$ but the phase~III cap exceeds $q_j$ (i.e. the cut bites Phase~II but spares Phase~III), the surviving viewing-angle set is the union of two disjoint intervals. The dominant-term formula handles this naturally via the per-regime phase assignment; the full-integral mode handles it via the point-wise indicator inside the integrand. In the median computation (\texttt{compute\_medians\_numerical}) we therefore switch from the closed-form $(Q^2-q_{\rm min}^2)/2$ aggregator to a direct trapezoidal q-integral, which remains valid for non-contiguous survival sets.
+\paragraph{Uniform observation start (full-integral mode).} The survey's visit schedule has a random phase relative to the burst, so the first post-peak visit actually lands at
+\[
+t_{\rm first}=t_p(\tilde q)+u,\qquad u\sim\mathcal U(0,\,t_{\rm cad}).
+\]
+Since pass $\iff t_{\rm first}\le t_{f,s}$, each burst passes the cut with probability
+\begin{equation}
+\label{eq:P_fade}
+P(q)=\operatorname{clip}\!\left(\frac{t_{f,s}-t_{p,\rm eff}(q)}{t_{\rm cad}},\,0,\,1\right),\qquad
+t_{p,\rm eff}(q)=\max\!\bigl(t_j\,[\max(q-1,0)]^{\beta},\;t_{\rm dec}\bigr),
+\end{equation}
+with $\beta=8/3$ (Phase~II) and $\beta=2$ (Phase~III). $P$ reaches $0$ exactly at the hard cap $q_s$ of~\eqref{eq:qs_phase} and ramps up (linearly in $t_p$) below it. The $t_{\rm dec}$ floor on the effective peak time is \emph{exact} for on-axis viewers --- $t_j\,\tilde q_{\rm dec}^{8/3}=t_{\rm dec}$ identically, so the floor binds precisely for $q\le q_{\rm dec}$ (where the model lightcurve peaks at $t_{\rm dec}$) and is a no-op above; on-axis viewers are lumped with Phase~II as in the existing masks. For the fade weight the floor matters only at $\mathcal O(t_{\rm dec}/t_{\rm cad})\approx 19\,\mathrm s/t_{\rm cad}$ (it is however \emph{essential} for the rise filter, Sec.~\ref{sec:filter_srise}); one physical consequence: when $t_{f,s}<t_{\rm dec}$ --- i.e.\ even a burst caught at the earliest possible epoch fades too slowly --- the weight now correctly annihilates the rate instead of leaving the fictitious pre-$t_{\rm dec}$ residual of the pure extrapolation. In the full-integral form~\eqref{eq:filter_full} the integrand simply picks up the factor $P(q)$ in place of the former indicator $\mathbf 1\{q\le q_{s,\Phi(q)}\}$; this weight is applied only where the integral is evaluated numerically anyway (\texttt{rate\_log10\_full\_integral}, the numerical medians, and the $dR/dq$, $dR/dD$ views), leaving the closed-form rate equations untouched.
 
-\paragraph{Implementation reference.} \texttt{DetectionRateModel.\_q\_s\_fading\_caps()} returns the phase-resolved $q_{s,\rm II}$ and $q_{s,\rm III}$ arrays (broadcastable to the strategy grid). It is called once per rate evaluation and the resulting caps are min'd into each regime's $q_{\rm max}$. The same helper drives \texttt{compute\_medians}, \texttt{dR\_dq\_full\_integral}, and \texttt{dR\_dD\_full\_integral}.
+Note the qualitatively new effect: when $t_{f,s}<t_{\rm cad}$ even on-axis bursts pass only with probability $t_{f,s}/t_{\rm cad}$ --- with a long cadence the afterglow is usually caught late, when its mag/day decline is slow. The best-case hard cap would let all of them pass.
+
+\paragraph{Limits and invariants.}
+(i)~$s_{\rm fade}\to 0$: $t_{f,s}=+\infty$, $P\equiv 1$, and both rate modes collapse to the unfiltered baseline to floating point.
+(ii)~$t_{\rm cad}\to 0$: the ramp width vanishes and $P\to\mathbf 1\{q\le q_s\}$, recovering the dominant-term hard cap; the deficit is linear in $t_{\rm cad}$.
+(iii)~$P(q)\le\mathbf 1\{q\le q_s\}$ pointwise, so under an active cut the full-integral rate sits \emph{below} the dominant-term rate --- an expected, physical mode disagreement, not a numerical artefact.
+(iv)~$t_{f,s}$ is strictly decreasing in $s_{\rm fade}$, so both treatments remain monotone non-increasing in $s_{\rm fade}$.
+
+\paragraph{Assumptions.} (a)~The start phase $u$ is treated as independent of the detection condition itself; the $q_i$ detection machinery keeps its dominant-term form. This is coherent: $u\le t_{\rm cad}$ implies $t_{\rm last}\le t_p+i\,t_{\rm cad}$, matching the $q_i$ detection window. (b)~The rise before the peak is ignored --- the slope is measured from the first post-peak detection. (c)~The measurement segment is treated as lying in a single power-law phase; a delayed segment that straddles $t_j$ actually fades \emph{faster} than modeled (the post-break slope is steeper), so the treatment is conservative.
+
+\paragraph{Implementation reference.} \texttt{DetectionRateModel.\_t\_first\_caps()} returns the phase-resolved $t_{f,s,\rm II}$ and $t_{f,s,\rm III}$ arrays (broadcastable to the strategy grid). \texttt{\_q\_s\_fading\_caps()} maps them to the best-case hard caps~\eqref{eq:qs_phase} used by \texttt{rate\_log10} and \texttt{compute\_medians\_analytic}; \texttt{\_fading\_survival()} evaluates the pointwise $P(q)$ of~\eqref{eq:P_fade} used by \texttt{rate\_log10\_full\_integral}, \texttt{compute\_medians\_numerical}, \texttt{dR\_dq\_full\_integral}, and \texttt{dR\_dD\_full\_integral}. Since $P$ is a continuous weight rather than a cut, the numerical median integrals remain valid without any non-contiguous-interval special-casing.
+
+\subsection{Rise-rate filter $s_{\rm rise}$}
+\label{sec:filter_srise}
+
+Alert streams also cut on the \emph{rise}: a new candidate is credible when the previous visit --- one cadence before the first detection --- was a non-detection, bounding the earlier magnitude by the limiting magnitude $m_{\rm lim}$. The implied rise rate is then at least $(m_{\rm lim}-m_{\rm first})/t_{\rm cad}$, and the filter requires it to exceed $s_{\rm rise}$ [mag/day].
+
+\paragraph{Semantics.} With $m=-2.5\log_{10}F+\text{const}$,
+\begin{equation}
+\label{eq:eta_rise}
+\frac{m_{\rm lim}-m_{\rm first}}{t_{\rm cad}/\text{DAY\_S}}\ge s_{\rm rise}
+\iff
+F(t_{\rm first})\ge\eta\,F_{\rm lim},\qquad
+\eta=10^{E},\quad E=\frac{s_{\rm rise}\,t_{\rm cad}}{2.5\,\text{DAY\_S}}.
+\end{equation}
+The boost $\eta$ grows \emph{exponentially} with cadence: a slow survey can only certify a fast riser if the source jumped far above the limit since the last visit. The model ignores the pre-peak rise, so the previous visit (always pre-peak, $t_{\rm first}-t_{\rm cad}<t_p$) is automatically a non-detection --- the filter is internally consistent with the baseline. Unlike the discrete fade filter, the rise cut applies at $i_{\rm det}=1$ (it needs only the previous visit and the first detection); it has no discrete/continuous mode split --- the measurement \emph{is} a previous-visit finite difference, so \texttt{s\_mode} remains fade-only.
+
+\paragraph{Dominant-term treatment: best-case start.} With the first detection at the peak, pass $\iff F_p(q,D)\ge\eta F_{\rm lim}\iff D\le D_{\rm max}(q)/\sqrt\eta$. Because the flux-limited boundary functions take $F_{\rm lim}$ as an argument, the raised-limit boundaries are direct evaluations:
+\[
+q_{E,r}=q_{\rm Euc}(\eta F_{\rm lim}),\qquad
+q_{r,i}=q_{\rm Euc}\!\bigl(\eta F_{\rm lim}\,(D_i/D_{\rm euc})^2\bigr),\qquad
+D_{{\rm dec},r}=D_{\rm dec}\,\eta^{-1/2},
+\]
+where $q_{r,i}$ is the angle at which $D_{\rm max}(q)/\sqrt\eta=D_i$; since $D_i=D_{\rm max}(q_i)$ identically, $q_{r,i}(\eta{=}1)=q_i$ exactly. The caps enter the regime formulas as $q_{\rm max}\to\min(q_{\rm max},\,q_{E,r})$ for the flux-limited A1--A3, $\min(q_{\rm max},\,q_{r,i})$ for the cadence-limited A4--A6, and $D_{\rm eff,7}\to\min(D_{\rm dec},D_i,D_{{\rm dec},r})$ for A7, composing with the fading caps of~\eqref{eq:qs_phase} by further $\min()$.
+
+\paragraph{Deep-cut correctness (on-axis max-term).} $q_{\rm Euc}$ extrapolates the off-axis power law and never returns $q<1$, so for a deep cut the truncated angular term would saturate at $[1-q_{\rm min}^2]_+\times$D-factor instead of vanishing. Moreover the extrapolated boundary is the \emph{true} flux boundary only while it sits above $q_{\rm dec}$: below the crossing, the on-axis $D_{\rm max}=D_{\rm dec}$ plateau makes the angular box overcount. Each of $r_1$--$r_6$ is therefore computed as the \textbf{max of two closed-form lower bounds} of the true pass volume:
+\[
+r_k=\text{base}\cdot\max\Bigl(
+\underbrace{\mathbf 1\{q_{{\rm cap},k}\ge q_{\rm dec}\}\,\bigl[q_{{\rm max},k,\rm eff}^2-q_{\rm min}^2\bigr]_+\,\bigl[\tilde D_{{\rm eff},k}^3-\tilde D_{\rm min}^3\bigr]_+}_{\text{angular term (valid above the crossing)}},\;
+\underbrace{\bigl[\min(q_{\rm dec},q_{{\rm max},k},q_{s,\rm II})^2-q_{\rm min}^2\bigr]_+\,\bigl[\min(\tilde D_{{\rm eff},k},\tilde D_{\rm dec}\,\eta^{-1/2})^3-\tilde D_{\rm min}^3\bigr]_+}_{\text{on-axis term}}
+\Bigr).
+\]
+At the crossing $q_{{\rm cap},k}=q_{\rm dec}$ one has $D_{\rm dec}/\sqrt\eta=D_{\rm eff}$-scale, so the two terms are equal and the max is continuous in $s_{\rm rise}$; at $\eta=1$ the on-axis term is dominated and the baseline is recovered; in the deep-cut limit $r_k\propto\eta^{-3/2}\to 0$ (verified numerically over 6~dex).
+
+\paragraph{Uniform observation start (full-integral mode).} Post-peak, $F(t)=F_p\,(t/t_p)^{-|\alpha|}$ crosses the raised limit at
+\begin{equation}
+\label{eq:t_lim}
+t_{\rm lim}(q,\tilde D)=t_{p,\rm eff}(q)\left(\frac{\tilde D_0(q)}{\tilde D}\right)^{k},\qquad
+k=\frac{2}{|\alpha_{\Phi}|},\qquad
+\tilde D_0(q)=\tilde D_{\rm max}(q)\,\eta^{-1/2},
+\end{equation}
+so pass $\iff t_{\rm first}\le t_{\rm lim}$. Here the $t_{\rm dec}$ floor of $t_{p,\rm eff}$~\eqref{eq:P_fade} is \emph{essential}: $t_{\rm lim}\propto t_{p,\rm eff}$, and the pure extrapolation ($t_p\to 0$ on-axis) would wrongly annihilate all on-axis rise weights; with the floor, the general formula reproduces the on-axis lightcurve $F=F_{\rm dec}(D)\,(t/t_{\rm dec})^{-|\alpha_{\rm II}|}$ exactly.
+
+\textbf{Joint weight --- same start offset.} Both cuts are conditions on the \emph{same} uniform offset $u$ (comonotone, not independent; a product would double-penalize):
+\begin{equation}
+\label{eq:w_joint}
+w(q,\tilde D)=\operatorname{clip}\!\left(\frac{\min\bigl(t_{f,s,\Phi}(q),\,t_{\rm lim}(q,\tilde D)\bigr)-t_{p,\rm eff}(q)}{t_{\rm cad}},\,0,\,1\right).
+\end{equation}
+Because $w$ now depends on $\tilde D$, the $q$-integrand's distance volume is no longer $[\tilde D_{\rm eff}^3-\tilde D_{\rm min}^3]_+\,P$; it becomes the \textbf{closed-form weighted volume}
+\begin{equation}
+\label{eq:V_w}
+V_w(q)=\int_{\tilde D_{\rm min}}^{\tilde D_{\rm eff}(q)}3\tilde D^2\,w(q,\tilde D)\,d\tilde D
+=\frac{w_f}{t_{\rm cad}}\Bigl[\min(\tilde D_{\rm eff},\tilde D_c)^3-\tilde D_{\rm min}^3\Bigr]_+
++\frac{t_{p,\rm eff}}{t_{\rm cad}}\bigl[G(U)-G(L)\bigr]_+,
+\end{equation}
+with the fade window $w_f=\operatorname{clip}(t_{f,s}-t_{p,\rm eff},0,t_{\rm cad})$, ramp start $\tilde D_c=\tilde D_0\,[t_{p,\rm eff}/(t_{p,\rm eff}+w_f)]^{1/k}$, antiderivative $G(\tilde D)=3\tilde D_0^{k}\tilde D^{3-k}/(3-k)-\tilde D^3$ (of $3\tilde D^2[(\tilde D_0/\tilde D)^k-1]$), and clamped ramp edges $U=\min(\tilde D_{\rm eff},\tilde D_0)$, $L=\min(\max(\tilde D_{\rm min},\tilde D_c),U)$. The exponent domain is safe: $k_{\rm II}=8/[3(p-1)]\le 2.64$ and $k_{\rm III}=2/p<1$ for the app's $p\in[2.01,3]$, so the $k=3$ pole is unreachable. The pointwise $w$~\eqref{eq:w_joint} drives the $dR/dD$ view and the numerical $D$-median; $V_w$~\eqref{eq:V_w} drives the rate integral, the numerical $q$-median, and the $dR/dq$ view. Numerics: $\eta^{-1/2}$ is computed directly as $10^{-E/2}$ so that extreme $s_{\rm rise}\,t_{\rm cad}$ (where $\eta$ overflows) degrades gracefully to $\tilde D_0=0$, $V_w=0$.
+
+\paragraph{Limits and invariants.}
+(i)~$s_{\rm rise}=0$ bypasses everything bit-identically (both modes, all derived quantities).
+(ii)~Monotone non-increasing in $s_{\rm rise}$, and jointly in $s_{\rm fade}$.
+(iii)~Pointwise $w\le\min(P_{\rm fade},\,\mathbf 1\{\tilde D\le\tilde D_0\})$, so the joint rate sits below each single-cut rate, and the weighted full-integral rate sits below the best-case ($u=0$) hard-cut rate built from the same $\tilde D_{\rm max}$ profile. \emph{Note}: full vs dominant themselves are \textbf{not} ordered under the rise cut --- the dominant truncation drops the $D$-structured tail beyond the boundary angle, which can outweigh the uniform-start suppression the full mode applies.
+(iv)~$s_{\rm rise}\to 0^{+}$ does \emph{not} limit to the bypass near the flux boundary ($\tilde D\to\tilde D_{\rm max}$): any $s_{\rm rise}>0$ also switches on the real ``catch it before it fades to the limit'' physics that the baseline neglects (sources near their maximum detectable distance are above the limit only briefly). $s_{\rm rise}=0$ disables previous-visit modeling entirely; the residual is confined to the near-boundary shell.
+
+\paragraph{Assumptions.} (a)~The rise itself is ignored (dominant-term lightcurve), which is what makes the previous-visit non-detection automatic. (b)~The start offset $u$ is decoupled from the detection-count machinery ($q_i$, $D_i$ keep their dominant-term forms). (c)~$t_{\rm lim}$ uses the single power-law phase of the viewer; a crossing into the post-$t_j$ (steeper) decay makes the true window slightly \emph{smaller} than modeled, so the rise treatment is mildly permissive there --- opposite in sign to the fade filter's conservative single-phase bias.
+
+\paragraph{Implementation reference.} \texttt{\_rise\_eta()} returns $(\eta,\eta^{-1/2})$; \texttt{\_t\_p\_eff()} the floored peak time; \texttt{\_rise\_fade\_windows()} the shared per-point quantities; \texttt{\_joint\_survival()} the pointwise $w$~\eqref{eq:w_joint}; \texttt{\_weighted\_D\_volume()} the closed form~\eqref{eq:V_w}. The dominant-mode boundary shifts and the on-axis max-term live in \texttt{rate\_log10} (and, in capped-$q_{\rm max}$ form, \texttt{compute\_medians\_analytic}); the bridge's dominant $R(q)$/$R(D)$ view applies the per-regime caps but keeps the separable regime form (no max-term) --- use full-integral mode for the deep-cut corner there.
 
 \subsection{Legacy off-axis-only mode (deprecated)}
 \label{sec:filters_legacy}
