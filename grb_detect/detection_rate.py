@@ -1503,21 +1503,69 @@ class DetectionRateModel:
         N_D    = 100
         d_grid = np.linspace(1.0 / N_D, 1.0, N_D)     # normalized D levels, (N_D,)
 
-        # For each d, q-integral ∫ q · 1{D_eff_norm ≥ d} · 1{q ≥ q_min} · w_joint dq.
-        # Stored as twice the integral so the semantic matches the original Q² − q_min².
-        # NOTE: d is normalized to D_eff_max, so the physical D̃ (units of D_euc)
-        # passed to the pointwise weight is d · D_eff_max.
-        Q_sq_eff = np.empty((N_D,) + shape, dtype=float)
-        for j, d in enumerate(d_grid):
-            above_and_keep = (D_eff_norm >= d) & q_keep_mask                  # (N_q, *shape)
-            w_joint = self._joint_survival(
-                q_g, d * D_eff_max[np.newaxis, ...], D_tilde_max,
+        # Q_sq_eff[j] = 2·∫ q · 1{D_eff_norm ≥ d_j} · 1{q ≥ q_min} · w_joint dq.
+        # (twice the integral so the semantic matches the original Q² − q_min²).
+        # Trapezoid coefficients for the uniform q-grid: np.trapezoid weights the
+        # endpoints by 0.5·Δq and the interior by Δq, so applying them once turns
+        # each masked integral into a plain weighted sum over q-points.
+        dq       = (q_vals[1] - q_vals[0]) if q_vals.size > 1 else 1.0
+        trap_c   = np.full(q_vals.shape, dq, dtype=float)
+        trap_c[0]  *= 0.5
+        trap_c[-1] *= 0.5
+        trap_c   = trap_c.reshape((-1,) + (1,) * ndim)                        # (N_q, 1, …)
+
+        if float(s_rise) <= 0.0:
+            # Rise cut off ⇒ w_joint = _fading_survival is independent of the
+            # distance level d.  Then Q_sq_eff over all N_D levels is a survival
+            # function: bin each q-point by the highest level it clears
+            # (searchsorted 'right' matches the ">= d_grid[j]" test exactly),
+            # scatter-add its trapezoid-weighted contribution, and reverse-cumsum.
+            # This replaces the N_D-length loop's O(N_D·N_q·grid) with one
+            # O((N_D+N_q)·grid) pass; the result equals the loop's up to float
+            # summation order (~1e-15), well below the d-grid discretization.
+            w = self._joint_survival(                # (N_q, *shape); == _fading_survival
+                q_g, D_tilde_max, D_tilde_max,
                 i_det, t_cad_b, s_fade, s_rise, s_mode,
                 rise_random_start=rise_random_start,
                 fade_random_start=fade_random_start,
             )
-            integrand_q    = np.where(above_and_keep, q_g * w_joint, 0.0)     # (N_q, *shape)
-            Q_sq_eff[j]    = 2.0 * np.trapezoid(integrand_q, q_vals, axis=0)
+            base   = (trap_c * q_g * q_keep_mask) * w                         # (N_q, *shape)
+            n_qm   = base.shape[0]
+            M      = int(np.prod(shape, dtype=np.int64)) if shape else 1
+            base_f = np.ascontiguousarray(base).reshape(n_qm, M)
+            De_f   = np.ascontiguousarray(D_eff_norm).reshape(n_qm, M)
+            # bins[i] = highest level index cleared by point i (−1 ⇒ clears none)
+            bins   = np.searchsorted(d_grid, De_f, side="right") - 1          # (N_q, M)
+            cols   = np.broadcast_to(np.arange(M), bins.shape)
+            keep   = bins >= 0
+            lin    = bins[keep].astype(np.int64) * M + cols[keep]
+            Hf     = np.bincount(lin, weights=base_f[keep], minlength=N_D * M)
+            H      = Hf.reshape((N_D,) + shape)
+            # Q_sq_eff[j] = 2·Σ_{k ≥ j} H[k]  (reverse cumulative sum over levels)
+            Q_sq_eff = 2.0 * np.cumsum(H[::-1], axis=0)[::-1]
+        else:
+            # Rise cut active ⇒ w_joint depends on d, so the survival trick does
+            # not apply.  Keep the per-level loop but hoist every d-independent
+            # quantity out of it (only t_lim and the final clip depend on d).
+            t_p_eff, t_fs_sel, k_sel, ise = self._rise_fade_windows(
+                q_g, i_det, t_cad_b, s_fade, s_rise, s_mode
+            )
+            if not fade_random_start:
+                t_fs_sel = np.where(t_fs_sel >= t_p_eff, np.inf, -np.inf)
+            D0       = np.asarray(D_tilde_max, dtype=float) * ise             # (N_q, *shape)
+            Q_sq_eff = np.empty((N_D,) + shape, dtype=float)
+            for j, d in enumerate(d_grid):
+                D_safe = np.maximum(d * D_eff_max[np.newaxis, ...], 1e-300)
+                with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+                    t_lim = t_p_eff * (D0 / D_safe) ** k_sel
+                    if not rise_random_start:
+                        t_lim = np.where(t_lim >= t_p_eff, np.inf, -np.inf)
+                    w_joint = np.clip(
+                        (np.minimum(t_fs_sel, t_lim) - t_p_eff) / t_cad_b, 0.0, 1.0
+                    )
+                above_and_keep = (D_eff_norm >= d) & q_keep_mask              # (N_q, *shape)
+                integrand_q    = np.where(above_and_keep, q_g * w_joint, 0.0) # (N_q, *shape)
+                Q_sq_eff[j]    = 2.0 * np.trapezoid(integrand_q, q_vals, axis=0)
 
         d_g      = d_grid.reshape((-1,) + (1,) * ndim)
         # Distance-floor mask: zero out levels below D_min_cm.

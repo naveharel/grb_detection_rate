@@ -474,27 +474,38 @@ def compute_surface(
         )
         is_subday = t_cad_eff < float(DAY_S)
 
-        Z_day = _rate(model_day, i_det, N_exp, t_cad_eff, full_integral,
-                      q_min=q_min, D_min_cm=D_min_cm,
-                      s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
-                      rise_random_start=rise_random_start,
-                      fade_random_start=fade_random_start)
-
         if model_night is None:
             raise RuntimeError("model_night is required when optical_survey=True")
-        Z_night = _rate(model_night, i_det, N_exp, t_cad_eff, full_integral,
-                        q_min=q_min, D_min_cm=D_min_cm,
-                        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
-                        rise_random_start=rise_random_start,
-                        fade_random_start=fade_random_start)
 
+        # Region split: each cell is served by exactly one model — model_night on
+        # sub-day cells (nearly the whole continuous region), model_day on the
+        # day-cadence cells.  The rate is element-wise, so evaluating each model
+        # only on its own cells gives the same values as evaluating both over the
+        # full grid and np.where-selecting (up to full-integral chunk summation
+        # order, ~1e-15), while roughly halving the rate work.
+        #
         # Sub-day: only the nighttime fraction of the sky is observable each
         # cadence. model_night carries instrument.f_live = f_live / f_night
         # (set by the bridge), so Z_night already reflects the within-night
         # rescaling of the t_exp formula; here we only apply the f_night factor
         # that accounts for night-time accessibility of GRBs.
         f_night = t_night_s / float(DAY_S)
-        Z_raw = np.where(is_subday, Z_night + np.log10(f_night), Z_day)
+        sup     = ~is_subday
+        Z_raw   = np.full(N_exp.shape, np.nan, dtype=float)
+        if np.any(sup):
+            Z_raw[sup] = _rate(
+                model_day, i_det, N_exp[sup], t_cad_eff[sup], full_integral,
+                q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start)
+        if np.any(is_subday):
+            Z_raw[is_subday] = _rate(
+                model_night, i_det, N_exp[is_subday], t_cad_eff[is_subday], full_integral,
+                q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start) + np.log10(f_night)
         Z_raw = np.where(valid, Z_raw, np.nan)
     else:
         t_cad_eff = t_cad_s
@@ -514,14 +525,16 @@ def compute_surface(
         def fill_regimes(model: DetectionRateModel, sel: np.ndarray) -> None:
             if not np.any(sel):
                 return
-            masks = model.region_masks(i_det, N_exp, t_cad_eff, include_unphysical=False)
-            regime_id[(masks["A1"] & sel)] = 1
-            regime_id[(masks["A2"] & sel)] = 2
-            regime_id[(masks["A3"] & sel)] = 3
-            regime_id[(masks["A4"] & sel)] = 4
-            regime_id[(masks["A5"] & sel)] = 5
-            regime_id[(masks["A6"] & sel)] = 6
-            regime_id[(masks["A7"] & sel)] = 7
+            # Region masks are element-wise, so compute them only on the cells
+            # this model serves (1-D subset) and scatter the ids back — same
+            # result as masking the full-grid masks, at half the work in optical
+            # mode.  Cells matching no region stay NaN.
+            masks = model.region_masks(
+                i_det, N_exp[sel], t_cad_eff[sel], include_unphysical=False)
+            ids = np.full(int(np.count_nonzero(sel)), np.nan, dtype=float)
+            for k, key in enumerate(("A1", "A2", "A3", "A4", "A5", "A6", "A7"), start=1):
+                ids[masks[key]] = k
+            regime_id[sel] = ids
 
         if optical_survey:
             # is_subday already computed above in the optical_survey block
@@ -538,28 +551,40 @@ def compute_surface(
     # model_night yields the t_exp / medians of the population the plotted rate
     # describes (model_day's t_exp can even be ≤ 0 there → NaN medians on drawn
     # cells). t_exp uses t_cad_eff (optical-corrected cadence) to match the rate.
-    t_exp_day = model_day.t_exp_s(N_exp, t_cad_eff)
-    q_med_day, D_med_cm_day = model_day.compute_medians(
-        i_det, N_exp, t_cad_eff, full_integral=full_integral,
-        q_min=q_min, D_min_cm=D_min_cm,
-        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
-        rise_random_start=rise_random_start,
-        fade_random_start=fade_random_start,
-    )
     if optical_survey:
-        t_exp_night = model_night.t_exp_s(N_exp, t_cad_eff)
-        q_med_night, D_med_cm_night = model_night.compute_medians(
+        # Same region split as the rate: compute each model's extras only on the
+        # cells it serves (medians/t_exp are per-cell independent, so this equals
+        # the full-grid-then-select result), at half the median work.
+        t_exp_grid    = np.full(N_exp.shape, np.nan, dtype=float)
+        q_med_grid    = np.full(N_exp.shape, np.nan, dtype=float)
+        D_med_cm_grid = np.full(N_exp.shape, np.nan, dtype=float)
+        if np.any(sup):
+            t_exp_grid[sup] = model_day.t_exp_s(N_exp[sup], t_cad_eff[sup])
+            q_med_grid[sup], D_med_cm_grid[sup] = model_day.compute_medians(
+                i_det, N_exp[sup], t_cad_eff[sup], full_integral=full_integral,
+                q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+            )
+        if np.any(is_subday):
+            t_exp_grid[is_subday] = model_night.t_exp_s(N_exp[is_subday], t_cad_eff[is_subday])
+            q_med_grid[is_subday], D_med_cm_grid[is_subday] = model_night.compute_medians(
+                i_det, N_exp[is_subday], t_cad_eff[is_subday], full_integral=full_integral,
+                q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+            )
+    else:
+        t_exp_grid = model_day.t_exp_s(N_exp, t_cad_eff)
+        q_med_grid, D_med_cm_grid = model_day.compute_medians(
             i_det, N_exp, t_cad_eff, full_integral=full_integral,
             q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
             rise_random_start=rise_random_start,
             fade_random_start=fade_random_start,
         )
-        t_exp_grid    = np.where(is_subday, t_exp_night, t_exp_day)
-        q_med_grid    = np.where(is_subday, q_med_night, q_med_day)
-        D_med_cm_grid = np.where(is_subday, D_med_cm_night, D_med_cm_day)
-    else:
-        t_exp_grid, q_med_grid, D_med_cm_grid = t_exp_day, q_med_day, D_med_cm_day
     D_med_Gpc_grid  = D_med_cm_grid / GPC_TO_CM
 
     # Return linear coordinates for true log axes
@@ -649,21 +674,29 @@ def maximize_log_surface_iterative(
             return None
 
         is_subday = t_eff < float(DAY_S)
-        Z_day   = _rate(model_day,   i_det, N, t_eff, full_integral,
-                        q_min=q_min, D_min_cm=D_min_cm,
-                        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
-                        rise_random_start=rise_random_start,
-                        fade_random_start=fade_random_start)
-        Z_night = _rate(model_night, i_det, N, t_eff, full_integral,
-                        q_min=q_min, D_min_cm=D_min_cm,
-                        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
-                        rise_random_start=rise_random_start,
-                        fade_random_start=fade_random_start)
-        # model_night was built with f_live = f_live / f_night, so Z_night
-        # already uses the within-night-rescaled t_exp; the f_night factor
-        # below covers night-time accessibility.
+        # Region split (same as compute_surface): evaluate model_day only on the
+        # day-cadence cells and model_night only on the sub-day cells (nearly the
+        # whole continuous region), instead of both over the full grid — element-
+        # wise rate ⇒ identical maximum, ~half the work.  model_night was built
+        # with f_live = f_live / f_night, so Z_night already uses the
+        # within-night-rescaled t_exp; the f_night factor covers night-time
+        # accessibility.
         f_night = t_night_s / float(DAY_S)
-        Z = np.where(is_subday, Z_night + np.log10(f_night), Z_day)
+        sup     = ~is_subday
+        Z       = np.full(N.shape, np.nan, dtype=float)
+        if np.any(sup):
+            Z[sup] = _rate(model_day, i_det, N[sup], t_eff[sup], full_integral,
+                           q_min=q_min, D_min_cm=D_min_cm,
+                           s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                           rise_random_start=rise_random_start,
+                           fade_random_start=fade_random_start)
+        if np.any(is_subday):
+            Z[is_subday] = _rate(model_night, i_det, N[is_subday], t_eff[is_subday],
+                                 full_integral,
+                                 q_min=q_min, D_min_cm=D_min_cm,
+                                 s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                                 rise_random_start=rise_random_start,
+                                 fade_random_start=fade_random_start) + np.log10(f_night)
         Z = np.where(valid, Z, np.nan)
         if validity_fn is not None:
             Z = np.where(validity_fn(N, t_eff), Z, np.nan)

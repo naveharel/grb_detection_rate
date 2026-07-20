@@ -9,6 +9,8 @@ from __future__ import annotations
 import copy         # TEMP-FDEC-OVERRIDE
 import dataclasses  # TEMP-FDEC-OVERRIDE
 import math
+import os
+import time
 
 import numpy as np
 
@@ -23,6 +25,27 @@ from grb_detect.core import (
     optical_survey_tcad_seconds,
 )
 from grb_detect.survey import exposure_time_s
+
+# ── Optional wall-clock profiling (opt-in via GRB_PROFILE=1) ─────────────────
+# Zero overhead when the env var is unset: the context manager yields
+# immediately.  When set, per-block times accumulate in _PROF_TIMES and the
+# per-call split is printed at the end of compute_all.  Diagnostics only — never
+# affects the returned payload.
+_PROFILE_ON = bool(os.environ.get("GRB_PROFILE"))
+_PROF_TIMES: dict[str, float] = {}
+
+
+def _prof_add(label: str, t0: float) -> float:
+    """Record perf_counter() - t0 under `label` (when profiling) and return now.
+
+    Chaining the return value as the next block's t0 partitions compute_all into
+    non-overlapping timed segments with single-line inserts (no re-indentation).
+    """
+    now = time.perf_counter()
+    if _PROFILE_ON:
+        _PROF_TIMES[label] = _PROF_TIMES.get(label, 0.0) + (now - t0)
+    return now
+
 
 ZTF_OMEGA_EXP_DEG2: float = 47.0
 
@@ -39,6 +62,24 @@ ZTF_HC_VISITS_PER_NIGHT: int = 6
 # boundaries between regimes stay crisp.
 NX_REGIME, NY_REGIME = 200, 240
 NX_DEFAULT, NY_DEFAULT = 160, 200
+
+# ── Optimizer search-grid precision ──────────────────────────────────────────
+# The iterative grid optimizer is the dominant cost of the exact-rate mode
+# (~84% of compute_all), and its default grid pins the optimum far tighter than
+# the ~2-3 significant digits visible on the log-log plot.  A leaner search grid
+# is ~6-8x faster with a sub-visible shift in the reported optimum (measured:
+# ΔN ≲ 1%, Δt_cad ≲ 4%, Δlog10R ≲ 3e-4 — all well below plot precision).  This
+# only affects the single optimum marker; fixed strategies (ZTF points, slices)
+# are unaffected.  Set GRB_OPT_PRECISION=production to restore the original grid
+# (bit-for-bit optimum), or =half for the intermediate (~3x) grid.  The core
+# maximize_log_surface_iterative() defaults are left at 'production' so direct
+# callers / tests are unchanged; only this app's call uses the leaner grid.
+_OPT_GRIDS = {
+    "lean":       dict(n0x=90,  n0y=110, nfx=130, nfy=150, n_refine=2),
+    "half":       dict(n0x=120, n0y=140, nfx=160, nfy=180, n_refine=3),
+    "production": dict(n0x=180, n0y=220, nfx=280, nfy=320, n_refine=3),
+}
+_OPT_GRID = _OPT_GRIDS.get(os.environ.get("GRB_OPT_PRECISION", "lean").lower(), _OPT_GRIDS["lean"])
 
 
 # ── Serialization helpers ────────────────────────────────────────────────────
@@ -960,7 +1001,11 @@ def compute_all(params) -> dict:
     The return dict contains flat Python lists; call result.toJs() on the JS side.
     """
     try:
+        if _PROFILE_ON:
+            _PROF_TIMES.clear()
+        _prof_t0 = time.perf_counter()
         state = _build_models(params)
+        _prof_t0 = _prof_add("build_models", _prof_t0)
         i_det        = state["i_det"]
         f_live       = state["f_live"]
         f_live_night = state["f_live_night"]
@@ -1017,6 +1062,7 @@ def compute_all(params) -> dict:
 
         Y_h   = Y_s / 3600.0
         R_lin = np.where(np.isfinite(Z_plot), 10.0 ** Z_plot, np.nan)
+        _prof_t0 = _prof_add("surface", _prof_t0)
 
         # ── Optimizer ────────────────────────────────────────────────────────
         # Validity constraint for the approx-mode optimizer:
@@ -1043,6 +1089,7 @@ def compute_all(params) -> dict:
             rise_random_start=rise_random_start,
             fade_random_start=fade_random_start,
             validity_fn=opt_validity_fn,
+            **_OPT_GRID,
         )
         R_opt, t_exp_opt_s, q_med_opt, D_med_Gpc_opt = _eval_point(
             N_opt, t_cad_opt_s, i_det, model_day, model_night,
@@ -1087,6 +1134,8 @@ def compute_all(params) -> dict:
                 # Infeasible schedule (can't fit i visits in one night) — hide.
                 R_ztf_hc = math.nan
 
+        _prof_t0 = _prof_add("optimizer+points", _prof_t0)
+
         # ── Slice sweeps at user-chosen positions ────────────────────────────
         # JS passes log10 values from the slice-position sliders. If absent (page
         # bootstrap or very-old callers), fall back to the optimum so the initial
@@ -1100,6 +1149,7 @@ def compute_all(params) -> dict:
 
         nslice_payload = _compute_nslice_sweep(state, t_cad_fix_s)
         tslice_payload = _compute_tslice_sweep(state, N_fix)
+        _prof_t0 = _prof_add("slices", _prof_t0)
 
         # qdview shares its strategy with the slice modes' defaults so the first
         # render lines up with the optimum; per-slider drags will override.
@@ -1108,6 +1158,7 @@ def compute_all(params) -> dict:
         qdview_N_fix    = 10.0 ** qdview_nfix_log
         qdview_t_fix_s  = 10.0 ** qdview_tfix_log
         qdview_payload  = _compute_qdview_sweep(state, qdview_N_fix, qdview_t_fix_s)
+        _prof_t0 = _prof_add("qdview", _prof_t0)
 
         # ── Derived GRB counts ───────────────────────────────────────────────
         rho      = 10.0 ** float(params["rho_grb_log10"])
@@ -1166,6 +1217,13 @@ def compute_all(params) -> dict:
             day_line_t_exp_flat = []
             day_line_q_med_flat = []
             day_line_D_med_Gpc_flat = []
+        _prof_t0 = _prof_add("counts+dayline", _prof_t0)
+        if _PROFILE_ON:
+            _tot = sum(_PROF_TIMES.values()) or 1.0
+            print("[GRB_PROFILE] compute_all split (ms):")
+            for _lbl, _dt in _PROF_TIMES.items():
+                print(f"    {_lbl:20s} {_dt * 1000:9.1f}  ({100 * _dt / _tot:4.1f}%)")
+            print(f"    {'TOTAL':20s} {_tot * 1000:9.1f}")
 
         return {
             "X_flat":       _array_to_list(X),
