@@ -33,7 +33,9 @@ import pytest
 from grb_detect.constants import DAY_S, DEG2_TO_SR
 from grb_detect.detection_rate import DetectionRateModel
 from grb_detect.params import (
+    CM_TO_GPC,
     AfterglowPhysicalParams,
+    MicrophysicsParams,
     SurveyDesignParams,
     SurveyInstrumentParams,
     SurveyTelescopeParams,
@@ -332,10 +334,26 @@ def test_R08_joint_below_each_single_cut(model, strategy_grid):
 # --------------------------------------------------------------------------- #
 
 
-def test_R09_Dmed_decreases(model, strategy_grid):
+def test_R09_Dmed_decreases(strategy_grid):
     """Pick the longest-cadence flux-limited cell (η grows exponentially with
     t_cad, and the D-median grid resolves shifts only above ~1%) and check the
-    full-mode median distance strictly drops under the rise cut."""
+    full-mode median distance strictly drops under the rise cut.
+
+    Uses an explicitly pinned bright normalization (the pre-recalibration
+    ε_B = 1e-2, D_Euc = 1.63e28 cm) rather than the engine defaults: whether
+    the median shift resolves on the D-median grid depends on how deep the
+    chosen flux-limited cell is, which is a property of this scenario, not of
+    the default parameter set."""
+    # Frozen-dataclass gotcha: R_int_yr is baked at class definition from the
+    # default rho/D_euc — recompute explicitly for the custom D_euc.
+    _D_euc = 1.63e28
+    _rho = AfterglowPhysicalParams().rho_grb_gpc3_yr
+    _R_int = (4.0 / 3.0) * math.pi * _rho * (_D_euc * CM_TO_GPC) ** 3
+    model = DetectionRateModel(
+        AfterglowPhysicalParams(D_euc_cm=_D_euc, R_int_yr=_R_int),
+        SurveyInstrumentParams(),
+        MicrophysicsParams(epsilon_B=1e-2),
+    )
     N, T = strategy_grid
     i_det = 3
     masks = model.region_masks(i_det, N, T)

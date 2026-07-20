@@ -536,13 +536,15 @@ def test_F13_differential_views_carry_weight(model):
     Nv, tv = 30.0, 2.0 * DAY_S
     s_fade = 0.5
 
-    # dR/dq: weighted output == unweighted output × P, pointwise and exactly.
+    # dR/dq: weighted output == unweighted output × P pointwise.  The identity
+    # is exact mathematically; the two sides associate the triple product
+    # (prefactor · q · D³) · P differently, so allow float-roundoff slack.
     q_vals, dr0 = model.dR_dq_full_integral(i_det, Nv, tv)
     _, dr1 = model.dR_dq_full_integral(
         i_det, Nv, tv, s_fade=s_fade, s_mode="discrete",
     )
     P = model._fading_survival(q_vals, i_det, np.array([tv]), s_fade, "discrete")
-    np.testing.assert_array_equal(dr1, dr0 * P)
+    np.testing.assert_allclose(dr1, dr0 * P, rtol=1e-13, atol=0.0)
 
     # dR/dD: P ≤ 1 in the inner q-integral ⇒ pointwise ≤ the unweighted curve.
     D_grid, dD0 = model.dR_dD_full_integral(i_det, Nv, tv)

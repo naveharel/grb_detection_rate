@@ -73,7 +73,26 @@ def _safe_log10(x: np.ndarray) -> np.ndarray:
 
 
 class DetectionRateModel:
-    """Implements the   piecewise rate surface."""
+    """Implements the   piecewise rate surface.
+
+    Detection-window settings (both default off — the legacy simple mode):
+
+    win_i_minus_one
+        Require the detectability window to span only (i−1)·t_cad — the gaps
+        between i detections — instead of i·t_cad, everywhere the required
+        duration enters (q_i, D_i, and the window-mode D_eff).
+    win_from_peak
+        Measure the required window from the light-curve turn-on t_on ≈ t_p(q)
+        instead of from the burst: an event at viewing angle q counts only if
+        t_+(D) ≥ t_p,eff(q) + T_req (the off-axis flux is negligible before the
+        peak, so epochs before t_p cannot be detections).  This makes the
+        cadence distance cap q-dependent, so no closed dominant-term rectangle
+        exists: `rate_log10` evaluates the q-integral internally and
+        `compute_medians` always uses the numerical path.  Region masks keep
+        the uncorrected q_i boundaries as an approximate classification.
+
+    With both settings on, the criterion is t_+(D) − t_p,eff(q) ≥ (i−1)·t_cad.
+    """
 
     def __init__(
         self,
@@ -81,11 +100,16 @@ class DetectionRateModel:
         instrument: SurveyInstrumentParams,
         micro: MicrophysicsParams | None = None,
         pls: PLSModel | None = None,
+        *,
+        win_i_minus_one: bool = False,
+        win_from_peak: bool = False,
     ):
         self.phys = phys
         self.instrument = instrument
         self.micro = micro if micro is not None else MicrophysicsParams()
         self.pls = pls if pls is not None else PLSG()
+        self.win_i_minus_one = bool(win_i_minus_one)
+        self.win_from_peak = bool(win_from_peak)
 
         self._derived = self._compute_derived_scales()
 
@@ -184,17 +208,29 @@ class DetectionRateModel:
 
         return 1.0 + q_tilde
 
-    def q_i(self, i_det: int, t_cad_s: np.ndarray) -> np.ndarray:
-        """q_i(t_cad): angle for which t_p(q_i) = i * t_cad.
+    def _t_req_s(self, i_det: int, t_cad_s: np.ndarray) -> np.ndarray:
+        """Required detectability duration T_req for i detections.
 
-        Matches the   definition.
+        T_req = i·t_cad in the legacy mode; (i−1)·t_cad under the
+        `win_i_minus_one` setting (i detections only need to bracket the i−1
+        cadence gaps between them).  At i_det = 1 the setting gives T_req = 0
+        (a single detection at the peak suffices) — q_i then collapses to 1
+        and D_i to +∞, i.e. the cadence constraint vanishes.
         """
 
         i_det = int(i_det)
         if i_det < 1:
             raise ValueError("i_det must be >= 1")
+        i_eff = i_det - 1 if self.win_i_minus_one else i_det
+        return float(i_eff) * np.asarray(t_cad_s, dtype=float)
 
-        t_req = i_det * t_cad_s
+    def q_i(self, i_det: int, t_cad_s: np.ndarray) -> np.ndarray:
+        """q_i(t_cad): angle for which t_p(q_i) = T_req (= i * t_cad).
+
+        Matches the   definition; T_req = (i−1)·t_cad under `win_i_minus_one`.
+        """
+
+        t_req = self._t_req_s(i_det, t_cad_s)
         before_tj = t_req < self.derived.t_j_s
 
         q_tilde = np.empty_like(t_req, dtype=float)
@@ -219,21 +255,84 @@ class DetectionRateModel:
         qi = self.q_i(i_det, t_cad_s)
         qi_tilde = qi - 1.0
 
-        t_req = i_det * t_cad_s
+        t_req = self._t_req_s(i_det, t_cad_s)
         before_tj = t_req < self.derived.t_j_s
 
         D_dec = self.D_dec(F_lim)
 
         out = np.empty_like(D_dec, dtype=float)
-        # Phase II: D_i = D_dec * (qi_tilde/qd_tilde)^(-aII)
-        out[before_tj] = D_dec[before_tj] * ((qi_tilde[before_tj] / qd_tilde) ** (-aII))
+        # T_req = 0 (win_i_minus_one at i_det = 1) → q̃_i = 0 → the power below
+        # diverges; the correct limit is no cadence constraint at all (+∞).
+        with np.errstate(divide="ignore"):
+            # Phase II: D_i = D_dec * (qi_tilde/qd_tilde)^(-aII)
+            out[before_tj] = D_dec[before_tj] * ((qi_tilde[before_tj] / qd_tilde) ** (-aII))
 
-        # Phase III: D_i = D_dec * qd_tilde^{-1} (qi_tilde/qd_tilde)^(-aIII)
-        out[~before_tj] = D_dec[~before_tj] * (qd_tilde ** (-1.0)) * (
-            (qi_tilde[~before_tj] / qd_tilde) ** (-aIII)
-        )
+            # Phase III: D_i = D_dec * qd_tilde^{-1} (qi_tilde/qd_tilde)^(-aIII)
+            out[~before_tj] = D_dec[~before_tj] * (qd_tilde ** (-1.0)) * (
+                (qi_tilde[~before_tj] / qd_tilde) ** (-aIII)
+            )
 
         return out
+
+    def D_from_t_plus(self, t_plus_s: np.ndarray, F_lim: np.ndarray) -> np.ndarray:
+        """Distance at which the post-peak on-axis light curve crosses F_lim at t_+.
+
+        Inverts the on-axis decline F(t, D) = F_dec·(D/D_euc)^{-2}·F̃(t) at
+        F = F_lim for a prescribed crossing time t_+ = `t_plus_s` [s]:
+
+            D(t_+) = D_dec · (t_+/t_dec)^{α_II/2},                    t_+ < t_j,
+            D(t_+) = D_dec · (t_j/t_dec)^{α_II/2} · (t_+/t_j)^{α_III/2},  t_+ ≥ t_j,
+
+        with α_phase the (negative) temporal flux indices of the PLS.  At
+        t_+ = T_req this reproduces `D_i` exactly, and at t_+ = t_p(q) it
+        reproduces the flux-limited D_max(q) — the two rectangle boundaries
+        are the T_req-only and peak-only limits of this one relation.
+        Valid for t_+ ≥ t_dec (the decline); t_plus_s ≤ 0 maps to +∞ (no
+        constraint).  Result is clipped at D_dec, the t_+ = t_dec endpoint.
+        """
+
+        p = self.phys.p
+        alpha_II = float(self.pls.alpha_II_temporal(p))    # < 0
+        alpha_III = float(self.pls.alpha_III_temporal(p))  # < 0
+        t_dec = float(self.derived.t_dec_s)
+        t_j = float(self.derived.t_j_s)
+
+        T = np.asarray(t_plus_s, dtype=float)
+        D_dec = self.D_dec(F_lim)
+
+        # over="ignore": the T ≤ 0 guard below discards the overflowed branch.
+        with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+            T_safe = np.maximum(T, 1e-300)
+            D_II = D_dec * (T_safe / t_dec) ** (alpha_II / 2.0)
+            D_III = (
+                D_dec
+                * (t_j / t_dec) ** (alpha_II / 2.0)
+                * (T_safe / t_j) ** (alpha_III / 2.0)
+            )
+            out = np.where(T < t_j, D_II, D_III)
+            out = np.minimum(out, D_dec)
+        return np.where(T > 0.0, out, np.inf)
+
+    def _D_eff_window_cm(
+        self,
+        q: np.ndarray,
+        i_det: int,
+        t_cad_s: np.ndarray,
+        F_lim: np.ndarray,
+    ) -> np.ndarray:
+        """q-dependent cadence distance under `win_from_peak` [cm].
+
+        Largest distance at which the above-threshold window [t_p, t_+] spans
+        the required duration: t_+(D) = t_p,eff(q) + T_req.  Off-axis events
+        must stay above the limit for the full window *after* they turn on;
+        the legacy D_i measures the window from the burst instead and so
+        credits detections to the pre-peak interval where the off-axis flux
+        is negligible.
+        """
+
+        T_req = self._t_req_s(i_det, t_cad_s)
+        T_eff = self._t_p_eff(q) + T_req
+        return self.D_from_t_plus(T_eff, F_lim)
 
     # ---------- Piecewise rate surface ----------
     def region_masks(
@@ -447,6 +546,8 @@ class DetectionRateModel:
         t_cad_s: np.ndarray,
         s_fade: float,
         s_mode: str,
+        *,
+        fade_random_start: bool = True,
     ) -> np.ndarray:
         """Pointwise pass probability of the s_fade filter for a uniform start.
 
@@ -497,10 +598,16 @@ class DetectionRateModel:
 
         t_p_eff = self._t_p_eff(q_arr)
         # clip() maps a per-element t_f,s = +∞ (expm1 underflow) to exactly 1.0,
-        # so the bypass stays bit-neutral under multiplication.
+        # so the bypass stays bit-neutral under multiplication.  With
+        # fade_random_start=False the uniform-start ramp collapses to its u=0
+        # best case: a hard gate 1{t_f,s ≥ t_p,eff} (+∞ cap ⇒ 1, bypass-neutral).
         with np.errstate(invalid="ignore", over="ignore"):
-            P_II  = np.clip((t_f_s_II  - t_p_eff) / t_cad_arr, 0.0, 1.0)
-            P_III = np.clip((t_f_s_III - t_p_eff) / t_cad_arr, 0.0, 1.0)
+            if fade_random_start:
+                P_II  = np.clip((t_f_s_II  - t_p_eff) / t_cad_arr, 0.0, 1.0)
+                P_III = np.clip((t_f_s_III - t_p_eff) / t_cad_arr, 0.0, 1.0)
+            else:
+                P_II  = np.where(t_f_s_II  >= t_p_eff, 1.0, 0.0)
+                P_III = np.where(t_f_s_III >= t_p_eff, 1.0, 0.0)
         # On-axis (q < q_dec) lumped with Phase II, mirroring the full-integral
         # phase masks (on_axis | phase_II ⇔ q < q_j).
         return np.where(q_arr < q_j, P_II, P_III)
@@ -592,6 +699,9 @@ class DetectionRateModel:
         s_fade: float,
         s_rise: float,
         s_mode: str,
+        *,
+        rise_random_start: bool = True,
+        fade_random_start: bool = True,
     ) -> np.ndarray:
         """Pointwise joint fade+rise pass probability for a uniform start.
 
@@ -608,9 +718,17 @@ class DetectionRateModel:
 
         `D_tilde` and `D_tilde_max` are distances normalized to D_euc.  With
         s_rise ≤ 0 this delegates to `_fading_survival` (bit-compatible).
+
+        A `*_random_start=False` flag replaces that cut's uniform-start ramp
+        with its u=0 best case — a hard gate on the same window (fade:
+        1{t_f,s ≥ t_p,eff}; rise: 1{t_lim ≥ t_p,eff} ⇔ 1{D̃ ≤ D̃_0}).  Both
+        True (default) reproduces the uniform-start survival weight exactly.
         """
         if float(s_rise) <= 0.0:
-            return self._fading_survival(q, i_det, t_cad_s, s_fade, s_mode)
+            return self._fading_survival(
+                q, i_det, t_cad_s, s_fade, s_mode,
+                fade_random_start=fade_random_start,
+            )
 
         t_cad_arr = np.asarray(t_cad_s, dtype=float)
         t_p_eff, t_fs_sel, k_sel, ise = self._rise_fade_windows(
@@ -620,6 +738,12 @@ class DetectionRateModel:
         D_safe = np.maximum(np.asarray(D_tilde, dtype=float), 1e-300)
         with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
             t_lim = t_p_eff * (D0 / D_safe) ** k_sel
+            # Hard-boundary (best-case u=0) override per cut: gate the window
+            # to +∞ when it passes at u=0, −∞ (kills the point) otherwise.
+            if not fade_random_start:
+                t_fs_sel = np.where(t_fs_sel >= t_p_eff, np.inf, -np.inf)
+            if not rise_random_start:
+                t_lim = np.where(t_lim >= t_p_eff, np.inf, -np.inf)
             w = np.clip(
                 (np.minimum(t_fs_sel, t_lim) - t_p_eff) / t_cad_arr, 0.0, 1.0
             )
@@ -636,6 +760,9 @@ class DetectionRateModel:
         s_fade: float,
         s_rise: float,
         s_mode: str,
+        *,
+        rise_random_start: bool = True,
+        fade_random_start: bool = True,
     ) -> np.ndarray:
         """Closed-form joint-weighted D-volume for the full-integral q-integrand.
 
@@ -658,9 +785,20 @@ class DetectionRateModel:
         with k = 2/|α_phase| < 3 always (p > 2 ⇒ k_II ≤ 8/3·1/(p−1) < 3,
         k_III = 2/p < 1), so the (3−k) pole is unreachable.  With s_rise ≤ 0
         this reproduces the fade-only product exactly (bit-compatible).
+
+        A `*_random_start=False` flag applies that cut as its u=0 best-case
+        hard boundary inside the integral (matching the dominant-term
+        treatment): hard fade gates t_f,s → ±∞ (a passing fade then gives
+        w_f = t_cad, i.e. the rise-only integral; a failing one gives V_w = 0),
+        and hard rise sets the ramp start D̃_c = D̃_0, collapsing the power-law
+        ramp to a sharp cutoff at D̃ ≤ D̃_0 (term_ramp auto-zeros).  Both True
+        (default) is the uniform-start survival weight.
         """
         if float(s_rise) <= 0.0:
-            P_fade = self._fading_survival(q, i_det, t_cad_s, s_fade, s_mode)
+            P_fade = self._fading_survival(
+                q, i_det, t_cad_s, s_fade, s_mode,
+                fade_random_start=fade_random_start,
+            )
             return np.maximum(D_eff ** 3 - D_min_norm ** 3, 0.0) * P_fade
 
         t_cad_arr = np.asarray(t_cad_s, dtype=float)
@@ -673,10 +811,17 @@ class DetectionRateModel:
         D_min3 = D_min_n ** 3
 
         with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+            # Hard fade (best-case u=0): gate t_f,s → ±∞ before forming w_f, so
+            # a passing fade → w_f = t_cad and a failing one → w_f = 0.
+            if not fade_random_start:
+                t_fs_sel = np.where(t_fs_sel >= t_p_eff, np.inf, -np.inf)
             # Fade window [s], clipped; t_fs = +∞ (bypass) → exactly t_cad.
             w_f = np.clip(t_fs_sel - t_p_eff, 0.0, t_cad_arr)
             # Ramp start: where the rise window first drops to w_f.
             D_c = D0 * (t_p_eff / (t_p_eff + w_f)) ** (1.0 / k_sel)
+            # Hard rise (best-case u=0): collapse the ramp to a step at D̃ ≤ D̃_0.
+            if not rise_random_start:
+                D_c = D0
 
             term_const = (w_f / t_cad_arr) * np.maximum(
                 np.minimum(D_eff_arr, D_c) ** 3 - D_min3, 0.0
@@ -702,6 +847,8 @@ class DetectionRateModel:
         s_fade: float = 0.0,
         s_rise: float = 0.0,
         s_mode: str = "discrete",
+        rise_random_start: bool = True,
+        fade_random_start: bool = True,
         return_components: bool = False,
     ) -> np.ndarray | Tuple[np.ndarray, Dict[str, np.ndarray]]:
         """Compute log10 R_det for the given strategy grid.
@@ -755,7 +902,24 @@ class DetectionRateModel:
         components : dict, optional
             If return_components=True, also returns a dict with intermediate
             arrays (F_lim, q_Euc, q_i, D_dec, D_i, masks...).
+
+        Notes
+        -----
+        Under `win_from_peak` the cadence distance cap is q-dependent and no
+        closed dominant-term rectangle exists, so the rate is evaluated with
+        the q-integral (`rate_log10_full_integral`) internally; the component
+        arrays (masks, q_i, D_i) keep their legacy rectangle definitions as an
+        approximate classification.
         """
+
+        if self.win_from_peak and not return_components:
+            return self.rate_log10_full_integral(
+                i_det, N_exp, t_cad_s,
+                q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+            )
 
         N_exp = np.asarray(N_exp, dtype=float)
         t_cad_s = np.asarray(t_cad_s, dtype=float)
@@ -900,6 +1064,18 @@ class DetectionRateModel:
         logR[masks["A6"]] = R6[masks["A6"]]
         logR[masks["A7"]] = R7[masks["A7"]]
 
+        # win_from_peak + return_components: the early return above was
+        # skipped so the caller still gets the rectangle components, but the
+        # rate itself comes from the q-integral (see Notes).
+        if self.win_from_peak:
+            logR = self.rate_log10_full_integral(
+                i_det, N_exp, t_cad_s,
+                q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+            )
+
         if not return_components:
             return logR
 
@@ -937,6 +1113,8 @@ class DetectionRateModel:
         s_fade: float = 0.0,
         s_rise: float = 0.0,
         s_mode: str = "discrete",
+        rise_random_start: bool = True,
+        fade_random_start: bool = True,
         N_q: int = 500,
     ) -> np.ndarray:
         """Exact rate via full q-integral (thesis Eq. 39/62). No dominant-term approximation.
@@ -1003,10 +1181,15 @@ class DetectionRateModel:
         a_II    = float(self.pls.a_II(self.phys.p))
         a_III   = float(self.pls.a_III(self.phys.p))
 
-        # Cadence distance scale: D̃_eff = min(D_i / D_Euc, 1)
-        D_i          = self.D_i(i_det, t_cad_b, F_lim)
+        # Cadence distance scale: D̃_eff = min(D_i / D_Euc, 1).  Under
+        # win_from_peak the cap is q-dependent (window measured from t_p) and
+        # is computed per q-chunk inside the loop instead.
         D_tilde_dec  = self.D_dec(F_lim) / D_Euc   # shape
-        D_tilde_eff  = np.minimum(D_i / D_Euc, 1.0) # shape, capped at 1
+        if self.win_from_peak:
+            D_tilde_eff = None
+        else:
+            D_i         = self.D_i(i_det, t_cad_b, F_lim)
+            D_tilde_eff = np.minimum(D_i / D_Euc, 1.0) # shape, capped at 1
 
         # Trapezoidal integral: ∫_{q_min}^{q_nr} q * max(D̃_eff^3 − D̃_min^3, 0) dq
         # At q_min=0, D_min=0 the weight and the max() reduce to 1 and D̃_eff³,
@@ -1053,8 +1236,16 @@ class DetectionRateModel:
                           np.where(phase_II, D_max_II,
                                              D_max_III))
 
-            # Effective detectable distance: min(D̃_max, D̃_eff)
-            D_eff = np.minimum(D_tilde_max, D_tilde_eff)  # (n_chunk, *shape)
+            # Effective detectable distance: min(D̃_max, D̃_eff).  Under
+            # win_from_peak D̃_eff is the per-q window distance (one extra
+            # (n_chunk, *shape) slab inside the chunk memory budget).
+            if self.win_from_peak:
+                D_tilde_eff_g = np.minimum(
+                    self._D_eff_window_cm(q_g, i_det, t_cad_b, F_lim) / D_Euc, 1.0
+                )
+            else:
+                D_tilde_eff_g = D_tilde_eff
+            D_eff = np.minimum(D_tilde_max, D_tilde_eff_g)  # (n_chunk, *shape)
 
             # Fade + rise filters: joint uniform-start survival weight folded
             # into the closed-form D-volume of each q-point (see
@@ -1064,6 +1255,8 @@ class DetectionRateModel:
             V_w = self._weighted_D_volume(
                 q_g, D_tilde_max, D_eff, D_min_norm,
                 i_det, t_cad_b, s_fade, s_rise, s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
             )
             q_keep = q_g >= q_min_f
             integrand = np.where(q_keep, q_g * V_w, 0.0)   # (n_chunk, *shape)
@@ -1203,6 +1396,8 @@ class DetectionRateModel:
         s_fade: float = 0.0,
         s_rise: float = 0.0,
         s_mode: str = "discrete",
+        rise_random_start: bool = True,
+        fade_random_start: bool = True,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Median q and D for the full-integral mode, computed numerically.
 
@@ -1237,15 +1432,23 @@ class DetectionRateModel:
         a_II    = float(self.pls.a_II(self.phys.p))
         a_III   = float(self.pls.a_III(self.phys.p))
 
-        D_i_arr     = self.D_i(i_det, t_cad_b, F_lim)
         D_tilde_dec = self.D_dec(F_lim) / D_Euc
-        D_tilde_eff = np.minimum(D_i_arr / D_Euc, 1.0)
 
         # q grid — same construction as rate_log10_full_integral
         q_vals = np.linspace(0.0, q_nr, N_q + 1)[1:]
         ndim   = len(shape)
         q_g    = q_vals.reshape((-1,) + (1,) * ndim)
         qt_g   = np.maximum(q_g - 1.0, 0.0)
+
+        # Cadence distance cap: q-dependent under win_from_peak (window
+        # measured from t_p), constant D_i otherwise.
+        if self.win_from_peak:
+            D_tilde_eff = np.minimum(
+                self._D_eff_window_cm(q_g, i_det, t_cad_b, F_lim) / D_Euc, 1.0
+            )
+        else:
+            D_i_arr     = self.D_i(i_det, t_cad_b, F_lim)
+            D_tilde_eff = np.minimum(D_i_arr / D_Euc, 1.0)
 
         on_axis   = q_g <  q_dec
         phase_II  = (q_g >= q_dec) & (q_g < q_j)
@@ -1278,6 +1481,8 @@ class DetectionRateModel:
         V_w = self._weighted_D_volume(
             q_g, D_tilde_max, D_eff, D_min_norm,
             i_det, t_cad_b, s_fade, s_rise, s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
         )
         w_q        = np.where(q_keep_mask, q_g * V_w, 0.0)                   # (N_q, *shape)
         cumsum_q   = np.cumsum(w_q, axis=0)
@@ -1308,6 +1513,8 @@ class DetectionRateModel:
             w_joint = self._joint_survival(
                 q_g, d * D_eff_max[np.newaxis, ...], D_tilde_max,
                 i_det, t_cad_b, s_fade, s_rise, s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
             )
             integrand_q    = np.where(above_and_keep, q_g * w_joint, 0.0)     # (N_q, *shape)
             Q_sq_eff[j]    = 2.0 * np.trapezoid(integrand_q, q_vals, axis=0)
@@ -1379,14 +1586,21 @@ class DetectionRateModel:
         a_II    = float(self.pls.a_II(self.phys.p))
         a_III   = float(self.pls.a_III(self.phys.p))
 
-        D_i_arr     = self.D_i(i_det, t_arr, F_lim_arr)
         D_dec_arr   = self.D_dec(F_lim_arr)
-        D_i         = float(D_i_arr[0])
         D_tilde_dec = float(D_dec_arr[0]) / D_Euc
-        D_tilde_eff = min(D_i / D_Euc, 1.0)
 
         q_vals = np.linspace(0.0, q_nr, N_q + 1)[1:]
         qt_g   = np.maximum(q_vals - 1.0, 0.0)
+
+        # Cadence distance cap: q-dependent (N_q,) profile under win_from_peak,
+        # constant D_i otherwise.
+        if self.win_from_peak:
+            D_tilde_eff = np.minimum(
+                self._D_eff_window_cm(q_vals, i_det, t_arr, F_lim_arr) / D_Euc, 1.0
+            )
+        else:
+            D_i_arr     = self.D_i(i_det, t_arr, F_lim_arr)
+            D_tilde_eff = min(float(D_i_arr[0]) / D_Euc, 1.0)
 
         on_axis   = q_vals <  q_dec
         phase_II  = (q_vals >= q_dec) & (q_vals < q_j)
@@ -1417,6 +1631,8 @@ class DetectionRateModel:
         s_fade: float = 0.0,
         s_rise: float = 0.0,
         s_mode: str = "discrete",
+        rise_random_start: bool = True,
+        fade_random_start: bool = True,
         N_q: int = 500,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Differential rate dR/dq for the full-integral (exact) mode.
@@ -1445,6 +1661,8 @@ class DetectionRateModel:
         V_w = self._weighted_D_volume(
             q_vals, D_tilde_max, D_eff_norm, D_min_norm,
             i_det, np.array([float(t_cad_s)]), s_fade, s_rise, s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
         )
 
         dR_dq = np.where(keep, prefactor * q_vals * V_w, 0.0)
@@ -1461,6 +1679,8 @@ class DetectionRateModel:
         s_fade: float = 0.0,
         s_rise: float = 0.0,
         s_mode: str = "discrete",
+        rise_random_start: bool = True,
+        fade_random_start: bool = True,
         N_q: int = 500,
         N_D: int = 200,
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -1497,6 +1717,8 @@ class DetectionRateModel:
             q_vals[np.newaxis, :], d_grid[:, np.newaxis],
             D_tilde_max[np.newaxis, :],
             i_det, np.array([float(t_cad_s)]), s_fade, s_rise, s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
         )                                                                # (N_D, N_q)
         q_keep_f = (q_vals >= float(q_min)).astype(float)                # (N_q,)
 
@@ -1523,13 +1745,24 @@ class DetectionRateModel:
         s_fade: float = 0.0,
         s_rise: float = 0.0,
         s_mode: str = "discrete",
+        rise_random_start: bool = True,
+        fade_random_start: bool = True,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Return (q_med, D_med_cm) using analytic (normal) or numerical (full-integral) formula."""
-        if full_integral:
+        """Return (q_med, D_med_cm) using analytic (normal) or numerical (full-integral) formula.
+
+        Under `win_from_peak` the analytic per-regime constants no longer
+        describe the rate (D_eff is q-dependent), so the numerical path is
+        used regardless of `full_integral`.  The `*_random_start` flags apply
+        only on the numerical path (the analytic path is the hard-boundary
+        dominant-term treatment already).
+        """
+        if full_integral or self.win_from_peak:
             return self.compute_medians_numerical(
                 i_det, N_exp, t_cad_s, N_q,
                 q_min=q_min, D_min_cm=D_min_cm,
                 s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
             )
         return self.compute_medians_analytic(
             i_det, N_exp, t_cad_s,

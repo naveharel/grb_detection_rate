@@ -5,7 +5,7 @@
   --border:rgba(255,255,255,0.07); --border-hover:rgba(255,255,255,0.14);
   --text-hi:#f0f4ff; --text-mid:#8ba0c0; --text-lo:#445570;
   --accent:#6d9eff; --accent-dim:rgba(109,158,255,0.10); --accent-glow:rgba(109,158,255,0.25);
-  --amber:#fbbf24; --coral:#f87171; --green:#34d399;
+  --amber:#fbbf24; --coral:#f87171; --green:#34d399; --violet:#a78bfa;
   --font-ui:'Inter',system-ui,sans-serif;
   --font-mono:'JetBrains Mono','Cascadia Code','Fira Code',monospace;
   --r-sm:5px; --r-md:8px; --r-lg:12px;
@@ -76,17 +76,26 @@ input{font-family:inherit}
   overflow-x:auto;overflow-y:hidden;white-space:nowrap;
 }
 .metrics-strip::-webkit-scrollbar{display:none}
-.metric-badge{display:flex;align-items:baseline;gap:5px;padding:0 12px;white-space:nowrap}
+/* A metric group = one mode (Optimum / ZTF public / ZTF HC): a colored label
+   followed by its R_det / t_cad / N_exp / t_exp badges. The label carries the
+   mode name (matching the plot-marker color), so per-metric mode subscripts
+   are unnecessary. Dimmed when the current params differ from that preset. */
+.metric-group{display:flex;align-items:center;gap:2px;transition:opacity var(--t-fast)}
+.metric-group.metric-dimmed{opacity:0.4}
+.metric-group-label{font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;padding:0 8px 0 6px;white-space:nowrap}
+.metric-group-label.mg-opt{color:var(--amber)}
+.metric-group-label.mg-ztf{color:var(--coral)}
+.metric-group-label.mg-hc{color:var(--violet)}
+.metric-badge{display:flex;align-items:baseline;gap:5px;padding:0 7px;white-space:nowrap}
 .metric-sep{width:1px;height:16px;background:var(--border);flex-shrink:0}
-.metric-sep-prominent{width:1px;height:26px;background:var(--text-lo);flex-shrink:0}
+.metric-sep-prominent{width:1px;height:26px;background:var(--text-lo);flex-shrink:0;margin:0 4px}
 .metric-label{font-family:var(--font-mono);font-size:10px;font-weight:500;letter-spacing:0.4px;color:var(--text-lo)}
 .metric-value{font-family:var(--font-mono);font-size:13px;font-weight:500;color:var(--text-mid)}
 .metric-amber{color:var(--amber)}
 .metric-coral{color:var(--coral)}
+.metric-violet{color:var(--violet)}
 .metric-muted{color:var(--text-mid)}
-.metric-gain{color:var(--text-mid)}
-.metric-gain.positive{color:var(--green)}
-.metric-gain.negative{color:var(--coral)}
+.metric-preset-note{margin-left:14px;font-family:var(--font-ui);font-size:10.5px;color:var(--text-lo);white-space:nowrap;cursor:default}
 .metric-status{margin-left:auto;display:flex;align-items:center;gap:6px;padding:0 16px;font-family:var(--font-mono);font-size:11px;color:var(--text-lo);white-space:nowrap}
 .metric-status.error{color:var(--coral)}
 /* ── Body area ───────────────────────────────────────────────────────────── */
@@ -203,6 +212,9 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
 .toggle-switch input:checked + .toggle-track .toggle-thumb{transform:translateX(16px);background:#fff}
 .switch-label{font-size:12px;color:var(--text-mid);cursor:pointer}
 .toggle-hint{font-size:11px;color:var(--text-lo);line-height:1.45;margin-top:2px;margin-bottom:6px}
+/* Indented sub-options gated by a master toggle (e.g. Exact rate mode) */
+.sub-toggle-group{margin-left:12px;padding-left:12px;border-left:1px solid var(--border);transition:opacity var(--t-fast)}
+.sub-toggle-group.disabled{opacity:0.4;pointer-events:none}
 /* ── Group labels ────────────────────────────────────────────────────────── */
 .param-group-label{font-size:10px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-lo);margin:6px 0 2px}
 /* ── Derived value display ───────────────────────────────────────────────── */

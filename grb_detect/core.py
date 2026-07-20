@@ -54,6 +54,8 @@ def _make_rate_model_cached(
     nu_log10: float,
     D_euc_gpc: float,
     rho_grb_log10: float,
+    win_i_minus_one: bool,
+    win_from_peak: bool,
 ) -> DetectionRateModel:
     """Cached model construction — called only when parameters change."""
     p_val      = float(p)
@@ -94,7 +96,11 @@ def _make_rate_model_cached(
         telescope=telescope,
         design=SurveyDesignParams(omega_survey_max_sr=float(omega_survey_max_sr)),
     )
-    return DetectionRateModel(phys=phys, instrument=instrument, micro=micro)
+    return DetectionRateModel(
+        phys=phys, instrument=instrument, micro=micro,
+        win_i_minus_one=bool(win_i_minus_one),
+        win_from_peak=bool(win_from_peak),
+    )
 
 
 def make_rate_model(
@@ -115,6 +121,9 @@ def make_rate_model(
     nu_log10: float | None = None,
     D_euc_gpc: float | None = None,
     rho_grb_log10: float | None = None,
+    # Detection-window settings (see DetectionRateModel docstring)
+    win_i_minus_one: bool = False,
+    win_from_peak: bool = False,
 ) -> DetectionRateModel:
     """Construct a rate model from the survey parameters exposed in the UI.
 
@@ -149,6 +158,8 @@ def make_rate_model(
         _r(nu_log10)       if nu_log10       is not None else _r(math.log10(_d.nu_hz)),
         _r(D_euc_gpc)      if D_euc_gpc      is not None else _r(_d.D_euc_cm * CM_TO_GPC),
         _r(rho_grb_log10)  if rho_grb_log10  is not None else _r(math.log10(_d.rho_grb_gpc3_yr)),
+        bool(win_i_minus_one),
+        bool(win_from_peak),
     )
 
 
@@ -364,23 +375,34 @@ def _rate(
     s_fade: float = 0.0,
     s_rise: float = 0.0,
     s_mode: str = "discrete",
+    rise_random_start: bool = True,
+    fade_random_start: bool = True,
 ) -> np.ndarray:
     """Dispatch to the full-integral or dominant-term rate method.
 
     The q_min / D_min_cm / s_fade / s_rise filters are applied inside the chosen rate
     method so R_total and the filters share the same approximation level.  At
     q_min=0, D_min_cm=0, s_fade=0 the result reduces to the unfiltered behavior.
+
+    ``rise_random_start`` / ``fade_random_start`` select, per cut, the
+    uniform-start survival weight (True) vs. the best-case hard boundary
+    (False) inside the full-integral path; they are inert in the dominant-term
+    path (already hard boundaries).
     """
     if full_integral:
         return model.rate_log10_full_integral(
             i_det, N_exp, t_cad_s,
             q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
         )
     return model.rate_log10(
         i_det, N_exp, t_cad_s,
         q_min=q_min, D_min_cm=D_min_cm,
         s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+        rise_random_start=rise_random_start,
+        fade_random_start=fade_random_start,
     )
 
 
@@ -400,6 +422,8 @@ def compute_surface(
     s_fade: float = 0.0,
     s_rise: float = 0.0,
     s_mode: str = "discrete",
+    rise_random_start: bool = True,
+    fade_random_start: bool = True,
 ) -> tuple[
     np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray | None,
     np.ndarray, np.ndarray, np.ndarray,
@@ -452,13 +476,17 @@ def compute_surface(
 
         Z_day = _rate(model_day, i_det, N_exp, t_cad_eff, full_integral,
                       q_min=q_min, D_min_cm=D_min_cm,
-                      s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
+                      s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                      rise_random_start=rise_random_start,
+                      fade_random_start=fade_random_start)
 
         if model_night is None:
             raise RuntimeError("model_night is required when optical_survey=True")
         Z_night = _rate(model_night, i_det, N_exp, t_cad_eff, full_integral,
                         q_min=q_min, D_min_cm=D_min_cm,
-                        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
+                        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                        rise_random_start=rise_random_start,
+                        fade_random_start=fade_random_start)
 
         # Sub-day: only the nighttime fraction of the sky is observable each
         # cadence. model_night carries instrument.f_live = f_live / f_night
@@ -472,7 +500,9 @@ def compute_surface(
         t_cad_eff = t_cad_s
         Z_raw = _rate(model_day, i_det, N_exp, t_cad_eff, full_integral,
                       q_min=q_min, D_min_cm=D_min_cm,
-                      s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
+                      s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                      rise_random_start=rise_random_start,
+                      fade_random_start=fade_random_start)
 
     # Display mask for the plotted surface only
     Z_plot = np.where(np.isfinite(Z_raw) & (Z_raw >= ZMIN_DISPLAY_LOG10), Z_raw, np.nan)
@@ -513,6 +543,8 @@ def compute_surface(
         i_det, N_exp, t_cad_eff, full_integral=full_integral,
         q_min=q_min, D_min_cm=D_min_cm,
         s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+        rise_random_start=rise_random_start,
+        fade_random_start=fade_random_start,
     )
     if optical_survey:
         t_exp_night = model_night.t_exp_s(N_exp, t_cad_eff)
@@ -520,6 +552,8 @@ def compute_surface(
             i_det, N_exp, t_cad_eff, full_integral=full_integral,
             q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
         )
         t_exp_grid    = np.where(is_subday, t_exp_night, t_exp_day)
         q_med_grid    = np.where(is_subday, q_med_night, q_med_day)
@@ -566,6 +600,8 @@ def maximize_log_surface_iterative(
     s_fade: float = 0.0,
     s_rise: float = 0.0,
     s_mode: str = "discrete",
+    rise_random_start: bool = True,
+    fade_random_start: bool = True,
     n0x: int = 180,
     n0y: int = 220,
     n_refine: int = 3,
@@ -615,10 +651,14 @@ def maximize_log_surface_iterative(
         is_subday = t_eff < float(DAY_S)
         Z_day   = _rate(model_day,   i_det, N, t_eff, full_integral,
                         q_min=q_min, D_min_cm=D_min_cm,
-                        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
+                        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                        rise_random_start=rise_random_start,
+                        fade_random_start=fade_random_start)
         Z_night = _rate(model_night, i_det, N, t_eff, full_integral,
                         q_min=q_min, D_min_cm=D_min_cm,
-                        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
+                        s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                        rise_random_start=rise_random_start,
+                        fade_random_start=fade_random_start)
         # model_night was built with f_live = f_live / f_night, so Z_night
         # already uses the within-night-rescaled t_exp; the f_night factor
         # below covers night-time accessibility.
@@ -663,7 +703,9 @@ def maximize_log_surface_iterative(
 
         Z = _rate(model_day, i_det, N2, t2, full_integral,
                   q_min=q_min, D_min_cm=D_min_cm,
-                  s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
+                  s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                  rise_random_start=rise_random_start,
+                  fade_random_start=fade_random_start)
         if validity_fn is not None:
             Z = np.where(validity_fn(N2, t2), Z, np.nan)
         if not np.any(np.isfinite(Z)):
@@ -683,7 +725,9 @@ def maximize_log_surface_iterative(
             t = 10 ** Y
             Z = _rate(model_day, i_det, N, t, full_integral,
                       q_min=q_min, D_min_cm=D_min_cm,
-                      s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)
+                      s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                      rise_random_start=rise_random_start,
+                      fade_random_start=fade_random_start)
             Z = np.where(np.isfinite(Z), Z, np.nan)
             if validity_fn is not None:
                 Z = np.where(validity_fn(N, t), Z, np.nan)

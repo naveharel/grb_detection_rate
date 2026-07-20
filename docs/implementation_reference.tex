@@ -265,7 +265,7 @@ Instead of the dominant-term formulas, the rate is computed by numerically integ
 \label{eq:full_integral}
 R = f_\Omega\,\theta_j^2\,R_{\rm int}\int_0^{q_{\rm nr}} q\,\bigl[\min\!\bigl(\tilde{D}_{\rm max}(q),\,\tilde{D}_{\rm eff}\bigr)\bigr]^3\,dq,
 \end{equation}
-where $\tilde{D}_{\rm eff}=\min(D_i/D_{\rm euc},\,1)$ encodes the cadence constraint and the Euclidean horizon, and
+where $\tilde{D}_{\rm eff}=\min(D_i/D_{\rm euc},\,1)$ encodes the cadence constraint and the Euclidean horizon (under the \texttt{win\_from\_peak} setting of Sec.~\ref{sec:window_settings} it becomes the $q$-dependent $\min(\tilde D_w(q),1)$ of Eq.~\eqref{eq:D_window}), and
 \begin{equation}
 \label{eq:Dmax_tilde}
 \tilde{D}_{\rm max}(q) = \begin{cases}
@@ -508,6 +508,52 @@ Earlier versions of the code exposed an ``off-axis detections only'' boolean tha
 This was replaced by the continuous $q_{\rm min}$ filter described above.
 Setting $q_{\rm min}\approx q_{\rm dec}\approx 1.03$ approximates the old behaviour: the angular shell $q<q_{\rm dec}$ is excluded directly from each regime's integral, rather than computed and subtracted.
 The new formulation is numerically cleaner (no near-cancellation of two large numbers) and exposes the filter as a continuous physics parameter rather than a hard toggle.
+
+% -------------------------------------------------------
+\section{Detection-Window Settings}
+\label{sec:window_settings}
+
+Two independent, off-by-default settings refine how the ``$\ge i$ detections within the cadence'' requirement is counted. Both off reproduces the legacy simple mode bit-for-bit (parity-tested); both on gives the corrected criterion
+\begin{equation}
+\label{eq:window_corrected}
+t_{+}(D)-t_{p,\rm eff}(q)\;\ge\;(i-1)\,t_{\rm cad}.
+\end{equation}
+
+\subsection{Setting 1: $(i-1)$ cadence intervals (\texttt{win\_i\_minus\_one})}
+
+$i$ detections spaced $t_{\rm cad}$ apart bracket only $i-1$ gaps, so the required detectability duration is
+\[
+T_{\rm req}=(i-1)\,t_{\rm cad}
+\qquad\text{instead of}\qquad
+T_{\rm req}=i\,t_{\rm cad},
+\]
+substituted everywhere $T_{\rm req}$ enters ($q_i$, $D_i$, and the window-mode $D_{\rm eff}$ below; helper \texttt{\_t\_req\_s()}). Exactly equivalent to the legacy criterion evaluated at $i-1$. Degenerate case $i_{\rm det}=1$: $T_{\rm req}=0$, so $q_i\to1$ and $D_i\to+\infty$ --- a single detection at the peak needs no duration and the cadence constraint vanishes.
+
+\subsection{Setting 2: window measured from the peak (\texttt{win\_from\_peak})}
+
+The legacy criterion measures the window from the \emph{burst}: $t_{+}(D)\ge T_{\rm req}$, with the boundary pair $q_i$ ($t_p=T_{\rm req}$) and $D_i$ ($t_+=T_{\rm req}$) forming the admissible rectangle $\{q\le q_i\}\times\{D\le D_i\}$. But the off-axis flux is negligible before the peak, so epochs in $[0,t_p]$ cannot be detections: at the dominant corner $(q_i,D_i)$ the true above-threshold window $t_+-t_p$ is $\approx 0$ even though $i$ detections were credited. The corrected requirement counts the window from the turn-on $t_{\rm on}\approx t_p$:
+\begin{equation}
+\label{eq:window_from_peak}
+t_{+}(D)\;\ge\;t_{p,\rm eff}(q)+T_{\rm req},
+\end{equation}
+which turns the cadence cap into the $q$-dependent distance
+\begin{equation}
+\label{eq:D_window}
+D_w(q)=D\bigl(t_+{=}\,t_{p,\rm eff}(q)+T_{\rm req}\bigr),\qquad
+D(t_+)=
+\begin{cases}
+D_{\rm dec}\,(t_+/t_{\rm dec})^{\alpha_{\rm II}/2}, & t_+<t_j,\\[4pt]
+D_{\rm dec}\,(t_j/t_{\rm dec})^{\alpha_{\rm II}/2}\,(t_+/t_j)^{\alpha_{\rm III}/2}, & t_+\ge t_j,
+\end{cases}
+\end{equation}
+with $\alpha_\Phi<0$ the temporal flux indices (\texttt{D\_from\_t\_plus()}, \texttt{\_D\_eff\_window\_cm()}). The inversion $D(t_+)$ unifies the two legacy rectangle boundaries: at $t_+=T_{\rm req}$ it reproduces $D_i$ exactly, and at $t_+=t_p(q)$ it reproduces the flux-limited $D_{\rm max}(q)$. Since $t_{p,\rm eff}+T_{\rm req}>t_p$, one has $D_w(q)<D_{\rm max}(q)$ everywhere --- the window cap is always the binding distance constraint, and the full-integral integrand becomes $q\,[\min(\tilde D_w(q),1)]^3$.
+
+\paragraph{Consequences.}
+(i)~\textbf{No dominant-term closed form}: $D_{\rm eff}$ is $q$-dependent, and the leading integral $\int q\,\tilde D_w(q)^3\,dq$ is elementary only in phase III. \texttt{rate\_log10} therefore evaluates the $q$-integral internally under this setting (in both UI modes), \texttt{compute\_medians} always takes the numerical path, and the bridge's $R(q)$/$R(D)$ views use the full-integral branch. Region masks keep the legacy $q_i$ boundaries as an approximate classification (regime colouring only).
+(ii)~\textbf{Off-axis suppression}: in the phase-III cadence-limited regime the corrected integral evaluates to $1/(3p/2-1)$ of the legacy rectangle ($\approx 0.36$ at $p=2.5$; on-axis contributions are unchanged since $t_{p,\rm eff}=t_{\rm dec}\ll T_{\rm req}$), and the dominant angle shifts inward from $\tilde q_i$ to $\tilde q_i/\sqrt{3p-1}$ --- the detected $q$-median moves on-axis, toward the observed ZTF $q_{\rm med}\lesssim 1$.
+(iii)~\textbf{Limits}: $t_{\rm cad}\to0$ gives $D_w(q)\to D_{\rm max}(q)$ and the legacy rate is recovered; the $s_{\rm fade}$/$s_{\rm rise}$ weights compose unchanged (they constrain the first-detection timing, the window constrains the duration).
+
+\paragraph{Implementation reference.} Flags on \texttt{DetectionRateModel} (constructor kwargs \texttt{win\_i\_minus\_one} / \texttt{win\_from\_peak}, threaded through \texttt{make\_rate\_model}; bridge params \texttt{win\_iminus1} / \texttt{win\_tp}; two Settings switches in the app). Tests: \texttt{tests/test\_window\_toggles.py} (parity, the $i\!-\!1$ shift identity, $D(t_+)$ boundary identities, suppression/limit checks).
 
 % -------------------------------------------------------
 \section{Median Viewing Angle and Distance}

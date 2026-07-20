@@ -20,11 +20,20 @@ from grb_detect.core import (
     compute_surface,
     make_rate_model,
     maximize_log_surface_iterative,
+    optical_survey_tcad_seconds,
 )
 from grb_detect.survey import exposure_time_s
 
 ZTF_OMEGA_EXP_DEG2: float = 47.0
-OMEGA_SRV_DEFAULT_DEG2: float = 27500.0
+
+# The two real ZTF observing modes used as reference points on the surface
+# (Ho et al. 2022; Andreoni et al. 2021):
+#   public all-sky  — ~15,000 deg² every 2 nights (g+r),
+#   high-cadence    — ~2,500 deg² partnership/ZUDS, 6 visits per night.
+ZTF_PUBLIC_OMEGA_SRV_DEG2: float = 15000.0
+ZTF_PUBLIC_T_CAD_S: float = 2.0 * DAY_S
+ZTF_HC_OMEGA_SRV_DEG2: float = 2500.0
+ZTF_HC_VISITS_PER_NIGHT: int = 6
 
 # Grid resolutions. Regime-colour mode uses the denser grid so the discrete
 # boundaries between regimes stay crisp.
@@ -84,6 +93,8 @@ def _compute_rate(
     s_fade: float = 0.0,
     s_rise: float = 0.0,
     s_mode: str = "discrete",
+    rise_random_start: bool = True,
+    fade_random_start: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Compute (R, t_exp, q_med, D_med_Gpc, rid) for a 1-D sweep."""
     if full_integral:
@@ -91,12 +102,16 @@ def _compute_rate(
             i_det, N_arr, t_arr,
             q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
         )
     else:
         Z = model.rate_log10(
             i_det, N_arr, t_arr,
             q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
         )
     R = np.where(np.isfinite(Z), 10.0 ** Z, np.nan)
 
@@ -120,6 +135,8 @@ def _compute_rate(
         i_det, N_arr, t_arr, full_integral=full_integral,
         q_min=q_min, D_min_cm=D_min_cm,
         s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+        rise_random_start=rise_random_start,
+        fade_random_start=fade_random_start,
     )
     t_exp = model.t_exp_s(N_arr, t_arr)
     D_med_Gpc = D_med_cm / GPC_TO_CM
@@ -153,6 +170,8 @@ def _eval_point(
     s_fade: float = 0.0,
     s_rise: float = 0.0,
     s_mode: str = "discrete",
+    rise_random_start: bool = True,
+    fade_random_start: bool = True,
 ) -> tuple[float, float, float, float]:
     """Evaluate (R_det, t_exp_s, q_med, D_med_Gpc) at a single point."""
     _nan4 = (math.nan, math.nan, math.nan, math.nan)
@@ -172,12 +191,16 @@ def _eval_point(
         log10R = float(model.rate_log10_full_integral(
             i_det, N_arr, t_arr,
             q_min=q_min, D_min_cm=D_min_cm,
-            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)[0])
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start)[0])
     else:
         log10R = float(model.rate_log10(
             i_det, N_arr, t_arr,
             q_min=q_min, D_min_cm=D_min_cm,
-            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode)[0])
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start)[0])
     R = 10.0 ** log10R if math.isfinite(log10R) else math.nan
     # Sub-day optical: only the nighttime fraction of detections are accessible
     if optical_on and model_night is not None and t_cad_s < DAY_S:
@@ -215,6 +238,8 @@ def _eval_point(
             i_det, N_arr, t_arr, full_integral=full_integral,
             q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
         )
         q_med     = float(qm[0])
         D_med_Gpc = float(dm[0]) / GPC_TO_CM
@@ -238,6 +263,8 @@ def _build_day_line_arrays(
     s_fade: float = 0.0,
     s_rise: float = 0.0,
     s_mode: str = "discrete",
+    rise_random_start: bool = True,
+    fade_random_start: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build flat per-day overlay arrays.
 
@@ -287,6 +314,8 @@ def _build_day_line_arrays(
             model_day, int(i_det), N_line, np.full_like(N_line, t_s),
             full_integral, q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
         )
         log10R = np.asarray(log10R).reshape(1, -1).ravel()
 
@@ -300,6 +329,8 @@ def _build_day_line_arrays(
             int(i_det), N_cols, t_arr, full_integral=full_integral,
             q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
         )
         D_med_Gpc_arr = D_med_cm_arr / GPC_TO_CM
 
@@ -371,7 +402,14 @@ def _build_models(params) -> dict:
     s_rise        = float(params.get("s_rise", 0.0) or 0.0)
     _s_mode_raw  = params.get("s_mode", "discrete")
     s_mode       = str(_s_mode_raw) if _s_mode_raw in ("discrete", "continuous") else "discrete"
+    # Per-cut random-start treatment inside the full-integral path: True =
+    # uniform-start survival weight, False = best-case hard boundary. Default
+    # True preserves the pre-toggle behavior; inert when full_integral is off.
+    rise_random_start = bool(params.get("rise_random_start", True))
+    fade_random_start = bool(params.get("fade_random_start", True))
     toh_approx   = bool(params.get("toh_approx", False))
+    win_iminus1  = bool(params.get("win_iminus1", False))
+    win_tp       = bool(params.get("win_tp", False))
 
     physics_kw = dict(
         p=float(params["p"]),
@@ -398,12 +436,14 @@ def _build_models(params) -> dict:
 
     model_day = make_rate_model(
         A_log=A_log, f_live=f_live, t_overhead_s=t_oh_model,
-        omega_exp_deg2=omega_exp, design=design, **physics_kw,
+        omega_exp_deg2=omega_exp, design=design,
+        win_i_minus_one=win_iminus1, win_from_peak=win_tp, **physics_kw,
     )
     model_night = (
         make_rate_model(
             A_log=A_log, f_live=f_live_night, t_overhead_s=t_oh_model,
-            omega_exp_deg2=omega_exp, design=design, **physics_kw,
+            omega_exp_deg2=omega_exp, design=design,
+            win_i_minus_one=win_iminus1, win_from_peak=win_tp, **physics_kw,
         )
         if optical_on else None
     )
@@ -435,6 +475,8 @@ def _build_models(params) -> dict:
         "s_fade":        s_fade,
         "s_rise":        s_rise,
         "s_mode":       s_mode,
+        "rise_random_start": rise_random_start,
+        "fade_random_start": fade_random_start,
         "toh_approx":   toh_approx,
         "t_night_s":    t_night_s,
         "f_night":      f_night,
@@ -465,6 +507,8 @@ def _cr_kwargs_from_state(state: dict) -> dict:
         s_fade=state["s_fade"],
         s_rise=state["s_rise"],
         s_mode=state["s_mode"],
+        rise_random_start=state["rise_random_start"],
+        fade_random_start=state["fade_random_start"],
     )
 
 
@@ -620,6 +664,8 @@ def _compute_qdview_sweep(
     s_fade        = float(state["s_fade"])
     s_rise        = float(state["s_rise"])
     s_mode       = str(state["s_mode"])
+    rise_random_start = bool(state["rise_random_start"])
+    fade_random_start = bool(state["fade_random_start"])
 
     N_exp_fix   = float(N_exp_fix)
     t_cad_fix_s = float(t_cad_fix_s)
@@ -630,6 +676,9 @@ def _compute_qdview_sweep(
     model = model_night if is_subday_optical else model_day
     f_night_mul     = f_night if is_subday_optical else 1.0
     f_live_validity = f_live_night if is_subday_optical else f_live_val
+    # win_from_peak has no closed dominant-term curves (q-dependent D_eff) —
+    # the R(q)/R(D) views fall back to the full-integral branch for it.
+    use_full = full_on or bool(getattr(model, "win_from_peak", False))
 
     # Geometry the JS render layer always needs (drawn even on invalid payloads).
     q_dec_val = float(model.derived.q_dec)
@@ -771,11 +820,13 @@ def _compute_qdview_sweep(
     q_min_sq_sidebar         = q_min ** 2
 
     # ── R(q) cumulative and differential ─────────────────────────────────────
-    if full_on:
+    if use_full:
         q_internal, dRdq_internal = model.dR_dq_full_integral(
             i_det, N_exp_fix, t_cad_fix_s,
             q_min=0.0, D_min_cm=D_min_cm,
-            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode, N_q=500,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start, N_q=500,
         )
         dq = float(q_internal[1] - q_internal[0])
         # Trapezoidal cumulative from the right: R(x) = ∫_x^{q_nr} dR/dq dq.
@@ -792,11 +843,13 @@ def _compute_qdview_sweep(
                            0.0)
 
     # ── R(D) cumulative and differential ─────────────────────────────────────
-    if full_on:
+    if use_full:
         D_grid_internal_cm, dRdD_internal = model.dR_dD_full_integral(
             i_det, N_exp_fix, t_cad_fix_s,
             q_min=q_min, D_min_cm=0.0,
-            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode, N_q=500, N_D=200,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start, N_q=500, N_D=200,
         )
         dD = float(D_grid_internal_cm[1] - D_grid_internal_cm[0])
         trapz_cells_D = 0.5 * (dRdD_internal[:-1] + dRdD_internal[1:]) * dD
@@ -920,6 +973,8 @@ def compute_all(params) -> dict:
         s_fade        = state["s_fade"]
         s_rise        = state["s_rise"]
         s_mode       = state["s_mode"]
+        rise_random_start = state["rise_random_start"]
+        fade_random_start = state["fade_random_start"]
         toh_approx   = state["toh_approx"]
         t_night_s    = state["t_night_s"]
         f_night      = state["f_night"]
@@ -939,6 +994,8 @@ def compute_all(params) -> dict:
             t_night_s=t_night_s, nx=nx, ny=ny,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
         )
 
         if toh_approx and t_overhead_s > 0:
@@ -983,6 +1040,8 @@ def compute_all(params) -> dict:
             optical_survey=optical_on, t_night_s=t_night_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
             validity_fn=opt_validity_fn,
         )
         R_opt, t_exp_opt_s, q_med_opt, D_med_Gpc_opt = _eval_point(
@@ -990,17 +1049,43 @@ def compute_all(params) -> dict:
             f_live, f_live_night, f_night, optical_on, toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
         )
 
-        # ── ZTF reference ────────────────────────────────────────────────────
-        N_ztf = min(OMEGA_SRV_DEFAULT_DEG2 / ZTF_OMEGA_EXP_DEG2, N_exp_max)
-        t_cad_ztf_s = 2.0 * DAY_S
+        # ── ZTF reference points (the two real observing modes) ─────────────
+        # Mode A — public all-sky: ~15,000 deg² every 2 nights.
+        N_ztf = min(ZTF_PUBLIC_OMEGA_SRV_DEG2 / ZTF_OMEGA_EXP_DEG2, N_exp_max)
+        t_cad_ztf_s = ZTF_PUBLIC_T_CAD_S
         R_ztf, t_exp_ztf_s, q_med_ztf, D_med_Gpc_ztf = _eval_point(
             N_ztf, t_cad_ztf_s, i_det, model_day, model_night,
             f_live, f_live_night, f_night, optical_on, toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
         )
+
+        # Mode B — high-cadence partnership/ZUDS: ~2,500 deg², 6 visits/night.
+        # t_cad sits just inside the sub-night continuous region so the point
+        # stays valid in optical-survey mode (i·t_cad < t_night needs i ≤ 6).
+        N_ztf_hc = min(ZTF_HC_OMEGA_SRV_DEG2 / ZTF_OMEGA_EXP_DEG2, N_exp_max)
+        t_cad_ztf_hc_s = 0.98 * t_night_s / float(ZTF_HC_VISITS_PER_NIGHT)
+        R_ztf_hc, t_exp_ztf_hc_s, q_med_ztf_hc, D_med_Gpc_ztf_hc = _eval_point(
+            N_ztf_hc, t_cad_ztf_hc_s, i_det, model_day, model_night,
+            f_live, f_live_night, f_night, optical_on, toh_approx, t_overhead_s,
+            full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
+        )
+        if optical_on:
+            _, _hc_valid = optical_survey_tcad_seconds(
+                np.array([t_cad_ztf_hc_s]), i_det=i_det, t_night_s=t_night_s,
+            )
+            if not bool(_hc_valid[0]):
+                # Infeasible schedule (can't fit i visits in one night) — hide.
+                R_ztf_hc = math.nan
 
         # ── Slice sweeps at user-chosen positions ────────────────────────────
         # JS passes log10 values from the slice-position sliders. If absent (page
@@ -1059,6 +1144,8 @@ def compute_all(params) -> dict:
                 N_cols=N_cols, t_cad_max_s=t_cad_max_s,
                 full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
                 s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
             )
             n_days, n_N = (int(day_vals.size),
                            int(day_N.shape[1]) if day_N.ndim == 2 and day_vals.size > 0 else 0)
@@ -1105,6 +1192,13 @@ def compute_all(params) -> dict:
             "t_exp_ztf_s":  _nan_to_none(t_exp_ztf_s),
             "q_med_ztf":       _nan_to_none(q_med_ztf),
             "D_med_Gpc_ztf":   _nan_to_none(D_med_Gpc_ztf),
+            "N_ztf_hc":        float(N_ztf_hc),
+            "t_cad_ztf_hc_h":  float(t_cad_ztf_hc_s / 3600.0),
+            "t_cad_ztf_hc_s":  float(t_cad_ztf_hc_s),
+            "R_ztf_hc":        _nan_to_none(R_ztf_hc),
+            "t_exp_ztf_hc_s":  _nan_to_none(t_exp_ztf_hc_s),
+            "q_med_ztf_hc":       _nan_to_none(q_med_ztf_hc),
+            "D_med_Gpc_ztf_hc":   _nan_to_none(D_med_Gpc_ztf_hc),
             "zmax_log10":   zmax_log10,
             "R_surface_max": R_surface_max,
             "R_int_yr":     float(R_int_yr),

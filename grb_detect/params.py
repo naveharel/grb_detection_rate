@@ -101,9 +101,13 @@ class AfterglowPhysicalParams:
     rho_grb_gpc3_yr: float = 260.0  # [Gpc^-3 yr^-1]
 
     # Euclidean calibration (kept explicit for reproducibility with existing runs).
-    # D_euc_cm = 1.63e28 cm = 5.28 Gpc, consistent with z_Euc ≈ 2.0 in flat ΛCDM
-    # (H0 = 70 km/s/Mpc, Ω_m = 0.3): comoving distance D_c ≈ 5.27 Gpc.
-    D_euc_cm: float = 1.63e28
+    # D_euc_cm = 1.404e28 cm = 4.55 Gpc: with the cited local rate ρ = 260
+    # Gpc⁻³ yr⁻¹ and θ_j = 0.1 this gives an all-sky on-axis LGRB rate of
+    # R_int·θ_j²/2 ≈ 513 yr⁻¹, matching the observed ≈ 511 yr⁻¹ inferred from
+    # Swift/BAT (Ho et al. 2022 §4.1).  The previous default 1.63e28 cm =
+    # 5.28 Gpc (comoving distance of z_Euc ≈ 2.0 in flat ΛCDM, H0 = 70,
+    # Ω_m = 0.3) implied ≈ 800 yr⁻¹.
+    D_euc_cm: float = 4.55 * GPC_TO_CM
     R_int_yr: float = (4.0 / 3.0) * math.pi * rho_grb_gpc3_yr * (CM_TO_GPC * D_euc_cm) ** 3
 
     # Uncomment to compute D_euc_cm and R_int_yr from z_Euc:
@@ -131,7 +135,14 @@ class AfterglowPhysicalParams:
 @dataclass(frozen=True)
 class MicrophysicsParams:
     epsilon_e: float = 1e-1
-    epsilon_B: float = 1e-2
+    # Calibrated so the on-axis PLS-G light curve passes through the median
+    # detected event: νL_ν(1 day) ≈ 1.9e44 erg/s, the median rest-frame u-band
+    # 1-day luminosity of the optically discovered afterglow sample (Ho et al.
+    # 2022, Table 5).  ε_B ≈ 4e-4 sits in the range inferred from broadband
+    # afterglow modelling (ε_B ~ 1e-5–1e-2, e.g. Santana et al. 2014; Barniol
+    # Duran 2014); the earlier ε_B = 1e-2 gave νL_ν(1 day) ≈ 3e45 erg/s — a
+    # bright-tail light curve ~15x above even the detected events' median.
+    epsilon_B: float = 10 ** -3.4
 
     z: float = 0.0
     include_redshift_factors: bool = False

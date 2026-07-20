@@ -12,6 +12,8 @@ const TCAD_TICKVALS_H = [1/3600, 1/60, 1, 6, 24, 168, 730, 8760];
 const TCAD_TICKTEXT   = ['1 sec','1 min','1 hr','6 hr','1 day','1 wk','1 mo','1 yr'];
 const AMBER = '#fbbf24';
 const CORAL = '#f87171';
+const VIOLET = '#a78bfa';   // ZTF high-cadence reference marker
+const GRAY_DIM = '#5a6b85'; // ZTF marker when current params differ from preset
 const ZMIN_LOG = -2;
 
 // Explicit Plasma colorscale (from plotly.colors.sequential.Plasma resolved via
@@ -30,10 +32,19 @@ const PLASMA_SCALE = [
   [1.0,                'rgb(240, 249, 33)'],
 ];
 
-// Presets — each one only touches: i, f_live, A_log, omega_exp, t_oh, omega_srv, optical.
+// Presets — each one only touches: i, f_live, A_log, omega_exp, t_oh,
+// omega_srv, s_fade, s_rise, optical.  The two ZTF entries are the survey's
+// two real observing modes (Ho et al. 2022; Andreoni et al. 2021):
+//   public   — ~15,000 deg² every 2 nights; detected events have i ≈ 2;
+//              f_live = 0.08 gives t_exp ≈ 30 s at (N = 319, t_cad = 2 d).
+//   high-cad — ~2,500 deg² partnership/ZUDS, 6 visits/night; f_live = 0.17
+//              gives t_exp ≈ 30 s at (N = 53, t_cad = t_night/6).
+// The rise/fade identification cuts default off and are left as free user knobs;
+// they are not part of a preset's identity (see PRESET_MATCH_KEYS below).
 const PRESETS = {
-  ztf:   {i:10, f_live:0.2,  A_log:-4.68, omega_exp:47,  t_oh:15, omega_srv:27500, optical:true},
-  rubin: {i:10, f_live:0.7,  A_log:-7.0,  omega_exp:9.6, t_oh:30, omega_srv:18000, optical:true},
+  ztf_public: {i:2, f_live:0.08, A_log:-4.68, omega_exp:47,  t_oh:15, omega_srv:15000, s_fade:0, s_rise:0, optical:true},
+  ztf_hc:     {i:6, f_live:0.17, A_log:-4.68, omega_exp:47,  t_oh:15, omega_srv:2500,  s_fade:0, s_rise:0, optical:true},
+  rubin:      {i:2, f_live:0.7,  A_log:-7.0,  omega_exp:9.6, t_oh:30, omega_srv:18000, s_fade:0,   s_rise:0,   optical:true},
 };
 // Map preset keys to DOM slider/switch IDs.
 const PRESET_MAP = {
@@ -43,6 +54,8 @@ const PRESET_MAP = {
   omega_exp: 'omegaexp_slider',
   t_oh:      'toh_slider',
   omega_srv: 'omega_srv_slider',
+  s_fade:    'sfade_slider',
+  s_rise:    'srise_slider',
 };
 let _activePresetKey = null;     // which preset is currently active (drift detection)
 let _presetApplying  = false;    // suppress drift detection while we apply a preset
@@ -318,9 +331,32 @@ document.getElementById('optical-switch').addEventListener('change', function() 
 });
 
 // Other toggles
-['toh-approx-switch','regime-color-switch','full-integral-switch','s-mode-switch'].forEach(id => {
+['toh-approx-switch','regime-color-switch',
+ 'win-iminus1-switch','win-tp-switch','rise-rs-switch','fade-rs-switch'].forEach(id => {
   document.getElementById(id).addEventListener('change', triggerUpdate);
 });
+
+// "Exact rate mode" is a master toggle: its three refinements
+// (Include t_− ≈ t_on, and the rise/fade random-start controls) live in
+// #exact-mode-subs and are only meaningful when it is on. The first time it is
+// switched on they all turn on together; afterwards each is independent. When
+// off, the sub-group is disabled and dimmed.
+let _exactModeInitialized = false;
+function _syncExactModeSubs() {
+  const on = document.getElementById('full-integral-switch').checked;
+  const subIds = ['win-tp-switch','rise-rs-switch','fade-rs-switch'];
+  if (on && !_exactModeInitialized) {
+    _exactModeInitialized = true;
+    subIds.forEach(sid => { document.getElementById(sid).checked = true; });
+  }
+  document.getElementById('exact-mode-subs').classList.toggle('disabled', !on);
+  subIds.forEach(sid => { document.getElementById(sid).disabled = !on; });
+}
+document.getElementById('full-integral-switch').addEventListener('change', function() {
+  _syncExactModeSubs();
+  triggerUpdate();
+});
+_syncExactModeSubs();  // initial state on load (exact mode off → sub-group disabled)
 
 // Derived-info display wiring (instant, no Python)
 document.getElementById('omegaexp_slider').addEventListener('input', updateNexpMaxDisplay);
@@ -453,6 +489,25 @@ document.getElementById('preset-select').addEventListener('change', function() {
   triggerUpdate();
 });
 
+// True when the current sidebar matches this preset on the parameters that
+// actually define/affect the ZTF marker: i, f_live, log A, Ω_exp, t_OH.
+// Ω_srv,max, the optical-survey toggle and the physics sliders are intentionally
+// ignored — the marker hard-codes ZTF's footprint, and physics is the shared GRB
+// population rather than a survey property. The rise/fade identification cuts
+// (s_rise, s_fade) are also excluded: they are free user knobs, not part of a
+// survey's identity, so toggling them does not gray the marker. Used to gray the
+// ZTF metrics/markers when the current configuration is no longer that survey.
+const PRESET_MATCH_KEYS = ['i', 'f_live', 'A_log', 'omega_exp', 't_oh'];
+function paramsMatchPreset(key) {
+  const p = PRESETS[key];
+  if (!p) return false;
+  for (const k of PRESET_MATCH_KEYS) {
+    const cur = parseFloat(document.getElementById(PRESET_MAP[k]).value);
+    if (Math.abs(cur - p[k]) > 1e-9) return false;
+  }
+  return true;
+}
+
 // Drift detection: if the user edits any preset-controlled value, clear the preset dropdown.
 function _checkPresetDrift() {
   if (_presetApplying || _activePresetKey === null) return;
@@ -461,6 +516,9 @@ function _checkPresetDrift() {
   const sel = document.getElementById('preset-select');
   const opticalSwitch = document.getElementById('optical-switch');
   for (const [k, domId] of Object.entries(PRESET_MAP)) {
+    // Rise/fade cuts are free knobs, not part of preset identity — changing them
+    // must not clear the dropdown (consistent with the marker staying colored).
+    if (k === 's_fade' || k === 's_rise') continue;
     const cur = parseFloat(document.getElementById(domId).value);
     if (Math.abs(cur - p[k]) > 1e-9) {
       _activePresetKey = null;
@@ -478,6 +536,7 @@ function _checkPresetDrift() {
 function readParams() {
   const v = id => parseFloat(document.getElementById(id).value);
   const b = id => document.getElementById(id).checked;
+  const exactOn = b('full-integral-switch');
   return {
     i_det:           Math.round(v('i_slider')),
     A_log:           v('Alog_slider'),
@@ -498,13 +557,17 @@ function readParams() {
     rho_grb_log10:   v('rho_grb_log_slider'),
     optical_survey:  b('optical-switch'),
     color_regimes:   b('regime-color-switch'),
-    full_integral:   b('full-integral-switch'),
+    full_integral:   exactOn,
     qmin:            v('qmin_slider'),
     Dmin_cm:         v('Dmin_slider') * 3.085677581491367e27,  // GPC_TO_CM
     s_fade:          v('sfade_slider'),
     s_rise:          v('srise_slider'),
-    s_mode:          b('s-mode-switch') ? 'continuous' : 'discrete',
+    // Per-cut random-start refinements (only meaningful inside exact rate mode).
+    rise_random_start: b('rise-rs-switch'),
+    fade_random_start: b('fade-rs-switch'),
     toh_approx:      b('toh-approx-switch'),
+    win_iminus1:     b('win-iminus1-switch'),
+    win_tp:          exactOn && b('win-tp-switch'),
     nslice_tfix_log: v('nslice-tfix-slider'),
     tslice_nfix_log: v('tslice-nfix-slider'),
     qdview_nfix_log: v('qdview-nfix-slider'),
@@ -1245,16 +1308,33 @@ function render3DSurface(data, params) {
     });
   }
 
-  // ZTF marker
+  // ZTF markers — the survey's two real observing modes. Each is grayed when
+  // the current parameters differ from its preset (it no longer represents the
+  // real survey), matching the top-row metric-group dimming.
+  const ztfMatch = paramsMatchPreset('ztf_public');
+  const hcMatch  = paramsMatchPreset('ztf_hc');
   if (data.R_ztf != null && isFinite(data.R_ztf)) {
     traces.push({
       type: 'scatter3d',
       x: [data.N_ztf], y: [data.t_cad_ztf_h], z: [data.R_ztf],
       mode: 'markers+text',
-      marker: {size: 9, color: CORAL, symbol: 'circle'},
-      text: ['ZTF'], textposition: 'top center',
-      name: 'ZTF (2 day cadence)',
-      hovertemplate: markerHover3D('ZTF strategy', data.t_exp_ztf_s, data.q_med_ztf, data.D_med_Gpc_ztf),
+      marker: {size: 9, color: ztfMatch ? CORAL : GRAY_DIM, symbol: 'circle',
+               opacity: ztfMatch ? 1.0 : 0.45},
+      text: ['ZTF public'], textposition: 'top center',
+      name: 'ZTF public (15k deg², 2-night)',
+      hovertemplate: markerHover3D('ZTF public (2-night)', data.t_exp_ztf_s, data.q_med_ztf, data.D_med_Gpc_ztf),
+    });
+  }
+  if (data.R_ztf_hc != null && isFinite(data.R_ztf_hc)) {
+    traces.push({
+      type: 'scatter3d',
+      x: [data.N_ztf_hc], y: [data.t_cad_ztf_hc_h], z: [data.R_ztf_hc],
+      mode: 'markers+text',
+      marker: {size: 9, color: hcMatch ? VIOLET : GRAY_DIM, symbol: 'square',
+               opacity: hcMatch ? 1.0 : 0.45},
+      text: ['ZTF HC'], textposition: 'top center',
+      name: 'ZTF high-cadence (2.5k deg², 6/night)',
+      hovertemplate: markerHover3D('ZTF high-cadence (6/night)', data.t_exp_ztf_hc_s, data.q_med_ztf_hc, data.D_med_Gpc_ztf_hc),
     });
   }
 
@@ -1264,6 +1344,7 @@ function render3DSurface(data, params) {
   const RmaxCands = [0.11];
   if (isFinite(data.R_opt)) RmaxCands.push(data.R_opt);
   if (isFinite(data.R_ztf)) RmaxCands.push(data.R_ztf);
+  if (isFinite(data.R_ztf_hc)) RmaxCands.push(data.R_ztf_hc);
   if (isFinite(data.R_surface_max) && data.R_surface_max > 0) RmaxCands.push(data.R_surface_max);
   const Rmax = Math.max(...RmaxCands);
 
@@ -1441,30 +1522,32 @@ function renderNSlice(data) {
       font: {size: 10, color: AMBER},
     });
   }
+  // ZTF public reference dims when the current params differ from its preset.
+  const ztfLineCol = paramsMatchPreset('ztf_public') ? CORAL : GRAY_DIM;
   if (data.R_ztf != null && isFinite(data.R_ztf)) {
     shapes.push({
       type: 'line', xref: 'paper', x0: 0, x1: 1,
       yref: 'y', y0: data.R_ztf, y1: data.R_ztf,
-      line: {color: CORAL, width: 1.5, dash: 'dot'},
+      line: {color: ztfLineCol, width: 1.5, dash: 'dot'},
     });
     annotations.push({
       text: 'R<sub>ZTF</sub> = ' + (+data.R_ztf).toPrecision(2).replace(/\.?0+$/, '') + ' yr ⁻¹',
       xref: 'paper', yref: 'y', x: 0.98, y: data.R_ztf,
       xanchor: 'right', yanchor: 'bottom', showarrow: false,
-      font: {size: 11, color: CORAL},
+      font: {size: 11, color: ztfLineCol},
     });
   }
   if (data.N_ztf != null && isFinite(data.N_ztf)) {
     shapes.push({
       type: 'line', yref: 'paper', y0: 0, y1: 1,
       xref: 'x', x0: data.N_ztf, x1: data.N_ztf,
-      line: {color: CORAL, width: 1.2, dash: 'dot'},
+      line: {color: ztfLineCol, width: 1.2, dash: 'dot'},
     });
     annotations.push({
       text: 'N<sub>ZTF</sub>=' + Math.round(data.N_ztf),
       xref: 'x', yref: 'paper', x: data.N_ztf, y: 0.04,
       xanchor: 'center', yanchor: 'bottom', showarrow: false,
-      font: {size: 10, color: CORAL},
+      font: {size: 10, color: ztfLineCol},
     });
   }
 
@@ -1740,17 +1823,19 @@ function renderTSlice(data) {
     });
   }
 
+  // ZTF public reference dims when the current params differ from its preset.
+  const ztfLineCol = paramsMatchPreset('ztf_public') ? CORAL : GRAY_DIM;
   if (data.R_ztf != null && isFinite(data.R_ztf)) {
     shapes.push({
       type: 'line', xref: 'paper', x0: 0, x1: 1,
       yref: 'y', y0: data.R_ztf, y1: data.R_ztf,
-      line: {color: CORAL, width: 1.5, dash: 'dot'},
+      line: {color: ztfLineCol, width: 1.5, dash: 'dot'},
     });
     annotations.push({
       text: 'R<sub>ZTF</sub> = ' + (+data.R_ztf).toPrecision(2).replace(/\.?0+$/, '') + ' yr ⁻¹',
       xref: 'paper', yref: 'y', x: 0.98, y: data.R_ztf,
       xanchor: 'right', yanchor: 'bottom', showarrow: false,
-      font: {size: 11, color: CORAL},
+      font: {size: 11, color: ztfLineCol},
     });
   }
 
@@ -1759,7 +1844,7 @@ function renderTSlice(data) {
     shapes.push({
       type: 'line', yref: 'paper', y0: 0, y1: 1,
       xref: 'x', x0: tZtfH, x1: tZtfH,
-      line: {color: CORAL, width: 1.2, dash: 'dot'},
+      line: {color: ztfLineCol, width: 1.2, dash: 'dot'},
     });
   }
 
@@ -2058,7 +2143,7 @@ function rerenderAll(data) {
 
 // ── Metrics bar update ─────────────────────────────────────────────────────
 function updateMetricsBar(data) {
-  document.getElementById('m-R-opt').textContent    = fmtR(data.R_opt) + (data.R_opt != null ? ' /yr' : '');
+  document.getElementById('m-R-opt').textContent     = fmtR(data.R_opt) + (data.R_opt != null ? ' /yr' : '');
   document.getElementById('m-tcad-opt').textContent  = fmtT(data.t_cad_opt_s);
   document.getElementById('m-N-opt').textContent     = fmtN(data.N_opt);
   document.getElementById('m-texp-opt').textContent  = fmtT(data.t_exp_opt_s);
@@ -2066,16 +2151,22 @@ function updateMetricsBar(data) {
   document.getElementById('m-tcad-ztf').textContent  = fmtT(data.t_cad_ztf_s);
   document.getElementById('m-N-ztf').textContent     = fmtN(data.N_ztf);
   document.getElementById('m-texp-ztf').textContent  = fmtT(data.t_exp_ztf_s);
+  document.getElementById('m-R-hc').textContent      = fmtR(data.R_ztf_hc) + (data.R_ztf_hc != null ? ' /yr' : '');
+  document.getElementById('m-tcad-hc').textContent   = fmtT(data.t_cad_ztf_hc_s);
+  document.getElementById('m-N-hc').textContent      = fmtN(data.N_ztf_hc);
+  document.getElementById('m-texp-hc').textContent   = fmtT(data.t_exp_ztf_hc_s);
 
-  const gainEl = document.getElementById('m-gain');
-  if (data.R_opt != null && data.R_ztf != null && isFinite(data.R_opt) && isFinite(data.R_ztf) && data.R_ztf > 0) {
-    const gain = data.R_opt / data.R_ztf;
-    gainEl.textContent = '×' + gain.toFixed(2);
-    gainEl.className = 'metric-value metric-gain ' + (gain >= 1 ? 'positive' : 'negative');
-  } else {
-    gainEl.textContent = '—';
-    gainEl.className = 'metric-value metric-gain';
-  }
+  // Gray the ZTF groups when the current parameters no longer match their
+  // preset — the numbers then reflect ZTF's footprint under a different
+  // strategy/physics, not the real survey (same convention as the markers).
+  const ztfMatch = paramsMatchPreset('ztf_public');
+  const hcMatch  = paramsMatchPreset('ztf_hc');
+  document.getElementById('mg-ztf').classList.toggle('metric-dimmed', !ztfMatch);
+  document.getElementById('mg-hc').classList.toggle('metric-dimmed', !hcMatch);
+  const note = document.getElementById('metric-preset-note');
+  const anyDimmed = !ztfMatch || !hcMatch;
+  note.hidden = !anyDimmed;
+  if (anyDimmed) note.textContent = 'ⓘ dimmed = differs from preset';
 }
 
 // ── Derived display update ─────────────────────────────────────────────────
@@ -2173,13 +2264,15 @@ async function initPyodide() {
     await pyodide.runPythonAsync(`
 import standalone_bridge as _b
 _b.compute_all({
-    'i_det':10,'A_log':-4.68,'f_live':0.2,'t_overhead_s':0.0,
+    'i_det':2,'A_log':-4.68,'f_live':0.2,'t_overhead_s':0.0,
     'omega_exp_deg2':47.0,'omega_srv_deg2':27500.0,'t_night_h':10.0,
     'p':2.5,'nu_log10':14.7,'E_kiso_log10':53.0,'n0_log10':0.0,
-    'epsilon_e_log10':-1.0,'epsilon_B_log10':-2.0,'theta_j_rad':0.1,
-    'gamma0_log10':2.5,'D_euc_gpc':5.28,'rho_grb_log10':2.415,
+    'epsilon_e_log10':-1.0,'epsilon_B_log10':-3.4,'theta_j_rad':0.1,
+    'gamma0_log10':2.5,'D_euc_gpc':4.55,'rho_grb_log10':2.415,
     'optical_survey':False,'color_regimes':False,
-    'full_integral':False,'qmin':0.0,'Dmin_cm':0.0,'s_fade':0.0,'s_rise':0.0,'s_mode':'discrete','toh_approx':False,'nx':60,'ny':80,
+    'full_integral':False,'qmin':0.0,'Dmin_cm':0.0,'s_fade':0.0,'s_rise':0.0,
+    'rise_random_start':True,'fade_random_start':True,'toh_approx':False,
+    'win_iminus1':False,'win_tp':False,'nx':60,'ny':80,
 })
 print('Bridge ready')
 `);
