@@ -32,19 +32,19 @@ const PLASMA_SCALE = [
   [1.0,                'rgb(240, 249, 33)'],
 ];
 
-// Presets — each one only touches: i, f_live, A_log, omega_exp, t_oh,
-// omega_srv, s_fade, s_rise, optical.  The two ZTF entries are the survey's
-// two real observing modes (Ho et al. 2022; Andreoni et al. 2021):
+// Presets — each one only touches: i, f_live, A_log, omega_exp, t_oh, optical.
+// Constraints (omega_srv, s_fade, s_rise) and physics sliders are left alone,
+// same as any other field not listed in PRESET_MAP — no special-casing needed.
+// The two ZTF entries are the survey's two real observing modes (Ho et al.
+// 2022; Andreoni et al. 2021):
 //   public   — ~15,000 deg² every 2 nights; detected events have i ≈ 2;
 //              f_live = 0.08 gives t_exp ≈ 30 s at (N = 319, t_cad = 2 d).
 //   high-cad — ~2,500 deg² partnership/ZUDS, 6 visits/night; f_live = 0.17
 //              gives t_exp ≈ 30 s at (N = 53, t_cad = t_night/6).
-// The rise/fade identification cuts default off and are left as free user knobs;
-// they are not part of a preset's identity (see PRESET_MATCH_KEYS below).
 const PRESETS = {
-  ztf_public: {i:2, f_live:0.08, A_log:-4.68, omega_exp:47,  t_oh:15, omega_srv:15000, s_fade:0, s_rise:0, optical:true},
-  ztf_hc:     {i:6, f_live:0.17, A_log:-4.68, omega_exp:47,  t_oh:15, omega_srv:2500,  s_fade:0, s_rise:0, optical:true},
-  rubin:      {i:2, f_live:0.7,  A_log:-7.0,  omega_exp:9.6, t_oh:30, omega_srv:18000, s_fade:0,   s_rise:0,   optical:true},
+  ztf_public: {i:2, f_live:0.08, A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
+  ztf_hc:     {i:6, f_live:0.17, A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
+  rubin:      {i:2, f_live:0.7,  A_log:-7.0,  omega_exp:9.6, t_oh:30, optical:true},
 };
 // Map preset keys to DOM slider/switch IDs.
 const PRESET_MAP = {
@@ -53,9 +53,6 @@ const PRESET_MAP = {
   A_log:     'Alog_slider',
   omega_exp: 'omegaexp_slider',
   t_oh:      'toh_slider',
-  omega_srv: 'omega_srv_slider',
-  s_fade:    'sfade_slider',
-  s_rise:    'srise_slider',
 };
 let _activePresetKey = null;     // which preset is currently active (drift detection)
 let _presetApplying  = false;    // suppress drift detection while we apply a preset
@@ -516,9 +513,6 @@ function _checkPresetDrift() {
   const sel = document.getElementById('preset-select');
   const opticalSwitch = document.getElementById('optical-switch');
   for (const [k, domId] of Object.entries(PRESET_MAP)) {
-    // Rise/fade cuts are free knobs, not part of preset identity — changing them
-    // must not clear the dropdown (consistent with the marker staying colored).
-    if (k === 's_fade' || k === 's_rise') continue;
     const cur = parseFloat(document.getElementById(domId).value);
     if (Math.abs(cur - p[k]) > 1e-9) {
       _activePresetKey = null;
@@ -2266,8 +2260,8 @@ import standalone_bridge as _b
 _b.compute_all({
     'i_det':2,'A_log':-4.68,'f_live':0.2,'t_overhead_s':0.0,
     'omega_exp_deg2':47.0,'omega_srv_deg2':27500.0,'t_night_h':10.0,
-    'p':2.5,'nu_log10':14.7,'E_kiso_log10':53.0,'n0_log10':0.0,
-    'epsilon_e_log10':-1.0,'epsilon_B_log10':-3.4,'theta_j_rad':0.1,
+    'p':2.2,'nu_log10':14.7,'E_kiso_log10':53.0,'n0_log10':0.0,
+    'epsilon_e_log10':-1.0,'epsilon_B_log10':-4.0,'theta_j_rad':0.1,
     'gamma0_log10':2.5,'D_euc_gpc':4.55,'rho_grb_log10':2.415,
     'optical_survey':False,'color_regimes':False,
     'full_integral':False,'qmin':0.0,'Dmin_cm':0.0,'s_fade':0.0,'s_rise':0.0,

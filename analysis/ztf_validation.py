@@ -55,8 +55,8 @@ import standalone_bridge as bridge  # noqa: E402
 EPS_COVERAGE = 0.35
 
 # ── Base physics params (shared by every configuration) ─────────────────────
-PHYS_NEW = dict(p=2.5, nu_log10=14.7, E_kiso_log10=53.0, n0_log10=0.0,
-                epsilon_e_log10=-1.0, epsilon_B_log10=-3.4, theta_j_rad=0.1,
+PHYS_NEW = dict(p=2.2, nu_log10=14.7, E_kiso_log10=53.0, n0_log10=0.0,
+                epsilon_e_log10=-1.0, epsilon_B_log10=-4.0, theta_j_rad=0.1,
                 gamma0_log10=2.5, D_euc_gpc=4.55, rho_grb_log10=math.log10(260.0))
 PHYS_OLD = dict(PHYS_NEW, epsilon_B_log10=-2.0, D_euc_gpc=5.28)
 
@@ -149,7 +149,7 @@ def print_calibration_echo():
     from grb_detect.afterglow_ism import t_dec_s
 
     for tag, phys_kw in (("old (eps_B=1e-2, D=5.28)", PHYS_OLD),
-                         ("new (eps_B=10^-3.4, D=4.55)", PHYS_NEW)):
+                         ("new (eps_B=10^-4, D=4.55)", PHYS_NEW)):
         phys = AfterglowPhysicalParams(
             E_kiso_erg=10 ** phys_kw["E_kiso_log10"],
             D_euc_cm=phys_kw["D_euc_gpc"] * GPC_TO_CM)
@@ -280,8 +280,8 @@ def print_sensitivity():
     print(f"  baseline: R_raw = {fmt(base)}/yr  (x eps_cov {EPS_COVERAGE} = "
           f"{fmt(base * EPS_COVERAGE)}/yr)")
     for label, phys, over in [
-        ("eps_B −0.5 dex (10^-3.9)", dict(PHYS_NEW, epsilon_B_log10=-3.9), over0),
-        ("eps_B +0.5 dex (10^-2.9)", dict(PHYS_NEW, epsilon_B_log10=-2.9), over0),
+        ("eps_B −0.5 dex (10^-4.5)", dict(PHYS_NEW, epsilon_B_log10=-4.5), over0),
+        ("eps_B +0.5 dex (10^-3.5)", dict(PHYS_NEW, epsilon_B_log10=-3.5), over0),
         ("s_rise = 1.0", PHYS_NEW, dict(over0, s_rise=1.0)),
         ("s_rise = 0.3", PHYS_NEW, dict(over0, s_rise=0.3)),
         ("no id cuts", PHYS_NEW, dict(over0, s_fade=0.0, s_rise=0.0)),

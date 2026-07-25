@@ -199,7 +199,7 @@ def test_frompeak_never_increases_rate(legacy, m_frompeak, grid):
 def test_frompeak_tcad_to_zero_limit(legacy, m_frompeak):
     """T_req → 0: the window cap D_w(q) → D_max(q) and both modes agree."""
     N = np.array([100.0])
-    t = np.array([1e-3])
+    t = np.array([1e-6])
     r0 = legacy.rate_log10_full_integral(2, N, t)
     r1 = m_frompeak.rate_log10_full_integral(2, N, t)
     np.testing.assert_allclose(r1, r0, rtol=1e-6)

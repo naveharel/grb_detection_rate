@@ -44,11 +44,17 @@ def _make_default_model() -> DetectionRateModel:
 
 
 def _make_deep_model() -> DetectionRateModel:
-    """Deeper (lower F_lim) instrument; opens up A1 and A4 regimes."""
+    """Deeper (lower F_lim) instrument; opens up A1 and A4 regimes.
+
+    F_lim_ref_Jy is offset by -0.525 dex (the shift in F_dec from the
+    epsilon_B=1e-4 default, since F_dec ~ epsilon_B^((p+1)/4)) so this fixture
+    keeps the exact same F_lim/F_dec ratio, and thus the same regime
+    classification on the grids below, regardless of the physics defaults.
+    """
     tele = SurveyTelescopeParams(
         omega_exp_sr=100.0 * DEG2_TO_SR,
         f_live=0.5,
-        F_lim_ref_Jy=10 ** (-8.0),
+        F_lim_ref_Jy=10 ** (-8.0 - 0.525),
     )
     instr = SurveyInstrumentParams(telescope=tele, design=SurveyDesignParams())
     return DetectionRateModel(AfterglowPhysicalParams(), instr)

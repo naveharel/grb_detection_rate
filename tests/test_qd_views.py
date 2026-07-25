@@ -99,7 +99,7 @@ def test_dRdD_integrates_to_total(default_model, N_exp, t_cad_s):
     """
     model = default_model
     D_cm, dRdD = model.dR_dD_full_integral(
-        10, N_exp, t_cad_s, q_min=0.0, D_min_cm=0.0, N_q=500, N_D=400,
+        10, N_exp, t_cad_s, q_min=0.0, D_min_cm=0.0, N_q=500, N_D=1600,
     )
     integ = float(np.trapezoid(dRdD, D_cm))
     log10R = float(model.rate_log10_full_integral(
@@ -109,7 +109,7 @@ def test_dRdD_integrates_to_total(default_model, N_exp, t_cad_s):
     R_total = 10.0 ** log10R
     assert R_total > 0
     # D-marginal uses an independent level-set inversion of D_eff(q); both
-    # numerical paths should agree to ≤ 2% at N_D=400.
+    # numerical paths should agree to ≤ 2% at N_D=1600.
     assert math.isclose(integ, R_total, rel_tol=2e-2)
 
 

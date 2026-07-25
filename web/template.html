@@ -133,7 +133,7 @@
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="omega_srv_slider" title="Maximum surveyable sky area per cadence cycle in square degrees">Ω<sub>srv,max</sub> [deg²]</label>
-      <input type="number" id="omega_srv_input" class="param-input" min="100" max="41253" step="100" value="15000">
+      <input type="number" id="omega_srv_input" class="param-input" min="100" max="41253" step="100" value="41253">
     </div>
     %%SLIDER_OMEGA_SRV%%
     <div id="nexpmax-display"></div>
@@ -186,7 +186,7 @@
   <div class="param-block">
     <div class="param-row">
       <label class="param-label" for="p_slider" title="Electron power-law index (must be > 2). Exponentially amplified in flux; strongly affects spectral slope and all detection ranges.">p</label>
-      <input type="number" id="p_input" class="param-input" min="2.01" max="3" step="0.01" value="2.5">
+      <input type="number" id="p_input" class="param-input" min="2.01" max="3" step="0.01" value="2.2">
     </div>
     %%SLIDER_P%%
   </div>
@@ -234,8 +234,8 @@
   </div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="epsB_slider" title="log₁₀ of magnetic energy fraction. Enters flux as ε_B^{(p+1)/4}. Default −3.4 calibrated so νL_ν(1 day) ≈ 1.9e44 erg/s, the median 1-day luminosity of the ZTF-detected afterglows (Ho et al. 2022 Table 5); consistent with broadband afterglow modelling (ε_B ~ 1e-5–1e-2, Santana et al. 2014). The old 1e-2 default gave a bright-tail light curve ~15× above even the detected events' median.">log ε<sub>B</sub></label>
-      <input type="number" id="epsB_input" class="param-input" min="-5" max="-1" step="0.05" value="-3.4">
+      <label class="param-label" for="epsB_slider" title="log₁₀ of magnetic energy fraction. Enters flux as ε_B^{(p+1)/4}. Default −4: below the naive value (−3.4) that would put the light curve through the median ZTF-detected νL_ν(1 day) ≈ 1.9e44 erg/s (Ho et al. 2022 Table 5), since that observed median is itself selection-biased toward brighter detected events. Consistent with broadband afterglow modelling (ε_B ~ 1e-5–1e-2, Santana et al. 2014). The old 1e-2 default gave a bright-tail light curve ~55× above this default.">log ε<sub>B</sub></label>
+      <input type="number" id="epsB_input" class="param-input" min="-5" max="-1" step="0.05" value="-4">
     </div>
     %%SLIDER_EPSB%%
   </div>
@@ -247,7 +247,7 @@
   <div class="param-block" id="fdec-override-block">
     <div class="param-row">
       <label class="param-label" for="fdec_log_slider" title="TEMPORARY dev control: log10 of the flux normalization F_nu(t_dec, D_Euc) in Jy. Follows the physics-derived value; drag or type to override. Changing any upstream physics parameter (p, nu, E_k,iso, n0, Gamma0, eps_e, eps_B, D_Euc) clears the override.">log F<sub>ν</sub>(t<sub>dec</sub>,D<sub>Euc</sub>) [Jy]</label>
-      <input type="number" id="fdec_log_input" class="param-input" min="-6" max="6" step="0.01" value="-0.73">
+      <input type="number" id="fdec_log_input" class="param-input" min="-6" max="6" step="0.01" value="-2.05">
     </div>
     %%SLIDER_FDEC_LOG%%
     <div id="fdec-override-note" style="display:none"><span class="derived-info warning">override active — <a href="#" id="fdec-override-reset">reset to physics</a></span></div>

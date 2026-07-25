@@ -1,6 +1,8 @@
 \documentclass[11pt,a4paper]{article}
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
 \usepackage{geometry}
 \usepackage[hidelinks]{hyperref}
 \geometry{margin=2.5cm}
@@ -29,47 +31,80 @@ The surface $\log_{10}R_{\rm det}(N_{\rm exp},t_{\rm cad})$ is computed on a den
 % -------------------------------------------------------
 \section{Parameters}
 
-\begin{table}[h]
-\centering
-\small
-\renewcommand{\arraystretch}{1.25}
-\begin{tabular}{llll}
+{\scriptsize
+\renewcommand{\arraystretch}{1.2}
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{
+  >{\raggedright\arraybackslash}p{1.8cm}
+  >{\raggedright\arraybackslash}p{2.9cm}
+  >{\raggedright\arraybackslash}p{2.9cm}
+  >{\raggedright\arraybackslash}p{1.6cm}
+  >{\raggedright\arraybackslash}p{5.6cm}}
 \toprule
-Symbol & Default & Unit & Meaning \\
+Symbol & Default & First value & Unit & Meaning \\
 \midrule
-\multicolumn{4}{l}{\textit{Physical model} (\texttt{AfterglowPhysicalParams})} \\
-$p$ & 2.5 & -- & Electron energy distribution index \\
-$E_{k,{\rm iso}}$ & $10^{53}$ & erg & Isotropic kinetic energy \\
-$n_0$ & 1.0 & cm$^{-3}$ & ISM ambient number density \\
-$\theta_j$ & 0.1 & rad & Jet half-opening angle \\
-$\Gamma_0$ & $10^{2.5}$ & -- & Initial bulk Lorentz factor \\
-$\nu$ & $5\times10^{14}$ & Hz & Observing frequency (optical V-band) \\
+\endhead
+\multicolumn{5}{l}{\textit{Physical model} (\texttt{AfterglowPhysicalParams})} \\
+$p$ & 2.2 & 2.5* & -- & Electron energy distribution index \\
+$E_{k,{\rm iso}}$ & $10^{53}$ & (unchanged) & erg & Isotropic kinetic energy \\
+$n_0$ & 1.0 & (unchanged) & cm$^{-3}$ & ISM ambient number density \\
+$\theta_j$ & 0.1 & (unchanged) & rad & Jet half-opening angle \\
+$\Gamma_0$ & $10^{2.5}$ & (unchanged) & -- & Initial bulk Lorentz factor \\
+$\nu$ & $5\times10^{14}$ & (unchanged) & Hz & Observing frequency (optical V-band) \\
+$z_{\rm Euc}$ & 2.0 & (unchanged) & -- & Alt.\ cosmology redshift (reserved, unused by default) \\
+$H_0$ & 70 & (unchanged) & km/s/Mpc & Alt.\ cosmology Hubble constant (reserved, unused) \\
+$\Omega_m$ & 0.3 & (unchanged) & -- & Alt.\ cosmology matter density (reserved, unused) \\
 \midrule
-\multicolumn{4}{l}{\textit{Microphysics} (\texttt{MicrophysicsParams})} \\
-$\varepsilon_e$ & 0.1 & -- & Electron energy fraction \\
-$\varepsilon_B$ & 0.01 & -- & Magnetic field energy fraction \\
+\multicolumn{5}{l}{\textit{Microphysics} (\texttt{MicrophysicsParams})} \\
+$\varepsilon_e$ & 0.1 & (unchanged) & -- & Electron energy fraction \\
+$\varepsilon_B$ & $10^{-4}$ & 0.01* & -- & Magnetic field energy fraction \\
+$z$ & 0.0 & (unchanged) & -- & Redshift factor input (reserved, unused by default) \\
+\texttt{include\_\allowbreak redshift\_\allowbreak factors} & False & (unchanged) & -- & Toggle for redshift corrections (reserved, unused) \\
 \midrule
-\multicolumn{4}{l}{\textit{Cosmological model}} \\
-$\mathcal{R}$ & 260 & Gpc$^{-3}$\,yr$^{-1}$ & Volumetric GRB rate density \\
-$D_{\rm euc}$ & 1.63$\times10^{28}$\,cm $\approx$ 5.28\,Gpc & cm & Euclidean calibration distance ($z\approx2.0$) \\
-$R_{\rm int}$ & $\frac{4\pi}{3}\mathcal{R}D_{\rm euc}^3\approx4.8\times10^4$ & yr$^{-1}$ & Total GRBs/yr in calibration volume \\
+\multicolumn{5}{l}{\textit{Cosmological model}} \\
+$\mathcal{R}$ & 260 & (unchanged) & Gpc$^{-3}$\,yr$^{-1}$ & Volumetric GRB rate density \\
+$D_{\rm euc}$ & 1.404$\times10^{28}$\,cm $\approx$ 4.55\,Gpc & 1.63$\times10^{28}$\,cm $\approx$ 5.28\,Gpc* & cm & Euclidean calibration distance \\
+$R_{\rm int}$ & $\frac{4\pi}{3}\mathcal{R}D_{\rm euc}^3\approx1.03\times10^5$ & $\approx1.60\times10^5$* & yr$^{-1}$ & Total GRBs/yr in calibration volume \\
 \midrule
-\multicolumn{4}{l}{\textit{Survey instrument} (\texttt{SurveyTelescopeParams}, \texttt{SurveyDesignParams})} \\
-$F_{\rm ref}$ & $10^{-4.68}\approx2.09\times10^{-5}$ & Jy & Limiting flux anchor at $t_{\rm ref}=30$\,s \\
-$\alpha$ & 0.5 & -- & Flux--exposure exponent (background-limited) \\
-$\Omega_{\rm exp}$ & 47 & deg$^2$ & Field of view per exposure \\
-$\Omega_{\rm srv,max}$ & 27500 & deg$^2$ & Maximum surveyable sky area \\
-$t_{\rm night}$ & 36000\,s\,($=10$\,hr) & s & Astronomical night duration \\
+\multicolumn{5}{l}{\textit{Survey instrument} (\texttt{SurveyTelescopeParams}, \texttt{SurveyDesignParams})} \\
+$F_{\rm ref}$ & $10^{-4.68}\approx2.09\times10^{-5}$ & (unchanged) & Jy & Limiting flux anchor at $t_{\rm exp,ref}$ \\
+$\alpha$ & 0.5 & (unchanged) & -- & Flux--exposure exponent (background-limited) \\
+$\Omega_{\rm exp}$ & 47 & (unchanged) & deg$^2$ & Field of view per exposure \\
+$t_{\rm exp,ref}$ & 30 & (unchanged) & s & Reference exposure time for the $F_{\rm ref}$ anchor \\
+$\Omega_{\rm srv,max}$ & 27500\textsuperscript{\dag} & (unchanged) & deg$^2$ & Maximum surveyable sky area \\
+$t_{\rm night}$ & 36000\,s\,($=10$\,hr) & (unchanged) & s & Astronomical night duration \\
 \midrule
-\multicolumn{4}{l}{\textit{Survey strategy} (free variables)} \\
-$N_{\rm exp}$ & -- & -- & Exposures per cadence cycle \\
-$t_{\rm cad}$ & -- & s & Cadence interval \\
-$f_{\rm live}$ & 0.1 & -- & Fraction of $t_{\rm cad}$ spent observing \\
-$t_{\rm OH}$ & 0 & s & Fixed overhead per exposure \\
-$i$ & 1 & -- & Required detections per GRB \\
+\multicolumn{5}{l}{\textit{Survey strategy} (free variables)} \\
+$N_{\rm exp}$ & -- & -- & -- & Exposures per cadence cycle \\
+$t_{\rm cad}$ & -- & -- & s & Cadence interval \\
+$f_{\rm live}$ & 0.1\textsuperscript{\dag} & (unchanged) & -- & Fraction of $t_{\rm cad}$ spent observing \\
+$t_{\rm OH}$ & 0 & (unchanged) & s & Fixed overhead per exposure \\
+$i$ & 2\textsuperscript{\ddag} & 10*\textsuperscript{\ddag} & -- & Required detections per GRB \\
+\midrule
+\multicolumn{5}{l}{\textit{Constraints} (detection-rate filters)} \\
+$q_{\rm min}$ & 0 & 0 (introduced 2026-05-15) & -- & Minimum viewing-angle parameter; 0 = no filter \\
+$D_{\rm min}$ & 0 & 0 (introduced 2026-05-15) & Gpc & Minimum detection distance; 0 = no filter \\
+$s_{\rm fade}$ & 0 & 0 (introduced 2026-07, as \texttt{s\_min}) & mag/day & Minimum fading-rate identification cut; 0 = no filter \\
+$s_{\rm rise}$ & 0 & 0 (introduced 2026-07) & mag/day & Minimum rise-rate identification cut; 0 = no filter \\
 \bottomrule
-\end{tabular}
-\end{table}
+\end{longtable}
+}
+
+\noindent\textbf{* Changed since introduction} (\texttt{grb\_detect/params.py}'s history, first
+committed as \texttt{684f9c5}, 2026-02-20): $p$ 2.5$\to$2.2 (this update); $\varepsilon_B$
+$0.01\to10^{-3.4}$ (\texttt{76eaa31}, 2026-07-20) $\to10^{-4}$ (a later update); $D_{\rm euc}$
+5.28$\to$4.55\,Gpc, carrying $R_{\rm int}$ with it (\texttt{76eaa31}, 2026-07-20); $i$ 10$\to$2
+(\texttt{76eaa31}, 2026-07-20). All other rows are unchanged from the first commit.
+
+\noindent\textsuperscript{\dag} The interactive UI intentionally ships different initial slider
+values than these library defaults: $\Omega_{\rm srv,max}=41253$\,deg$^2$ (full sky) and
+$f_{\rm live}=0.2$. The library defaults above are what a bare constructor call
+(\texttt{SurveyDesignParams()}, \texttt{SurveyTelescopeParams()}) still uses.
+
+\noindent\textsuperscript{\ddag} $i$ has no library-level default anywhere in
+\texttt{grb\_detect/params.py} (always a required argument); the values shown are the
+interactive UI's initial slider position instead --- first the original Dash app's
+\texttt{dcc.Slider} default, now \texttt{build\_standalone.py}'s slider default.
 
 \noindent\textbf{Note on $R_{\rm int}$:} The \texttt{AfterglowPhysicalParams} dataclass bakes $R_{\rm int}$ in at class-load time from the default $\mathcal{R}$ and $D_{\rm euc}$ values.
 When constructing the class with non-default $\mathcal{R}$ or $D_{\rm euc}$, always recompute $R_{\rm int}$ explicitly and pass it to the constructor:
@@ -550,7 +585,7 @@ with $\alpha_\Phi<0$ the temporal flux indices (\texttt{D\_from\_t\_plus()}, \te
 
 \paragraph{Consequences.}
 (i)~\textbf{No dominant-term closed form}: $D_{\rm eff}$ is $q$-dependent, and the leading integral $\int q\,\tilde D_w(q)^3\,dq$ is elementary only in phase III. \texttt{rate\_log10} therefore evaluates the $q$-integral internally under this setting (in both UI modes), \texttt{compute\_medians} always takes the numerical path, and the bridge's $R(q)$/$R(D)$ views use the full-integral branch. Region masks keep the legacy $q_i$ boundaries as an approximate classification (regime colouring only).
-(ii)~\textbf{Off-axis suppression}: in the phase-III cadence-limited regime the corrected integral evaluates to $1/(3p/2-1)$ of the legacy rectangle ($\approx 0.36$ at $p=2.5$; on-axis contributions are unchanged since $t_{p,\rm eff}=t_{\rm dec}\ll T_{\rm req}$), and the dominant angle shifts inward from $\tilde q_i$ to $\tilde q_i/\sqrt{3p-1}$ --- the detected $q$-median moves on-axis, toward the observed ZTF $q_{\rm med}\lesssim 1$.
+(ii)~\textbf{Off-axis suppression}: in the phase-III cadence-limited regime the corrected integral evaluates to $1/(3p/2-1)$ of the legacy rectangle ($\approx 0.43$ at $p=2.2$; on-axis contributions are unchanged since $t_{p,\rm eff}=t_{\rm dec}\ll T_{\rm req}$), and the dominant angle shifts inward from $\tilde q_i$ to $\tilde q_i/\sqrt{3p-1}$ --- the detected $q$-median moves on-axis, toward the observed ZTF $q_{\rm med}\lesssim 1$.
 (iii)~\textbf{Limits}: $t_{\rm cad}\to0$ gives $D_w(q)\to D_{\rm max}(q)$ and the legacy rate is recovered; the $s_{\rm fade}$/$s_{\rm rise}$ weights compose unchanged (they constrain the first-detection timing, the window constrains the duration).
 
 \paragraph{Implementation reference.} Flags on \texttt{DetectionRateModel} (constructor kwargs \texttt{win\_i\_minus\_one} / \texttt{win\_from\_peak}, threaded through \texttt{make\_rate\_model}; bridge params \texttt{win\_iminus1} / \texttt{win\_tp}; two Settings switches in the app). Tests: \texttt{tests/test\_window\_toggles.py} (parity, the $i\!-\!1$ shift identity, $D(t_+)$ boundary identities, suppression/limit checks).

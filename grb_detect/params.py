@@ -81,7 +81,7 @@ class AfterglowPhysicalParams:
     """
 
     # Electron distribution
-    p: float = 2.5
+    p: float = 2.2
 
     # Energetics and environment
     E_kiso_erg: float = 1e53
@@ -135,14 +135,20 @@ class AfterglowPhysicalParams:
 @dataclass(frozen=True)
 class MicrophysicsParams:
     epsilon_e: float = 1e-1
-    # Calibrated so the on-axis PLS-G light curve passes through the median
-    # detected event: νL_ν(1 day) ≈ 1.9e44 erg/s, the median rest-frame u-band
-    # 1-day luminosity of the optically discovered afterglow sample (Ho et al.
-    # 2022, Table 5).  ε_B ≈ 4e-4 sits in the range inferred from broadband
-    # afterglow modelling (ε_B ~ 1e-5–1e-2, e.g. Santana et al. 2014; Barniol
-    # Duran 2014); the earlier ε_B = 1e-2 gave νL_ν(1 day) ≈ 3e45 erg/s — a
-    # bright-tail light curve ~15x above even the detected events' median.
-    epsilon_B: float = 10 ** -3.4
+    # The naive calibration point puts the on-axis PLS-G light curve through
+    # the median *detected* event, νL_ν(1 day) ≈ 1.9e44 erg/s (Ho et al. 2022,
+    # Table 5), which needs ε_B ≈ 10^-3.4. But that observed median is itself
+    # selection-biased upward: only afterglows bright enough to be detected
+    # enter the sample. R_int (the intrinsic rate) is calibrated independently
+    # from rho_grb and D_euc and does not depend on ε_B at all, so this bias
+    # only affects flux-limited detectability, not the rate normalization.
+    # Given ε_B is otherwise poorly constrained (~1e-5–1e-2 from broadband
+    # afterglow modelling, e.g. Santana et al. 2014; Barniol Duran 2014), a
+    # somewhat fainter effective value is a reasonable correction: ε_B = 1e-4
+    # gives νL_ν(1 day) ≈ 5.4e43 erg/s, ~3.4x below the naive median-matching
+    # value. The original canonical ε_B = 1e-2 gave νL_ν(1 day) ≈ 3e45 erg/s —
+    # a bright-tail light curve ~55x above this default.
+    epsilon_B: float = 10 ** -4
 
     z: float = 0.0
     include_redshift_factors: bool = False
