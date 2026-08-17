@@ -688,8 +688,11 @@ function _updateTnightFloorNote() {
   const floor = wrap ? parseFloat(wrap.dataset.minFloor) : NaN;
   const cur = parseFloat(tn.value);
   if (!isFinite(floor) || !isFinite(cur)) { el.innerHTML = ''; return; }
-  if (Math.abs(cur - floor) <= 1e-6) {
-    el.innerHTML = '<span class="derived-info">f<sub>night</sub> must be bigger than f<sub>live</sub></span>';
+  const structuralMin = parseFloat(tn.min);
+  if (Math.abs(cur - floor) <= 1e-6 && floor > structuralMin + 1e-9) {
+    const flive = parseFloat(document.getElementById('flive_slider').value);
+    el.innerHTML = '<span class="derived-info">f<sub>night</sub> must be bigger than ' +
+      'f<sub>live</sub> = ' + flive.toFixed(2) + '</span>';
   } else {
     el.innerHTML = '';
   }
