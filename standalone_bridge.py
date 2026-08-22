@@ -651,8 +651,11 @@ def _compute_qdview_sweep(
     t_cad_fix_s = float(t_cad_fix_s)
 
     # win_from_peak has no closed dominant-term curves (q-dependent D_eff) —
-    # the R(q)/R(D) views fall back to the full-integral branch for it.
-    use_full = full_on or bool(getattr(model, "win_from_peak", False))
+    # the R(q)/R(D) views fall back to the full-integral branch for it; same
+    # for the night schedule (N_v >= 2), whose rate is a channel mixture the
+    # single-regime closed forms do not describe.
+    use_full = full_on or bool(getattr(model, "win_from_peak", False)) \
+        or bool(getattr(model, "_sched_multi", False))
 
     # Geometry the JS render layer always needs (drawn even on invalid payloads).
     q_dec_val = float(model.derived.q_dec)

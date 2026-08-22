@@ -172,6 +172,16 @@ class DetectionRateModel:
     def derived(self) -> DerivedAfterglowScales:
         return self._derived
 
+    @property
+    def _sched_multi(self) -> bool:
+        """True when the multi-visit night schedule (N_v >= 2) is active.
+
+        At N_v = 1 the schedule reduces identically to the legacy uniform
+        cadence, so every rate/median path takes the legacy branch and stays
+        bit-identical.
+        """
+        return self.schedule is not None and int(self.schedule.N_v) > 1
+
     # ---------- Core building blocks (vectorized) ----------
     def t_exp_s(self, N_exp: np.ndarray, t_cad_s: np.ndarray) -> np.ndarray:
         """Exposure time per pointing (vectorized). Returns NaN where t_exp ≤ 0.
@@ -241,7 +251,9 @@ class DetectionRateModel:
 
         return 1.0 + q_tilde
 
-    def _t_req_s(self, i_det: int, t_cad_s: np.ndarray) -> np.ndarray:
+    def _t_req_s(
+        self, i_det: int, t_cad_s: np.ndarray, *, T_req_s: np.ndarray | None = None
+    ) -> np.ndarray:
         """Required detectability duration T_req for i detections.
 
         T_req = i·t_cad in the legacy mode; (i−1)·t_cad under the
@@ -249,21 +261,38 @@ class DetectionRateModel:
         cadence gaps between them).  At i_det = 1 the setting gives T_req = 0
         (a single detection at the peak suffices) — q_i then collapses to 1
         and D_i to +∞, i.e. the cadence constraint vanishes.
+
+        Night schedule (N_v >= 2): ``T_req_s`` supplies the per-channel
+        duration (the mixture of tex Eq. R_mixture); with no override the
+        endpoint conventions generalize channel-free — T_certain = S_A +
+        max(G, Δt_v) (legacy; = i·t_cad at N_v = 1) or T_first_pass = min S_c
+        (`win_i_minus_one`; = (i−1)·t_cad at N_v = 1) — used for regime
+        classification and any direct q_i/D_i query.
         """
 
+        if T_req_s is not None:
+            return np.asarray(T_req_s, dtype=float)
         i_det = int(i_det)
         if i_det < 1:
             raise ValueError("i_det must be >= 1")
+        if self._sched_multi:
+            t = np.asarray(t_cad_s, dtype=float)
+            if self.win_i_minus_one:
+                return np.asarray(self.schedule.T_first_pass(i_det, t), dtype=float)
+            return np.asarray(self.schedule.T_certain(i_det, t), dtype=float)
         i_eff = i_det - 1 if self.win_i_minus_one else i_det
         return float(i_eff) * np.asarray(t_cad_s, dtype=float)
 
-    def q_i(self, i_det: int, t_cad_s: np.ndarray) -> np.ndarray:
+    def q_i(
+        self, i_det: int, t_cad_s: np.ndarray, *, T_req_s: np.ndarray | None = None
+    ) -> np.ndarray:
         """q_i(t_cad): angle for which t_p(q_i) = T_req (= i * t_cad).
 
-        Matches the   definition; T_req = (i−1)·t_cad under `win_i_minus_one`.
+        Matches the   definition; T_req = (i−1)·t_cad under `win_i_minus_one`;
+        an explicit ``T_req_s`` overrides both (per-channel schedule spans).
         """
 
-        t_req = self._t_req_s(i_det, t_cad_s)
+        t_req = self._t_req_s(i_det, t_cad_s, T_req_s=T_req_s)
         before_tj = t_req < self.derived.t_j_s
 
         q_tilde = np.empty_like(t_req, dtype=float)
@@ -277,7 +306,14 @@ class DetectionRateModel:
 
         return self.phys.D_euc_cm * (F_lim / self.derived.F_dec_Jy) ** (-0.5)
 
-    def D_i(self, i_det: int, t_cad_s: np.ndarray, F_lim: np.ndarray) -> np.ndarray:
+    def D_i(
+        self,
+        i_det: int,
+        t_cad_s: np.ndarray,
+        F_lim: np.ndarray,
+        *,
+        T_req_s: np.ndarray | None = None,
+    ) -> np.ndarray:
         """D_i(t_cad, F_lim): distance where a burst at q_i is detectable at peak."""
 
         p = self.phys.p
@@ -285,10 +321,10 @@ class DetectionRateModel:
         aIII = float(self.pls.a_III(p))
 
         qd_tilde = self.derived.q_dec - 1.0
-        qi = self.q_i(i_det, t_cad_s)
+        qi = self.q_i(i_det, t_cad_s, T_req_s=T_req_s)
         qi_tilde = qi - 1.0
 
-        t_req = self._t_req_s(i_det, t_cad_s)
+        t_req = self._t_req_s(i_det, t_cad_s, T_req_s=T_req_s)
         before_tj = t_req < self.derived.t_j_s
 
         D_dec = self.D_dec(F_lim)
@@ -306,6 +342,26 @@ class DetectionRateModel:
             )
 
         return out
+
+    def _D_i_ratio(
+        self, i_det: int, t_cad_s: np.ndarray, *, T_req_s: np.ndarray | None = None
+    ) -> np.ndarray:
+        """D_i / D_dec — the cadence-distance ratio, a function of T_req only.
+
+        Same power laws as `D_i` without the F_lim-dependent D_dec factor;
+        used by the schedule weights, which know D̃_dec but not F_lim.
+        """
+        p = self.phys.p
+        aII = float(self.pls.a_II(p))
+        aIII = float(self.pls.a_III(p))
+        qd_tilde = self.derived.q_dec - 1.0
+        qi_tilde = self.q_i(i_det, t_cad_s, T_req_s=T_req_s) - 1.0
+        t_req = self._t_req_s(i_det, t_cad_s, T_req_s=T_req_s)
+        before_tj = t_req < self.derived.t_j_s
+        with np.errstate(divide="ignore"):
+            ratio_II = (qi_tilde / qd_tilde) ** (-aII)
+            ratio_III = (qd_tilde ** (-1.0)) * (qi_tilde / qd_tilde) ** (-aIII)
+        return np.where(before_tj, ratio_II, ratio_III)
 
     def D_from_t_plus(self, t_plus_s: np.ndarray, F_lim: np.ndarray) -> np.ndarray:
         """Distance at which the post-peak on-axis light curve crosses F_lim at t_+.
@@ -375,11 +431,15 @@ class DetectionRateModel:
             t_cad_s: np.ndarray,
             *,
             include_unphysical: bool = False,
+            T_req_s: np.ndarray | None = None,
     ) -> Dict[str, np.ndarray]:
         """Return boolean masks for the seven   regions.
 
         This version is robust on regime boundaries: any point in A0 is assigned
         to exactly one region even when equalities occur (within a tolerance).
+        With the night schedule active (N_v >= 2) and no ``T_req_s`` override,
+        q_i uses the endpoint-convention duration (see `_t_req_s`) — the
+        displayed classification; the mixture passes per-channel spans.
         """
 
         Nmax = N_exp_max(self.instrument)
@@ -396,7 +456,7 @@ class DetectionRateModel:
 
         F_lim = self.F_lim_Jy(self.t_exp_s(N_exp, t_cad_s))
         qE = self.q_Euc(F_lim)
-        qi = self.q_i(i_det, t_cad_s)
+        qi = self.q_i(i_det, t_cad_s, T_req_s=T_req_s)
 
         qnr = float(self.derived.q_nr)
         qj = float(self.derived.q_j)
@@ -475,6 +535,8 @@ class DetectionRateModel:
         t_cad_s: np.ndarray,
         s_fade: float,
         s_mode: str,
+        *,
+        baseline_s: np.ndarray | None = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Phase-resolved caps on the first-detection time from the s_fade filter.
 
@@ -497,6 +559,10 @@ class DetectionRateModel:
             III viewers, broadcast to the shape of t_cad_s.  +∞ = cut bypassed
             (s_fade ≤ 0, or i_det < 2 in discrete mode where the slope is
             undefined).
+
+        ``baseline_s`` overrides the measurement span (i−1)·t_cad — the night
+        schedule passes the channel's actual i-detection span S_c (a
+        zero-length span maps to +∞: no slope is measurable over it).
         """
         t_cad_arr = np.asarray(t_cad_s, dtype=float)
 
@@ -525,7 +591,12 @@ class DetectionRateModel:
             t_f_s_III_arr = np.full(t_cad_arr.shape, t_f_s_III, dtype=float)
         else:  # "discrete"
             # dt = (i−1) · t_cad ; E_phase = s_fade · dt / (DAY_S · A_phase)
-            dt = float(i_det_i - 1) * t_cad_arr
+            if baseline_s is not None:
+                dt = np.broadcast_to(
+                    np.asarray(baseline_s, dtype=float), t_cad_arr.shape
+                ).astype(float, copy=False)
+            else:
+                dt = float(i_det_i - 1) * t_cad_arr
             E_II  = s_fade_f * dt / (DAY_S * A_II)
             E_III = s_fade_f * dt / (DAY_S * A_III)
             # 10^E − 1 = expm1(E·ln10); numerically robust for small E.
@@ -544,6 +615,8 @@ class DetectionRateModel:
         t_cad_s: np.ndarray,
         s_fade: float,
         s_mode: str,
+        *,
+        baseline_s: np.ndarray | None = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Phase-resolved viewing-angle caps imposed by the fading-rate filter.
 
@@ -563,7 +636,9 @@ class DetectionRateModel:
             Upper q-caps for Phase II and Phase III viewers, broadcast to the
             shape of t_cad_s.  +∞ means "no cap" (cut bypassed).
         """
-        t_f_s_II, t_f_s_III = self._t_first_caps(i_det, t_cad_s, s_fade, s_mode)
+        t_f_s_II, t_f_s_III = self._t_first_caps(
+            i_det, t_cad_s, s_fade, s_mode, baseline_s=baseline_s
+        )
         t_j = float(self.derived.t_j_s)
 
         # Map t_f,s → q̃_s → q_s per phase.  +∞ in → +∞ out (no cap).
@@ -665,6 +740,8 @@ class DetectionRateModel:
         self,
         t_cad_s: np.ndarray,
         s_rise: float,
+        *,
+        gap_s: np.ndarray | None = None,
     ) -> Tuple[np.ndarray, np.ndarray]:
         """Rise-filter flux-limit boost η and its inverse square root.
 
@@ -676,13 +753,20 @@ class DetectionRateModel:
         Returns (η, η^{−1/2}); the inverse root is computed directly as
         10^{−E/2} so it underflows gracefully to 0.0 where η overflows to +∞.
         Bypass (s_rise ≤ 0) returns (ones, ones).
+
+        ``gap_s`` overrides the gap to the previous visit — the night schedule
+        passes the channel's actual preceding gap g_c (the overnight gap G for
+        the dominant channel; a Δt_v gap gives η ≈ 1, correctly: a source
+        absent hours earlier is a spectacular riser and passes trivially).
         """
         t_cad_arr = np.asarray(t_cad_s, dtype=float)
         s_rise_f = float(s_rise)
         if s_rise_f <= 0.0:
             ones = np.ones(t_cad_arr.shape, dtype=float)
             return ones, ones
-        E = s_rise_f * t_cad_arr / (2.5 * DAY_S)
+        gap = (np.broadcast_to(np.asarray(gap_s, dtype=float), t_cad_arr.shape)
+               if gap_s is not None else t_cad_arr)
+        E = s_rise_f * gap / (2.5 * DAY_S)
         with np.errstate(over="ignore"):
             eta = 10.0 ** E
         inv_sqrt_eta = 10.0 ** (-0.5 * E)
@@ -696,6 +780,9 @@ class DetectionRateModel:
         s_fade: float,
         s_rise: float,
         s_mode: str,
+        *,
+        fade_baseline_s: np.ndarray | None = None,
+        rise_gap_s: np.ndarray | None = None,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Shared per-point quantities for the joint fade+rise weights.
 
@@ -704,6 +791,8 @@ class DetectionRateModel:
         bypassed), the phase-selected exponent k = 2/|α_phase| of the
         limit-crossing time t_lim = t_p,eff·(D̃_0/D̃)^k, and the rise boost's
         η^{−1/2}.  Phase split at q_j (on-axis lumped with Phase II).
+        The night schedule passes per-channel baselines (fade span S_c, rise
+        gap g_c) via the two keyword overrides.
         """
         q_arr = np.asarray(q, dtype=float)
         t_cad_arr = np.asarray(t_cad_s, dtype=float)
@@ -712,14 +801,16 @@ class DetectionRateModel:
         is_II = q_arr < q_j
 
         t_p_eff = self._t_p_eff(q_arr)
-        t_fs_II, t_fs_III = self._t_first_caps(i_det, t_cad_arr, s_fade, s_mode)
+        t_fs_II, t_fs_III = self._t_first_caps(
+            i_det, t_cad_arr, s_fade, s_mode, baseline_s=fade_baseline_s
+        )
         t_fs_sel = np.where(is_II, t_fs_II, t_fs_III)
 
         k_II = 2.0 / abs(float(self.pls.alpha_II_temporal(p)))
         k_III = 2.0 / abs(float(self.pls.alpha_III_temporal(p)))
         k_sel = np.where(is_II, k_II, k_III)
 
-        _, inv_sqrt_eta = self._rise_eta(t_cad_arr, s_rise)
+        _, inv_sqrt_eta = self._rise_eta(t_cad_arr, s_rise, gap_s=rise_gap_s)
         return t_p_eff, t_fs_sel, k_sel, inv_sqrt_eta
 
     def _joint_survival(
@@ -735,6 +826,7 @@ class DetectionRateModel:
         *,
         rise_random_start: bool = True,
         fade_random_start: bool = True,
+        D_tilde_dec: np.ndarray | None = None,
     ) -> np.ndarray:
         """Pointwise joint fade+rise pass probability for a uniform start.
 
@@ -756,7 +848,20 @@ class DetectionRateModel:
         with its u=0 best case — a hard gate on the same window (fade:
         1{t_f,s ≥ t_p,eff}; rise: 1{t_lim ≥ t_p,eff} ⇔ 1{D̃ ≤ D̃_0}).  Both
         True (default) reproduces the uniform-start survival weight exactly.
+
+        With the night schedule active (N_v >= 2) the weight is the channel
+        sum of tex Eq. W_schedule — including the per-channel DETECTION
+        condition, so the caller must not fold D_i/D_w into any cap;
+        ``D_tilde_dec`` (D̃_dec, strategy-shaped) is then required.
         """
+        if self._sched_multi:
+            return self._joint_survival_schedule(
+                q, D_tilde, D_tilde_max, i_det, t_cad_s,
+                s_fade, s_rise, s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+                D_tilde_dec=D_tilde_dec,
+            )
         if float(s_rise) <= 0.0:
             return self._fading_survival(
                 q, i_det, t_cad_s, s_fade, s_mode,
@@ -782,6 +887,115 @@ class DetectionRateModel:
             )
         return w
 
+    def _joint_survival_schedule(
+        self,
+        q: np.ndarray,
+        D_tilde: np.ndarray,
+        D_tilde_max: np.ndarray,
+        i_det: int,
+        t_cad_s: np.ndarray,
+        s_fade: float,
+        s_rise: float,
+        s_mode: str,
+        *,
+        rise_random_start: bool = True,
+        fade_random_start: bool = True,
+        D_tilde_dec: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Night-schedule joint weight W(q, D̃) — tex Eq. W_schedule.
+
+        Within channel c the wait to the first visit is u' ~ U(0, g_c); the
+        detection, fade and rise conditions all bound the same u', so
+
+            W = (1/t_cad) · Σ_c m_c · [min(g_c, det_c, τ_f,c, τ_r,c)]₊
+
+        with per-channel baselines: fade span S_c, rise gap g_c.  The
+        detection term is the from-peak window ramp T(q,D̃) − S_c under
+        `win_from_peak` (T = t_+ − t_p,eff = t_p,eff[(D̃_max/D̃)^k − 1]), or
+        the hard per-channel rectangle D̃ ≤ D̃_dec·(D_i/D_dec)(T_req,c) with it
+        off — mirroring the legacy exact-mode treatment channel-wise.  The
+        `*_random_start=False` hard-boundary semantics apply per channel
+        exactly as in `_joint_survival`.
+        """
+        sched = self.schedule
+        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        q_arr = np.asarray(q, dtype=float)
+        D_max_arr = np.asarray(D_tilde_max, dtype=float)
+        D_safe = np.maximum(np.asarray(D_tilde, dtype=float), 1e-300)
+        s_rise_on = float(s_rise) > 0.0
+        if not self.win_from_peak and D_tilde_dec is None:
+            raise ValueError("schedule joint weight needs D_tilde_dec for the "
+                             "per-channel detection rectangles")
+
+        acc = None
+        with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+            for m_c, g_c, S_c in sched.channels(i_det, t_cad_arr):
+                if m_c == 0:
+                    continue
+                g_arr = np.asarray(g_c, dtype=float)
+                t_p_eff, t_fs_sel, k_sel, ise_c = self._rise_fade_windows(
+                    q_arr, i_det, t_cad_arr, s_fade, s_rise, s_mode,
+                    fade_baseline_s=S_c, rise_gap_s=g_c,
+                )
+                if not fade_random_start:
+                    t_fs_sel = np.where(t_fs_sel >= t_p_eff, np.inf, -np.inf)
+                lim = np.minimum(g_arr, t_fs_sel - t_p_eff)
+                if s_rise_on:
+                    t_lim = t_p_eff * (D_max_arr * ise_c / D_safe) ** k_sel
+                    if not rise_random_start:
+                        t_lim = np.where(t_lim >= t_p_eff, np.inf, -np.inf)
+                    lim = np.minimum(lim, t_lim - t_p_eff)
+                if self.win_from_peak:
+                    T_det = t_p_eff * ((D_max_arr / D_safe) ** k_sel - 1.0)
+                    lim = np.minimum(lim, T_det - S_c)
+                else:
+                    T_c = S_c if self.win_i_minus_one else S_c + g_arr
+                    D_i_c = D_tilde_dec * self._D_i_ratio(
+                        i_det, t_cad_arr, T_req_s=T_c)
+                    lim = np.where(D_safe <= D_i_c, lim, -np.inf)
+                term = m_c * np.maximum(lim, 0.0)
+                acc = term if acc is None else acc + term
+        return acc / t_cad_arr
+
+    def _ramp_volume(
+        self,
+        t_p_eff: np.ndarray,
+        k_sel: np.ndarray,
+        m0: np.ndarray,
+        C: np.ndarray,
+        a: np.ndarray,
+        lo: np.ndarray,
+        hi: np.ndarray,
+    ) -> np.ndarray:
+        """∫_{lo}^{hi} 3D̃² · [min(m0, t_p,eff·(C/D̃)^k − a)]₊ dD̃, closed form.
+
+        The single power-law-ramp volume element of the schedule weights
+        (a > 0 always: a = t_p,eff or t_p,eff + S_c).  Vectorized; returns 0
+        where the interval is empty, m0 ≤ 0, or C = 0 (overflowed η).
+        Antiderivative of 3D̃²·(t_p(C/D̃)^k − a):
+            G(D̃) = 3·t_p·C^k·D̃^{3−k}/(3−k) − a·D̃³
+        with k < 3 always (see `_weighted_D_volume`), so the pole is
+        unreachable.
+        """
+        with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+            m0p = np.maximum(m0, 0.0)
+            hi_c = np.maximum(hi, lo)
+            D_zero = C * (t_p_eff / a) ** (1.0 / k_sel)          # ramp = 0
+            D_mid = C * (t_p_eff / (a + m0p)) ** (1.0 / k_sel)   # ramp = m0
+            hi_e = np.minimum(hi_c, D_zero)
+            b1 = np.minimum(np.maximum(D_mid, lo), hi_e)
+            # Constant piece [lo, b1] at weight m0.
+            V = m0p * np.maximum(b1 ** 3 - np.asarray(lo, dtype=float) ** 3, 0.0)
+            # Ramp piece [b1, hi_e].
+            lo_r = np.maximum(b1, lo)
+            hi_r = np.maximum(hi_e, lo_r)
+            expo = 3.0 - k_sel
+            coef = 3.0 * t_p_eff * C ** k_sel / expo
+            G_hi = coef * hi_r ** expo - a * hi_r ** 3
+            G_lo = coef * lo_r ** expo - a * lo_r ** 3
+            V = V + np.maximum(G_hi - G_lo, 0.0)
+        return V
+
     def _weighted_D_volume(
         self,
         q: np.ndarray,
@@ -796,6 +1010,7 @@ class DetectionRateModel:
         *,
         rise_random_start: bool = True,
         fade_random_start: bool = True,
+        D_tilde_dec: np.ndarray | None = None,
     ) -> np.ndarray:
         """Closed-form joint-weighted D-volume for the full-integral q-integrand.
 
@@ -826,7 +1041,21 @@ class DetectionRateModel:
         and hard rise sets the ramp start D̃_c = D̃_0, collapsing the power-law
         ramp to a sharp cutoff at D̃ ≤ D̃_0 (term_ramp auto-zeros).  Both True
         (default) is the uniform-start survival weight.
+
+        With the night schedule active (N_v >= 2) the volume is the channel
+        sum of tex Eq. W_schedule integrated in D̃ — including each channel's
+        DETECTION window, so ``D_eff`` must then be the global cap
+        min(D̃_max(q), 1) only, and ``D_tilde_dec`` is required (see
+        `_weighted_D_volume_schedule`).
         """
+        if self._sched_multi:
+            return self._weighted_D_volume_schedule(
+                q, D_tilde_max, D_eff, D_min_norm, i_det, t_cad_s,
+                s_fade, s_rise, s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+                D_tilde_dec=D_tilde_dec,
+            )
         if float(s_rise) <= 0.0:
             P_fade = self._fading_survival(
                 q, i_det, t_cad_s, s_fade, s_mode,
@@ -869,6 +1098,106 @@ class DetectionRateModel:
 
         return term_const + term_ramp
 
+    def _weighted_D_volume_schedule(
+        self,
+        q: np.ndarray,
+        D_tilde_max: np.ndarray,
+        D_eff_glob: np.ndarray,
+        D_min_norm: float,
+        i_det: int,
+        t_cad_s: np.ndarray,
+        s_fade: float,
+        s_rise: float,
+        s_mode: str,
+        *,
+        rise_random_start: bool = True,
+        fade_random_start: bool = True,
+        D_tilde_dec: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Night-schedule weighted D-volume: ∫ 3D̃² W(q, D̃) dD̃ in closed form.
+
+        Per channel the weight is [min(g_c, τ_f,c, ramps)]₊/t_cad with at most
+        two D̃-dependent ramps sharing the exponent k = 2/|α_phase|:
+
+            rise:      t_p,eff·(D̃_max·η_c^{−1/2}/D̃)^k − t_p,eff
+            detection: t_p,eff·(D̃_max/D̃)^k − (t_p,eff + S_c)   (win_from_peak)
+
+        Their difference is monotone in D̃, so min(rise, det) switches once at
+        D̃_x = [t_p,eff·D̃_max^k·(1 − η_c^{−k/2})/S_c]^{1/k} (rise below, det
+        above); each side integrates with `_ramp_volume`.  Hard-boundary
+        variants shrink the upper limit instead of ramping: the per-channel
+        detection rectangle D̃_dec·(D_i/D_dec)(T_req,c) with `win_from_peak`
+        off, and D̃_0,c with `rise_random_start=False` — exactly the legacy
+        semantics channel-wise.  ``D_eff_glob`` is the global min(D̃_max, 1)
+        cap; the sum is over channels weighted by their multiplicities.
+        """
+        sched = self.schedule
+        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        q_arr = np.asarray(q, dtype=float)
+        D_max_arr = np.asarray(D_tilde_max, dtype=float)
+        D_glob = np.asarray(D_eff_glob, dtype=float)
+        lo = float(D_min_norm)
+        s_rise_on = float(s_rise) > 0.0
+        if not self.win_from_peak and D_tilde_dec is None:
+            raise ValueError("schedule weighted volume needs D_tilde_dec for "
+                             "the per-channel detection rectangles")
+
+        acc = None
+        with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+            for m_c, g_c, S_c in sched.channels(i_det, t_cad_arr):
+                if m_c == 0:
+                    continue
+                g_arr = np.asarray(g_c, dtype=float)
+                S_arr = np.asarray(S_c, dtype=float)
+                t_p_eff, t_fs_sel, k_sel, ise_c = self._rise_fade_windows(
+                    q_arr, i_det, t_cad_arr, s_fade, s_rise, s_mode,
+                    fade_baseline_s=S_c, rise_gap_s=g_c,
+                )
+                if not fade_random_start:
+                    t_fs_sel = np.where(t_fs_sel >= t_p_eff, np.inf, -np.inf)
+                m0 = np.minimum(g_arr, t_fs_sel - t_p_eff)
+
+                U = D_glob
+                rise_ramp = s_rise_on and rise_random_start
+                if s_rise_on and not rise_random_start:
+                    U = np.minimum(U, D_max_arr * ise_c)
+                det_ramp = self.win_from_peak
+                if not det_ramp:
+                    T_c = S_c if self.win_i_minus_one else S_c + g_arr
+                    U = np.minimum(
+                        U,
+                        D_tilde_dec * self._D_i_ratio(i_det, t_cad_arr, T_req_s=T_c),
+                    )
+
+                if not rise_ramp and not det_ramp:
+                    V_c = np.maximum(m0, 0.0) * np.maximum(U ** 3 - lo ** 3, 0.0)
+                elif rise_ramp and det_ramp:
+                    C_r = D_max_arr * ise_c
+                    C_d = D_max_arr
+                    # min = rise below D̃_x, detection above; S_c = 0 or
+                    # η_c = 1 degenerate cases resolve via ±∞/0 crossings.
+                    gap_k = np.maximum(C_d ** k_sel - C_r ** k_sel, 0.0)
+                    S_safe = np.maximum(S_arr, 1e-300)
+                    D_x = (t_p_eff * gap_k / S_safe) ** (1.0 / k_sel)
+                    D_x = np.where(S_arr > 0, D_x, np.inf)
+                    V_c = self._ramp_volume(
+                        t_p_eff, k_sel, m0, C_r, t_p_eff,
+                        lo, np.minimum(U, D_x),
+                    ) + self._ramp_volume(
+                        t_p_eff, k_sel, m0, C_d, t_p_eff + S_arr,
+                        np.minimum(np.maximum(D_x, lo), U), U,
+                    )
+                elif rise_ramp:
+                    V_c = self._ramp_volume(
+                        t_p_eff, k_sel, m0, D_max_arr * ise_c, t_p_eff, lo, U)
+                else:  # detection ramp only
+                    V_c = self._ramp_volume(
+                        t_p_eff, k_sel, m0, D_max_arr, t_p_eff + S_arr, lo, U)
+
+                term = m_c * V_c
+                acc = term if acc is None else acc + term
+        return acc / t_cad_arr
+
     def rate_log10(
         self,
         i_det: int,
@@ -883,6 +1212,7 @@ class DetectionRateModel:
         rise_random_start: bool = True,
         fade_random_start: bool = True,
         return_components: bool = False,
+        _channel: tuple | None = None,
     ) -> np.ndarray | Tuple[np.ndarray, Dict[str, np.ndarray]]:
         """Compute log10 R_det for the given strategy grid.
 
@@ -943,9 +1273,42 @@ class DetectionRateModel:
         the q-integral (`rate_log10_full_integral`) internally; the component
         arrays (masks, q_i, D_i) keep their legacy rectangle definitions as an
         approximate classification.
+
+        Night schedule (N_v >= 2): the rate is the mixture of per-channel
+        rectangle evaluations, tex Eq. R_mixture (`_rate_log10_schedule`);
+        the private ``_channel = (T_req_s, fade_baseline_s, rise_gap_s)``
+        carries one channel's timescales through this body.  Component arrays
+        then describe the endpoint-convention classification channel.
         """
 
-        if self.win_from_peak and not return_components:
+        sched_multi = _channel is None and self._sched_multi
+        if sched_multi:
+            logR = self._rate_log10_schedule(
+                i_det, N_exp, t_cad_s,
+                q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+            )
+            if not return_components:
+                return logR
+            t_arr = np.asarray(t_cad_s, dtype=float)
+            S_A, _S_B, G, _mu, _rho = self.schedule.spans(i_det, t_arr)
+            T_cls = (self.schedule.T_first_pass(i_det, t_arr)
+                     if self.win_i_minus_one
+                     else self.schedule.T_certain(i_det, t_arr))
+            _, comps = self.rate_log10(
+                i_det, N_exp, t_cad_s,
+                q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+                return_components=True,
+                _channel=(T_cls, S_A, G),
+            )
+            return logR, comps
+
+        if self.win_from_peak and not return_components and _channel is None:
             return self.rate_log10_full_integral(
                 i_det, N_exp, t_cad_s,
                 q_min=q_min, D_min_cm=D_min_cm,
@@ -953,6 +1316,10 @@ class DetectionRateModel:
                 rise_random_start=rise_random_start,
                 fade_random_start=fade_random_start,
             )
+
+        _T_req = _fade_dt = _rise_gap = None
+        if _channel is not None:
+            _T_req, _fade_dt, _rise_gap = _channel
 
         N_exp = np.asarray(N_exp, dtype=float)
         t_cad_s = np.asarray(t_cad_s, dtype=float)
@@ -967,12 +1334,13 @@ class DetectionRateModel:
         fO = self.f_Omega(N_exp_b)
 
         qE = self.q_Euc(F_lim)
-        qi = self.q_i(i_det, t_cad_b)
+        qi = self.q_i(i_det, t_cad_b, T_req_s=_T_req)
 
         D_dec = self.D_dec(F_lim)
-        D_i = self.D_i(i_det, t_cad_b, F_lim)
+        D_i = self.D_i(i_det, t_cad_b, F_lim, T_req_s=_T_req)
 
-        masks = self.region_masks(i_det, N_exp_b, t_cad_b, include_unphysical=False)
+        masks = self.region_masks(
+            i_det, N_exp_b, t_cad_b, include_unphysical=False, T_req_s=_T_req)
 
         R_int = self.phys.R_int_yr
         theta_j = self.phys.theta_j_rad
@@ -993,7 +1361,8 @@ class DetectionRateModel:
 
         # Fading-rate q-caps.  +∞ at s_fade=0 (or i_det<2 in discrete mode) so the
         # np.minimum() below collapses to the original q_max and rates are unchanged.
-        q_s_II, q_s_III = self._q_s_fading_caps(i_det, t_cad_b, s_fade, s_mode)
+        q_s_II, q_s_III = self._q_s_fading_caps(
+            i_det, t_cad_b, s_fade, s_mode, baseline_s=_fade_dt)
 
         # Rise-rate boundaries at the raised limit η·F_lim (previous-visit
         # non-detection).  Bypass (s_rise ≤ 0) → +∞ caps and zero on-axis
@@ -1001,7 +1370,7 @@ class DetectionRateModel:
         # fade-only path (min/max with ∞/0 are exact no-ops on non-negatives).
         s_rise_on = float(s_rise) > 0.0
         if s_rise_on:
-            eta, ise = self._rise_eta(t_cad_b, s_rise)
+            eta, ise = self._rise_eta(t_cad_b, s_rise, gap_s=_rise_gap)
             with np.errstate(over="ignore", invalid="ignore"):
                 qE_r = self.q_Euc(eta * F_lim)
                 q_ri = self.q_Euc(eta * F_lim * (D_i / D_euc) ** 2)
@@ -1099,8 +1468,10 @@ class DetectionRateModel:
 
         # win_from_peak + return_components: the early return above was
         # skipped so the caller still gets the rectangle components, but the
-        # rate itself comes from the q-integral (see Notes).
-        if self.win_from_peak:
+        # rate itself comes from the q-integral (see Notes).  Channel calls
+        # (_channel set) skip the recompute — their rectangle logR is either
+        # the mixture term itself or discarded by the components recursion.
+        if self.win_from_peak and _channel is None:
             logR = self.rate_log10_full_integral(
                 i_det, N_exp, t_cad_s,
                 q_min=q_min, D_min_cm=D_min_cm,
@@ -1123,6 +1494,71 @@ class DetectionRateModel:
             **masks,
         }
         return logR, components
+
+    def _rate_log10_schedule(
+        self,
+        i_det: int,
+        N_exp: np.ndarray,
+        t_cad_s: np.ndarray,
+        *,
+        q_min: float = 0.0,
+        D_min_cm: float = 0.0,
+        s_fade: float = 0.0,
+        s_rise: float = 0.0,
+        s_mode: str = "discrete",
+        rise_random_start: bool = True,
+        fade_random_start: bool = True,
+    ) -> np.ndarray:
+        """Dominant-term night-schedule rate: mixture of rectangles.
+
+        Tex Eq. R_mixture: R = Σ_c w_c · R_rect(T_req,c) with phase weights
+        w_c = m_c·g_c/t_cad and per-channel required durations
+        T_req,c = S_c + g_c (legacy worst-case-wait convention) or S_c
+        (`win_i_minus_one`, zero wait) — the two exact brackets of the phase
+        ramp P_i(T).  Each R_rect is the unmodified A1–A7 machinery evaluated
+        with the channel's span (detection), fade baseline S_c and rise gap
+        g_c.  At N_v = 1 this is a single channel with T_req = i·t_cad — the
+        legacy model (that case never reaches here; see `_sched_multi`).
+        Under `win_from_peak` no closed rectangle exists and the exact
+        q-integral (which carries its own schedule branch) is used, exactly
+        mirroring the legacy fallback.
+        """
+        if self.win_from_peak:
+            return self.rate_log10_full_integral(
+                i_det, N_exp, t_cad_s,
+                q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+            )
+
+        N_arr = np.asarray(N_exp, dtype=float)
+        t_arr = np.asarray(t_cad_s, dtype=float)
+        shape = np.broadcast(N_arr, t_arr).shape
+        t_cad_b = np.broadcast_to(t_arr, shape)
+
+        R_acc = np.zeros(shape, dtype=float)
+        any_finite = np.zeros(shape, dtype=bool)
+        for m_c, g_c, S_c in self.schedule.channels(i_det, t_cad_b):
+            if m_c == 0:
+                continue
+            g_arr = np.asarray(g_c, dtype=float)
+            T_c = S_c if self.win_i_minus_one else S_c + g_arr
+            Z_c = self.rate_log10(
+                i_det, N_exp, t_cad_s,
+                q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+                _channel=(T_c, S_c, g_arr),
+            )
+            w_c = m_c * g_arr / t_cad_b
+            finite = np.isfinite(Z_c)
+            with np.errstate(over="ignore"):
+                R_acc = np.where(finite, R_acc + w_c * 10.0 ** Z_c, R_acc)
+            any_finite |= finite
+        R_acc = np.where(any_finite, R_acc, np.nan)
+        return _safe_log10(R_acc)
 
     def rate(
         self,
@@ -1216,9 +1652,14 @@ class DetectionRateModel:
 
         # Cadence distance scale: D̃_eff = min(D_i / D_Euc, 1).  Under
         # win_from_peak the cap is q-dependent (window measured from t_p) and
-        # is computed per q-chunk inside the loop instead.
+        # is computed per q-chunk inside the loop instead.  With the night
+        # schedule (N_v >= 2) the detection windows are per-channel and live
+        # inside the weighted D-volume; only the D_euc wall caps globally.
+        sched_multi  = self._sched_multi
         D_tilde_dec  = self.D_dec(F_lim) / D_Euc   # shape
-        if self.win_from_peak:
+        if sched_multi:
+            D_tilde_eff = 1.0
+        elif self.win_from_peak:
             D_tilde_eff = None
         else:
             D_i         = self.D_i(i_det, t_cad_b, F_lim)
@@ -1272,7 +1713,7 @@ class DetectionRateModel:
             # Effective detectable distance: min(D̃_max, D̃_eff).  Under
             # win_from_peak D̃_eff is the per-q window distance (one extra
             # (n_chunk, *shape) slab inside the chunk memory budget).
-            if self.win_from_peak:
+            if self.win_from_peak and not sched_multi:
                 D_tilde_eff_g = np.minimum(
                     self._D_eff_window_cm(q_g, i_det, t_cad_b, F_lim) / D_Euc, 1.0
                 )
@@ -1284,12 +1725,14 @@ class DetectionRateModel:
             # into the closed-form D-volume of each q-point (see
             # `_weighted_D_volume`).  With s_rise = 0 this is exactly
             # max(D_eff³ − D̃_min³, 0)·P_fade, and with s_fade = 0 too it is
-            # bit-identical to the pre-filter integrand.
+            # bit-identical to the pre-filter integrand.  The schedule branch
+            # (N_v >= 2) sums the per-channel windows internally.
             V_w = self._weighted_D_volume(
                 q_g, D_tilde_max, D_eff, D_min_norm,
                 i_det, t_cad_b, s_fade, s_rise, s_mode,
                 rise_random_start=rise_random_start,
                 fade_random_start=fade_random_start,
+                D_tilde_dec=D_tilde_dec if sched_multi else None,
             )
             q_keep = q_g >= q_min_f
             integrand = np.where(q_keep, q_g * V_w, 0.0)   # (n_chunk, *shape)
@@ -1474,8 +1917,13 @@ class DetectionRateModel:
         qt_g   = np.maximum(q_g - 1.0, 0.0)
 
         # Cadence distance cap: q-dependent under win_from_peak (window
-        # measured from t_p), constant D_i otherwise.
-        if self.win_from_peak:
+        # measured from t_p), constant D_i otherwise.  Night schedule
+        # (N_v >= 2): the detection windows live per channel inside the
+        # weights — only the D_euc wall caps globally.
+        sched_multi = self._sched_multi
+        if sched_multi:
+            D_tilde_eff = 1.0
+        elif self.win_from_peak:
             D_tilde_eff = np.minimum(
                 self._D_eff_window_cm(q_g, i_det, t_cad_b, F_lim) / D_Euc, 1.0
             )
@@ -1516,6 +1964,7 @@ class DetectionRateModel:
             i_det, t_cad_b, s_fade, s_rise, s_mode,
             rise_random_start=rise_random_start,
             fade_random_start=fade_random_start,
+            D_tilde_dec=D_tilde_dec if sched_multi else None,
         )
         w_q        = np.where(q_keep_mask, q_g * V_w, 0.0)                   # (N_q, *shape)
         cumsum_q   = np.cumsum(w_q, axis=0)
@@ -1547,7 +1996,61 @@ class DetectionRateModel:
         trap_c[-1] *= 0.5
         trap_c   = trap_c.reshape((-1,) + (1,) * ndim)                        # (N_q, 1, …)
 
-        if float(s_rise) <= 0.0:
+        if sched_multi:
+            # Night schedule: the weight depends on the level d through every
+            # channel's detection window (and rise ramp), so neither the
+            # survival trick nor the single-ramp hoisting below applies.
+            # Mirror `_joint_survival_schedule` with the level-independent
+            # per-channel quantities hoisted out of the level loop.
+            chan_data = []
+            for m_c, g_c, S_c in self.schedule.channels(i_det, t_cad_b):
+                if m_c == 0:
+                    continue
+                g_arr = np.asarray(g_c, dtype=float)
+                t_p_eff_c, t_fs_c, k_sel_c, ise_c = self._rise_fade_windows(
+                    q_g, i_det, t_cad_b, s_fade, s_rise, s_mode,
+                    fade_baseline_s=S_c, rise_gap_s=g_c)
+                if not fade_random_start:
+                    t_fs_c = np.where(t_fs_c >= t_p_eff_c, np.inf, -np.inf)
+                lim0 = np.minimum(g_arr, t_fs_c - t_p_eff_c)
+                if self.win_from_peak:
+                    D_i_c = None
+                else:
+                    T_c = S_c if self.win_i_minus_one else S_c + g_arr
+                    D_i_c = D_tilde_dec * self._D_i_ratio(
+                        i_det, t_cad_b, T_req_s=T_c)
+                chan_data.append((m_c, np.asarray(S_c, dtype=float),
+                                  t_p_eff_c, k_sel_c, ise_c, lim0, D_i_c))
+            s_rise_on_sched = float(s_rise) > 0.0
+            Q_sq_eff = np.empty((N_D,) + shape, dtype=float)
+            for j, d in enumerate(d_grid):
+                D_safe = np.maximum(d * D_eff_max[np.newaxis, ...], 1e-300)
+                acc = None
+                with np.errstate(invalid="ignore", over="ignore",
+                                 divide="ignore"):
+                    for (m_c, S_arr, t_p_eff_c, k_sel_c, ise_c, lim0,
+                         D_i_c) in chan_data:
+                        lim = lim0
+                        if s_rise_on_sched:
+                            t_lim = t_p_eff_c * (
+                                D_tilde_max * ise_c / D_safe) ** k_sel_c
+                            if not rise_random_start:
+                                t_lim = np.where(
+                                    t_lim >= t_p_eff_c, np.inf, -np.inf)
+                            lim = np.minimum(lim, t_lim - t_p_eff_c)
+                        if self.win_from_peak:
+                            T_det = t_p_eff_c * (
+                                (D_tilde_max / D_safe) ** k_sel_c - 1.0)
+                            lim = np.minimum(lim, T_det - S_arr)
+                        else:
+                            lim = np.where(D_safe <= D_i_c, lim, -np.inf)
+                        term = m_c * np.maximum(lim, 0.0)
+                        acc = term if acc is None else acc + term
+                w_joint = acc / t_cad_b
+                above_and_keep = (D_eff_norm >= d) & q_keep_mask
+                integrand_q = np.where(above_and_keep, q_g * w_joint, 0.0)
+                Q_sq_eff[j] = 2.0 * np.trapezoid(integrand_q, q_vals, axis=0)
+        elif float(s_rise) <= 0.0:
             # Rise cut off ⇒ w_joint = _fading_survival is independent of the
             # distance level d.  Then Q_sq_eff over all N_D levels is a survival
             # function: bin each q-point by the highest level it clears
@@ -1636,6 +2139,7 @@ class DetectionRateModel:
                                          rise-filter weights).
         prefactor  : float             — f_Omega · θ_j² · R_int.
         t_exp      : float (or NaN)    — exposure time; NaN if strategy is unphysical.
+        D_tilde_dec: float             — D̃_dec (for the schedule weights).
         """
         # Several model methods (F_lim_Jy, D_i, D_dec) use boolean array
         # indexing internally — wrap the scalar inputs in 1-element arrays.
@@ -1649,6 +2153,7 @@ class DetectionRateModel:
                 np.linspace(0.0, float(self.derived.q_nr), N_q + 1)[1:],
                 np.full(N_q, np.nan),
                 np.full(N_q, np.nan),
+                float("nan"),
                 float("nan"),
                 float("nan"),
             )
@@ -1674,8 +2179,11 @@ class DetectionRateModel:
         qt_g   = np.maximum(q_vals - 1.0, 0.0)
 
         # Cadence distance cap: q-dependent (N_q,) profile under win_from_peak,
-        # constant D_i otherwise.
-        if self.win_from_peak:
+        # constant D_i otherwise.  Night schedule (N_v >= 2): per-channel
+        # windows live inside the weights — only the D_euc wall caps here.
+        if self._sched_multi:
+            D_tilde_eff = 1.0
+        elif self.win_from_peak:
             D_tilde_eff = np.minimum(
                 self._D_eff_window_cm(q_vals, i_det, t_arr, F_lim_arr) / D_Euc, 1.0
             )
@@ -1699,7 +2207,7 @@ class DetectionRateModel:
         D_eff_norm = np.minimum(D_tilde_max, D_tilde_eff)
 
         prefactor = fO * (theta_j ** 2) * R_int
-        return q_vals, D_eff_norm, D_tilde_max, prefactor, t_exp
+        return q_vals, D_eff_norm, D_tilde_max, prefactor, t_exp, D_tilde_dec
 
     def dR_dq_full_integral(
         self,
@@ -1729,9 +2237,8 @@ class DetectionRateModel:
         with V_w the joint fade+rise weighted D-volume (see
         `_weighted_D_volume`; = max(D̃_eff³ − D̃_min³, 0)·P_fade at s_rise = 0).
         """
-        q_vals, D_eff_norm, D_tilde_max, prefactor, t_exp = self._D_eff_q_profile_scalar(
-            i_det, N_exp, t_cad_s, N_q
-        )
+        (q_vals, D_eff_norm, D_tilde_max, prefactor, t_exp,
+         D_tilde_dec) = self._D_eff_q_profile_scalar(i_det, N_exp, t_cad_s, N_q)
         if not np.isfinite(t_exp):
             return q_vals, np.full(N_q, np.nan)
 
@@ -1744,6 +2251,7 @@ class DetectionRateModel:
             i_det, np.array([float(t_cad_s)]), s_fade, s_rise, s_mode,
             rise_random_start=rise_random_start,
             fade_random_start=fade_random_start,
+            D_tilde_dec=D_tilde_dec if self._sched_multi else None,
         )
 
         dR_dq = np.where(keep, prefactor * q_vals * V_w, 0.0)
@@ -1785,9 +2293,8 @@ class DetectionRateModel:
         D_Euc = self.phys.D_euc_cm
         D_grid_cm = np.linspace(0.0, D_Euc, N_D)
 
-        q_vals, D_eff_norm, D_tilde_max, prefactor, t_exp = self._D_eff_q_profile_scalar(
-            i_det, N_exp, t_cad_s, N_q
-        )
+        (q_vals, D_eff_norm, D_tilde_max, prefactor, t_exp,
+         D_tilde_dec) = self._D_eff_q_profile_scalar(i_det, N_exp, t_cad_s, N_q)
         if not np.isfinite(t_exp):
             return D_grid_cm, np.full(N_D, np.nan)
 
@@ -1800,6 +2307,7 @@ class DetectionRateModel:
             i_det, np.array([float(t_cad_s)]), s_fade, s_rise, s_mode,
             rise_random_start=rise_random_start,
             fade_random_start=fade_random_start,
+            D_tilde_dec=D_tilde_dec if self._sched_multi else None,
         )                                                                # (N_D, N_q)
         q_keep_f = (q_vals >= float(q_min)).astype(float)                # (N_q,)
 
@@ -1833,11 +2341,14 @@ class DetectionRateModel:
 
         Under `win_from_peak` the analytic per-regime constants no longer
         describe the rate (D_eff is q-dependent), so the numerical path is
-        used regardless of `full_integral`.  The `*_random_start` flags apply
+        used regardless of `full_integral`.  The same forcing applies with
+        the night schedule active (N_v >= 2): the detected population is a
+        mixture of per-channel rectangle populations and the single-regime
+        closed forms do not describe it.  The `*_random_start` flags apply
         only on the numerical path (the analytic path is the hard-boundary
         dominant-term treatment already).
         """
-        if full_integral or self.win_from_peak:
+        if full_integral or self.win_from_peak or self._sched_multi:
             return self.compute_medians_numerical(
                 i_det, N_exp, t_cad_s, N_q,
                 q_min=q_min, D_min_cm=D_min_cm,
