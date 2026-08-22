@@ -48,6 +48,16 @@ BASE = {
 CONFIGS: dict[str, dict] = {
     # Boot state and the two master modes of the surface.
     "boot_nonoptical":  {},
+    # Non-optical variants: these stay FULL-payload parity through the
+    # schedule-cadence refactor (non-optical mode is untouched by design).
+    "nonopt_regimes":    {"color_regimes": True},
+    "nonopt_toh_approx": {"t_overhead_s": 15.0, "toh_approx": True},
+    "nonopt_toh_exact":  {"t_overhead_s": 15.0},
+    "nonopt_exact_cuts": {
+        "full_integral": True,
+        "s_fade": 0.3, "s_rise": 0.5, "qmin": 1.03, "Dmin_cm": 0.5 * GPC_TO_CM,
+        "win_iminus1": True, "win_tp": True, "fade_random_start": False,
+    },
     "optical_default":  {"optical_survey": True},
     "optical_regimes":  {"optical_survey": True, "color_regimes": True},
     # Overhead handling, both treatments.
