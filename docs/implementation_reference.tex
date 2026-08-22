@@ -76,7 +76,7 @@ $t_{\rm night}$ & 36000\,s\,($=10$\,hr) & (unchanged) & s & Astronomical night d
 \midrule
 \multicolumn{5}{l}{\textit{Survey strategy} (free variables)} \\
 $N_{\rm exp}$ & -- & -- & -- & Exposures per cadence cycle \\
-$t_{\rm cad}$ & -- & -- & s & Cadence interval \\
+$t_{\rm cad}$ & -- & -- & s & Cadence interval (optical mode: integer days only, Sec.~\ref{sec:optical_constraints}) \\
 $f_{\rm live}$ & 0.1\textsuperscript{\dag} & (unchanged) & -- & Fraction of $t_{\rm cad}$ spent observing (superseded in optical mode by $f_{\rm eff}$, Sec.~\ref{sec:schedule}) \\
 $f_{\rm eff}$ & 0.48\textsuperscript{\dag} & (introduced 2026-08) & -- & Usable fraction of the night window; $f_{\rm live}=f_{\rm eff}\,f_{\rm night}$ (Sec.~\ref{sec:schedule}) \\
 $N_v$ & 1 & (introduced 2026-08) & -- & Visits per visit-night (night schedule, Sec.~\ref{sec:schedule}); 1 = legacy model \\
@@ -218,7 +218,7 @@ f_{\rm live}/f_{\rm night} & t_{\rm cad} < 86400\,\text{s}\;\text{and optical-su
 \]
 with $f_{\rm night}=t_{\rm night}/86400$. In the continuous regime all exposures land inside the night window of length $t_{\rm night}$, so the within-night live fraction is $f_{\rm live}\cdot 86400/t_{\rm night}=f_{\rm live}/f_{\rm night}$. The total detection rate on the continuous branch is additionally multiplied by $f_{\rm night}$ to account for the nighttime accessibility of GRBs. The construction is physical only when $f_{\rm night}\ge f_{\rm live}$ (so $f_{\rm live,eff}\le 1$); historically this was enforced in the UI by a dynamic lower bound on the $t_{\rm night}$ slider.
 
-\medskip\noindent\textbf{Night-schedule generalisation.} With the two-timescale night schedule of Sec.~\ref{sec:schedule} both branches above become special cases of the single budget equation~\eqref{eq:budget_unified}, parameterised by the within-night usable fraction $f_{\rm eff}$ ($f_{\rm live}\equiv f_{\rm eff}\,f_{\rm night}$). The $f_{\rm live,eff}$ bookkeeping, the two separate model instances it required, and the $f_{\rm night}\ge f_{\rm live}$ constraint (now the trivial $f_{\rm eff}\le1$) are all retired.
+\medskip\noindent\textbf{Night-schedule generalisation.} With the two-timescale night schedule of Sec.~\ref{sec:schedule}, optical-survey mode is restricted to the discrete cadences $t_{\rm cad}=n\cdot86400$\,s and governed by the single budget equation~\eqref{eq:budget_unified}, parameterised by the within-night usable fraction $f_{\rm eff}$ ($f_{\rm live}\equiv f_{\rm eff}\,f_{\rm night}$). The continuous (sub-day) branch is removed as redundant --- it was exactly the degenerate schedule $(n{=}1,\ N_v{=}t_{\rm night}/\Delta t_v)$, now expressed properly through $N_v$ and $\Delta t_v$. The $f_{\rm live,eff}$ bookkeeping, the two separate model instances it required, the post-hoc $\times f_{\rm night}$ rate factor, and the $f_{\rm night}\ge f_{\rm live}$ constraint (now the trivial $f_{\rm eff}\le1$) are all retired. Non-optical mode keeps the original continuous-cadence model unchanged.
 
 A strategy point $(N_{\rm exp},t_{\rm cad})$ is in the valid region~A0 when $t_{\rm exp}>0$, $N_{\rm exp}\ge1$, and $N_{\rm exp}\le N_{\rm exp,max}\equiv\Omega_{\rm srv,max}/\Omega_{\rm exp}$.
 
@@ -650,28 +650,15 @@ which reduces to $D^2$ for uniform density and constant $Q$. The median is found
 
 % -------------------------------------------------------
 \section{Optical Cadence Constraints}
+\label{sec:optical_constraints}
 
-For optical surveys, only three cadence regions are physically valid:
-\begin{itemize}
-\item \textbf{Continuous} ($i\cdot t_{\rm cad}<t_{\rm night}$, equivalently $t_{\rm cad}<t_{\rm night}/i$): sub-night sampling.
-  The afterglow peak is required to occur within a single night.
-  Because only nighttime observations are possible, the effective sky coverage per day is reduced by the night fraction:
-  \[
-  \log_{10}R_{\rm eff} = \log_{10}R_{\rm night} + \log_{10}\!\left(\frac{t_{\rm night}}{1\;\text{day}}\right),
-  \]
-  where $R_{\rm night}$ is evaluated with the un-modified model (same $f_{\rm live}$), and the $\log_{10}(t_{\rm night}/\text{day})$ factor accounts for the fact that the survey can only operate during the nighttime fraction $f_{\rm night}=t_{\rm night}/86400$.
+For optical surveys, the only physically meaningful cadences are whole numbers of nights:
+\[
+t_{\rm cad}=n\times1\;\text{day},\qquad n\in\mathbb{Z}^+ ,
+\]
+enforced as a validity mask (not by rounding); all $t_{\rm cad}<1$\,day grid points are invalid in optical mode. Sub-day sampling is not a separate cadence regime --- revisiting a field within the night is exactly what the schedule parameters $(N_v,\Delta t_v)$ of Sec.~\ref{sec:schedule} describe, on the $n=1$ row. The schedule feasibility masks of Sec.~\ref{sec:sched_feasibility} apply in addition.
 
-\item \textbf{Gap} ($t_{\rm night}/i\le t_{\rm cad}<1\;\text{day}$): \emph{physically forbidden.}
-  At these cadences $i$ detections within one night are impossible, yet the cadence is sub-daily.
-  Grid points in this band are marked invalid (NaN).
-  \emph{Note:} for $i=1$ a single detection fits in any night, so the gap region does not apply and would extend only from $t_{\rm night}$ to 1\,day; this case is not yet fully handled in the current implementation.
-
-\item \textbf{Discrete} ($t_{\rm cad}=n\times1\;\text{day}$, $n\in\mathbb{Z}^+$): multi-night sampling.
-  Only integer multiples of 1\,day are permitted (enforced as a validity mask, not by rounding).
-  No night-fraction penalty applies.
-\end{itemize}
-
-\noindent Historically the continuous branch used a separate model instance (\texttt{model\_night}) with a rescaled live fraction, and the $\log_{10}(f_{\rm night})$ offset was applied post-hoc in log space. Under the night schedule of Sec.~\ref{sec:schedule} a single model instance covers both branches and the $f_{\rm night}$ factor is internal to the rate evaluation; the three validity bands above are unchanged ($N_v$ and $\Delta t_v$ act only on the discrete band).
+\paragraph{Historical note.} Earlier versions modelled a \emph{continuous} sub-night band ($t_{\rm cad}<t_{\rm night}/i$: all $i$ detections in one night, rate multiplied post-hoc by $f_{\rm night}$ via a second model instance \texttt{model\_night}) and declared the band $t_{\rm night}/i\le t_{\rm cad}<1$\,day a forbidden \emph{gap}. Both are subsumed: the continuous band was the degenerate schedule $(n{=}1,\ N_v{=}t_{\rm night}/\Delta t_v)$ with the $f_{\rm night}$ factor now \emph{derived} from the phase geometry (Sec.~\ref{sec:sched_Pi}, short-event limit), and the gap band corresponded to $N_v<i$ on the $n{=}1$ row, where $P_i$ correctly accumulates detections across consecutive nights instead of forbidding the strategy.
 
 % -------------------------------------------------------
 \section{Two-Timescale Night Schedule ($N_v$ visits per night)}
@@ -729,7 +716,7 @@ S_B\equiv(\mu{+}1)\,t_{\rm cad}-(N_v-\rho)\,\Delta t_v & k\ge N_v-\rho\quad(\rho
 
 The identification requirement $i$ is a property of the detection \emph{pipeline} (how many epochs it needs) and is now decoupled from the schedule's $N_v$ (how many epochs the survey offers per night): ZTF high-cadence is $(N_v=6,\ i=2)$, not $i=6$.
 
-Two regions keep their legacy treatment unchanged: sub-day cadences ($t_{\rm cad}<1$\,day, the continuous band --- nightly revisits at spacing $t_{\rm cad}$, i.e.\ the degenerate schedule) and non-optical mode (no night structure). $N_v$ and $\Delta t_v$ act only on the discrete band.
+The schedule replaces, rather than coexists with, sub-day cadences: in optical mode only $t_{\rm cad}=n\cdot86400$\,s is valid (Sec.~\ref{sec:optical_constraints}), since revisiting within the night is precisely what $(N_v,\Delta t_v)$ parameterise on the $n=1$ row. Non-optical mode (no night structure) keeps the original continuous-cadence model and ignores $(N_v,\Delta t_v)$.
 
 \subsection{Unified exposure-time budget and $f_{\rm eff}$}
 \label{sec:sched_budget}
@@ -748,11 +735,10 @@ t_{\rm exp}=\frac{f_{\rm eff}\,f_{\rm night}\,t_{\rm cad}}{N_{\rm exp}\,N_v}-t_{
 using $t_{\rm cad}=n\cdot86400$ and $f_{\rm night}\cdot86400=t_{\rm night}$. Per-period accounting ($n\,f_{\rm eff}\,t_{\rm night}$ of time for $N_{\rm exp}N_v$ exposures) gives the identical equation, so the staggering assumption adds no constraint beyond schedulability (Sec.~\ref{sec:sched_feasibility}).
 
 \paragraph{Exact correspondence with the legacy branches.}
-(i)~Discrete band, $N_v=1$: Eq.~\eqref{eq:budget_unified} is the legacy $t_{\rm exp}=f_{\rm live}t_{\rm cad}/N_{\rm exp}-t_{\rm OH}$ with $f_{\rm live}=f_{\rm eff}f_{\rm night}$.
-(ii)~Continuous band: nightly revisits at spacing $\Delta t=t_{\rm cad}<t_{\rm night}$ mean $N_v=t_{\rm night}/\Delta t$ visits per night with period one day, and Eq.~\eqref{eq:budget_unified} gives
+(i)~$N_v=1$: Eq.~\eqref{eq:budget_unified} is the legacy discrete-band budget $t_{\rm exp}=f_{\rm live}t_{\rm cad}/N_{\rm exp}-t_{\rm OH}$ with $f_{\rm live}=f_{\rm eff}f_{\rm night}$.
+(ii)~The legacy \emph{continuous} branch (nightly revisits at spacing $\Delta t<t_{\rm night}$) is the degenerate schedule $n=1$, $N_v=t_{\rm night}/\Delta t$: Eq.~\eqref{eq:budget_unified} gives
 $t_{\rm exp}=f_{\rm eff}f_{\rm night}\cdot86400/(N_{\rm exp}N_v)-t_{\rm OH}=f_{\rm eff}\,\Delta t/N_{\rm exp}-t_{\rm OH}$
---- exactly the legacy $(f_{\rm live}/f_{\rm night})\,t_{\rm cad}/N_{\rm exp}-t_{\rm OH}$.
-Both legacy model instances (\texttt{model\_day}, \texttt{model\_night}) therefore collapse into one model carrying $f_{\rm eff}$, and the legacy physicality constraint $f_{\rm night}\ge f_{\rm live}$ becomes the trivial $f_{\rm eff}\le1$ (the dynamic $t_{\rm night}$-slider floor is retired).
+--- exactly the legacy $(f_{\rm live}/f_{\rm night})\,t_{\rm cad}/N_{\rm exp}-t_{\rm OH}$. The schedule therefore \emph{subsumes} the continuous branch, which is removed (Sec.~\ref{sec:optical_constraints}); both legacy model instances (\texttt{model\_day}, \texttt{model\_night}) collapse into one model, and the legacy physicality constraint $f_{\rm night}\ge f_{\rm live}$ becomes the trivial $f_{\rm eff}\le1$ (the dynamic $t_{\rm night}$-slider floor is retired).
 
 \paragraph{ZTF consistency check.} Anchoring both ZTF modes to their real $30$\,s exposures ($+15$\,s overhead), Eq.~\eqref{eq:budget_unified} gives
 \begin{center}
@@ -881,11 +867,10 @@ t_{\rm exp}>0,\qquad
 \item Every visit inside the above-threshold window counts as a detection (as in the legacy criterion); band structure ($g$ vs $r$) is not modelled --- $i$ counts epochs of any band.
 \item Single power-law phase for the $t_+$ and $t_{\rm lim}$ inversions ($k=2/|\alpha_\Phi|$, phase-selected), exactly as in the legacy exact mode.
 \item The dominant mode keeps the per-channel \emph{endpoint} conventions (worst/zero wait); only the exact mode integrates the interior of the phase ramp. For ZTF-public-like schedules ($\rho=1$, $N_v=2$) the endpoints do not straddle the intra-night pair tightly, so exact mode is the reference there.
-\item The sub-day (continuous) band keeps its legacy treatment, including the legacy short rise gap; the physically interesting intra-night modes (e.g.\ ZTF high-cadence) are now expressed on the discrete band ($t_{\rm cad}=1$\,d, $N_v>1$) where the honest overnight rise gap applies.
-\item The gap band $t_{\rm night}/i\le t_{\rm cad}<1$\,day remains invalid (deferred: it is representable as the degenerate nightly schedule with $N_v<i$ and multi-night accumulation via $P_i$).
+\item In optical mode only integer-day cadences exist (Sec.~\ref{sec:optical_constraints}); intra-night sampling lives entirely in $(N_v,\Delta t_v)$, e.g.\ ZTF high-cadence is $(t_{\rm cad}{=}1\,\mathrm d,\ N_v{=}6)$, where the honest overnight rise gap applies. The old gap-band physics ($i$ detections not fitting one night) is expressible as $n{=}1$, $N_v<i$: $P_i$ accumulates detections across consecutive nights.
 \end{enumerate}
 
-\paragraph{Deferred refinements.} Gap-band modelling; optimiser search over $(N_v,\Delta t_v)$; ramp-averaged dominant mode (bracketed by the two conventions; exact mode has the ramp); closed-form mixture medians; per-band epochs.
+\paragraph{Deferred refinements.} Optimiser search over $(N_v,\Delta t_v)$; ramp-averaged dominant mode (bracketed by the two conventions; exact mode has the ramp); closed-form mixture medians; per-band epochs.
 
 \paragraph{Implementation reference.} \texttt{grb\_detect/schedule.py}: \texttt{NightSchedule($N_v$, dt\_v\_s, t\_night\_s)} (frozen), \texttt{spans()} (Eq.~\eqref{eq:spans}: $S_A$, $S_B$, $G$, multiplicities), \texttt{P\_detect()} (Eq.~\eqref{eq:P_i}), \texttt{joint\_weight()} (Eq.~\eqref{eq:W_schedule}), \texttt{feasible()} (Sec.~\ref{sec:sched_feasibility}). \texttt{DetectionRateModel(schedule=...)}; \texttt{make\_rate\_model(f\_eff, N\_v, dt\_v\_s, t\_night\_s, schedule\_on)}; a single model instance replaces \texttt{model\_day}/\texttt{model\_night} (budget Eq.~\eqref{eq:budget_unified} internal, $f_{\rm night}$ factor internal). Bridge parameter keys: \texttt{f\_eff}, \texttt{N\_v}, \texttt{dt\_v\_h} (legacy \texttt{f\_live} accepted as $f_{\rm eff}f_{\rm night}$). Tests: \texttt{tests/test\_schedule\_pi.py} (Eq.~\eqref{eq:P_i} vs brute force), \texttt{tests/test\_schedule\_model.py} ($N_v{=}1$ parity, bracket ordering, budget unification, cut baselines), \texttt{tests/test\_schedule\_parity.py} (pre-change payload snapshots).
 
