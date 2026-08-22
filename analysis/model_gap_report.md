@@ -431,3 +431,74 @@ and largely removes the model's spurious low-vs-high-cadence median split, at th
 a joint (σ, ε_B) refit of the rates; (iii) the residual ~25–35% shortfall on the
 public-survey mode and the unreachable z = 2.9 event are honest, quantified limits of
 Euclidean compression with a hard wall — to be stated, not fixed.
+
+## Two-timescale night-schedule model (2026-08-19)
+
+> Everything above this section was computed with the **pre-schedule** model (one
+> uniform cadence; ZTF public forced onto T_req = i·t_cad = 4 d, high-cadence onto the
+> sub-night continuous branch with i conflated to 6). This section re-runs the study on
+> the `schedule-cadence` branch, where the survey is a two-timescale night schedule
+> (t_cad = n·day, N_v visits/night at spacing Δt_v; exact detection probability P_i(T);
+> per-channel fade/rise baselines) and the pipeline requirement i is decoupled from the
+> visits offered. Formalism + derivations: docs/implementation_reference.tex,
+> Sec. "Two-Timescale Night Schedule". Run saved in `validation_output.txt` (2026-08-19).
+
+### Encoding change
+
+| mode | pre-schedule encoding | schedule encoding |
+|---|---|---|
+| A public | i=2, one visit / 2 nights, f_live=0.08 (f_eff 0.19) | i=2, **2 visits/night** every 2 nights @ 2 h, f_eff 0.40 |
+| B high-cad | i=6 (conflated), Δt=t_night/6 continuous, f_live=0.17 (f_eff 0.41) | **i=2**, 6 visits/night nightly @ 1.5 h, f_eff 0.40 |
+
+Both modes now share f_eff ≈ 0.40 (≈ ZTF's public time share) — the cross-mode
+consistency check the f_eff parameterization was designed to expose; the old ×2.1
+f_live split was the public mode's unmodelled second visit.
+
+### Results (final config: exact mode + from-peak window + id cuts, ε_cov = 0.35)
+
+| quantity | A pre-sched | A schedule | A observed | B pre-sched | B schedule | B observed |
+|---|---|---|---|---|---|---|
+| rate ×ε_cov [/yr] | 4.7 | **14.5** | 2.0 | 5.0 | **13.3** | 2.5 |
+| q_med | 1.17 | 1.02 | ≲1.5 | 1.14 | 1.05 | ≲1.5 |
+| D_med [Gpc] | 1.00 | **1.90** | 3.67 | 1.82 | **2.92** | 3.88 |
+| D_90 [Gpc] | 1.41 | **3.91** | — | 2.67 | **4.25** | — |
+
+(The pre-schedule A row differs slightly from the 2026-08-14 tables because it is
+re-evaluated through the new engine at the same encoding — bit-parity holds only at
+identical settings; the old bracket [0.99, 4.7] quoted its two window conventions.)
+
+### Interpretation
+
+1. **The distance gap closes by half exactly as hypothesized.** Crediting the public
+   mode's intra-night pair (span ~2 h at 96% phase weight instead of a 4-day window)
+   moves D_med ×1.9 and D_90 ×2.8 toward the observations, and the model's spurious
+   low-vs-high-cadence median split narrows ×2.5 → ×1.54 (observed ×1.06). q_med ≈ 1.0
+   and the on-axis-consistent fraction (88–89%) now sit inside the observed targets.
+2. **The rates overshoot ×5–7 — the same structural coupling, seen from the other
+   side.** In every regime R ∝ H³ while D_med ≈ 0.79·H (see "Why no single-luminosity
+   parameter can fix it" above): the pre-schedule model matched the rates *because* its
+   horizon was artificially short. Removing that modeling error exposes the underlying
+   single-luminosity deficiency: no calibration can now match both the rates and the
+   medians without a brightness distribution. This is precisely the deferred F_dec
+   spread prescription — the smoke test above showed a σ ≈ 1.0–1.4 mag lognormal moves
+   medians up at ~fixed detected-median luminosity while a joint (σ, median-brightness)
+   refit re-anchors the rates. Not applied (assessment-only decision stands).
+3. **The old [i, i−1] window bracket collapses to a point.** In exact mode the schedule
+   phase ramp P_i(T) is integrated exactly, so the wait-convention uncertainty that the
+   two window toggles used to bracket is *resolved*, not bracketed — the waterfall's
+   bracket rows now coincide by construction. The remaining schedule knobs are weak at
+   the final config (Δt_v 0.5→5 h: ×0.95–0.99; N_v 2→1 at the same budget: ×0.68).
+4. **The Ho §4.1 strict benchmark is unchanged (13.4/yr vs 0.52 expected, ×26).** Its
+   overshoot was never a cadence-encoding problem: it is dominated by the identification
+   depth margin and, again, the missing luminosity function (their MC draws from an
+   observed flux distribution; the model puts every burst at one luminosity).
+
+### Bottom line (updated)
+
+The night-schedule model removes the last *encoding* error in the survey description:
+distances, angles and the A:B split all move toward the data, with the exact P_i(T)
+replacing both the crude ×f_night factor and the window-convention bracket. What
+remains — rates ×5–7 high at horizons that are still ~×1.3–1.9 short — is now cleanly
+attributable to the single-luminosity population, quantified above; the σ ≈ 1.2–1.5 mag
+F_dec spread with a joint rate refit remains the one identified fix, deferred pending
+approval.

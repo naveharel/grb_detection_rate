@@ -1,4 +1,4 @@
-==============================================================================
+﻿==============================================================================
 CALIBRATION ECHO (see model_gap_report.md for motivation)
 ==============================================================================
   old (eps_B=1e-2, D=5.28)       nuLnu(1d) = 2.29e+45 erg/s   F_dec = 264 mJy   on-axis all-sky = 802/yr
@@ -6,26 +6,37 @@ CALIBRATION ECHO (see model_gap_report.md for motivation)
   targets: median detected nuLnu(1d) = 1.9e44 erg/s (Ho+22 Tab.5); on-axis all-sky = 511/yr (Ho+22 S4.1)
 
 ==============================================================================
+SCHEDULE vs PRE-SCHEDULE ENCODING (new physics defaults, final config: windows + id cuts)
+==============================================================================
+   mode / encoding                                 R_raw  x eps_cov   q_med   D_med    D_90
+   A pre-schedule (i=2, N_v=1, f_eff=0.19)          13.4        4.7    1.17   0.996    1.41
+   A schedule (i=2, N_v=2, f_eff=0.40)              41.3       14.5    1.02     1.9    3.91
+                                                                      observed ≈ 2.0/yr; obs D_C med ≈ 3.67 Gpc
+   B pre-schedule (i=6, N_v=6, f_eff=0.41)          14.3       5.01    1.14    1.82    2.67
+   B schedule (i=2, N_v=6, f_eff=0.40)              37.9       13.3    1.05    2.92    4.25
+                                                                      observed ≈ 2.5/yr; obs D_C med ≈ 3.88 Gpc
+
+==============================================================================
 WATERFALL: predicted R_det [/yr] per ZTF mode (full-integral; eps_cov applied only in the last rows)
 ==============================================================================
 
--- Mode A (public 2-night)  (observed ≈ 2.0/yr) --
+-- Mode A (public 2/night every 2 nights)  (observed ≈ 2.0/yr) --
    step                                   R_raw   x eps_cov   q_med   D_med
-   old defaults, legacy criterion      1.57e+03         550    1.84    3.73
-   recalibrated defaults                   6.26        2.19    1.84   0.591
-   + window from peak (t_on≈t_p)            3.2        1.12    1.34   0.529
-   + id cuts s_fade=.3 s_rise=.5           2.82       0.988     1.2    0.56
-   + (i−1)·t_cad  [optimistic]             13.4         4.7     1.2    1.01
-   window bracket [i, i−1] (w/ cuts) [2.82, 13.4]   geo-mean = 6.16   x eps_cov = [0.99, 4.7]
+   old physics, conservative window    1.89e+03         662    1.77    3.96
+   recalibrated defaults                   35.9        12.6    1.56    1.18
+   + window from peak (t_on≈t_p)           93.3        32.7    1.13    2.05
+   + id cuts s_fade=.3 s_rise=.5           41.3        14.5    0.99    1.91
+   + optimistic wait [T_req=S_c]           41.3        14.5    0.99    1.91
+   wait bracket [cons, opt] (w/ cuts)[41.3, 41.3]   geo-mean = 41.3   x eps_cov = [14, 14]
 
--- Mode B (high-cad 6/night)  (observed ≈ 2.5/yr) --
+-- Mode B (high-cad 6/night nightly)  (observed ≈ 2.5/yr) --
    step                                   R_raw   x eps_cov   q_med   D_med
-   old defaults, legacy criterion           131          46    1.77    3.96
-   recalibrated defaults                   13.5        4.73     1.2    2.41
-   + window from peak (t_on≈t_p)           10.8        3.77    1.06    2.28
-   + id cuts s_fade=.3 s_rise=.5           10.8        3.76    1.06    2.28
-   + (i−1)·t_cad  [optimistic]             13.2        4.62    1.06    2.48
-   window bracket [i, i−1] (w/ cuts) [10.8, 13.2]   geo-mean = 11.9   x eps_cov = [3.8, 4.6]
+   old physics, conservative window         315         110    1.77    3.96
+   recalibrated defaults                   31.5          11     1.2    2.37
+   + window from peak (t_on≈t_p)           41.5        14.5    1.06    2.87
+   + id cuts s_fade=.3 s_rise=.5           37.9        13.3    1.06    2.91
+   + optimistic wait [T_req=S_c]           37.9        13.3    1.06    2.91
+   wait bracket [cons, opt] (w/ cuts)[37.9, 37.9]   geo-mean = 37.9   x eps_cov = [13, 13]
 
 ==============================================================================
 ANATOMY OF THE OLD APPARENT MATCH (thesis §3.3: k=10, 3,000 deg²)
@@ -36,28 +47,32 @@ ANATOMY OF THE OLD APPARENT MATCH (thesis §3.3: k=10, 3,000 deg²)
 ==============================================================================
 DETECTED-POPULATION DISTRIBUTIONS (final config: new defaults + windows + id cuts)
 ==============================================================================
-  Mode A (public 2-night):
-    q_med = 1.17   strictly on-axis (q < q_dec) = 39%   on-axis-consistent (q < 1.5) = 78%
-    D_med = 1.00 Gpc   D_90 = 1.41 Gpc   (D_Euc = 4.55 Gpc)
-  Mode B (high-cad 6/night):
-    q_med = 1.06   strictly on-axis (q < q_dec) = 47%   on-axis-consistent (q < 1.5) = 85%
-    D_med = 2.47 Gpc   D_90 = 3.28 Gpc   (D_Euc = 4.55 Gpc)
-  targets: q_med <~ 1.5, on-axis fraction >= 60%; observed z up to 2.9 — the hard D_Euc wall is a tolerated limitation.
+  Mode A (public 2/night every 2 nights):
+    q_med = 1.02   strictly on-axis (q < q_dec) = 51%   on-axis-consistent (q < 1.5) = 88%
+    D_med = 1.90 Gpc   D_90 = 3.91 Gpc   (D_Euc = 4.55 Gpc)
+  Mode B (high-cad 6/night nightly):
+    q_med = 1.05   strictly on-axis (q < q_dec) = 49%   on-axis-consistent (q < 1.5) = 89%
+    D_med = 2.92 Gpc   D_90 = 4.25 Gpc   (D_Euc = 4.55 Gpc)
+  targets: q_med <~ 1.5, on-axis fraction >= 60%; observed group medians D_C ≈ 3.67 (low-cad) / 3.88 (high-cad) Gpc, up to 6.26; the hard D_Euc wall is a tolerated limitation.
 
 ==============================================================================
 HO ET AL. §4.1 STRICT BENCHMARK (their MC: λ = 1.04 per 2 yr)
 ==============================================================================
-  model (i=2 intranight, 1236 deg² effective, m_id=20): R = 13.7/yr   vs Ho MC expectation 0.52/yr
+  model (i=2, N_v=3 nightly, 1236 deg² effective, m_id=20): R = 13.4/yr   vs Ho MC expectation 0.52/yr
 
 ==============================================================================
 SENSITIVITY (Mode A final config; one-at-a-time)
 ==============================================================================
-  baseline: R_raw = 13.4/yr  (x eps_cov 0.35 = 4.7/yr)
-  eps_B −0.5 dex (10^-4.5)   R_raw =     3.38/yr   (x0.25)
-  eps_B +0.5 dex (10^-3.5)   R_raw =     53.5/yr   (x3.98)
-  s_rise = 1.0               R_raw =     5.68/yr   (x0.42)
-  s_rise = 0.3               R_raw =       17/yr   (x1.26)
-  no id cuts                 R_raw =     21.3/yr   (x1.58)
-  i = 3                      R_raw =     2.15/yr   (x0.16)
+  baseline: R_raw = 41.3/yr  (x eps_cov 0.35 = 14.5/yr)
+  eps_B −0.5 dex (10^-4.5)   R_raw =     12.4/yr   (x0.30)
+  eps_B +0.5 dex (10^-3.5)   R_raw =      117/yr   (x2.84)
+  s_rise = 1.0               R_raw =     15.5/yr   (x0.38)
+  s_rise = 0.3               R_raw =     61.2/yr   (x1.48)
+  no id cuts                 R_raw =     93.3/yr   (x2.26)
+  i = 3                      R_raw =     14.1/yr   (x0.34)
+  dt_v = 0.5 h               R_raw =     39.4/yr   (x0.95)
+  dt_v = 5 h                 R_raw =     40.7/yr   (x0.99)
+  N_v = 1 (same budget)      R_raw =       28/yr   (x0.68)
+  conservative wait          R_raw =     41.3/yr   (x1.00)
   eps_cov in [0.2, 0.5] scales every row linearly.
 
