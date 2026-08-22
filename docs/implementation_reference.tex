@@ -874,4 +874,58 @@ t_{\rm exp}>0,\qquad
 
 \paragraph{Implementation reference.} \texttt{grb\_detect/schedule.py}: \texttt{NightSchedule($N_v$, dt\_v\_s, t\_night\_s)} (frozen), \texttt{spans()} (Eq.~\eqref{eq:spans}: $S_A$, $S_B$, $G$, multiplicities), \texttt{P\_detect()} (Eq.~\eqref{eq:P_i}), \texttt{joint\_weight()} (Eq.~\eqref{eq:W_schedule}), \texttt{feasible()} (Sec.~\ref{sec:sched_feasibility}). \texttt{DetectionRateModel(schedule=...)}; \texttt{make\_rate\_model(f\_eff, N\_v, dt\_v\_s, t\_night\_s, schedule\_on)}; a single model instance replaces \texttt{model\_day}/\texttt{model\_night} (budget Eq.~\eqref{eq:budget_unified} internal, $f_{\rm night}$ factor internal). Bridge parameter keys: \texttt{f\_eff}, \texttt{N\_v}, \texttt{dt\_v\_h} (legacy \texttt{f\_live} accepted as $f_{\rm eff}f_{\rm night}$). Tests: \texttt{tests/test\_schedule\_pi.py} (Eq.~\eqref{eq:P_i} vs brute force), \texttt{tests/test\_schedule\_model.py} ($N_v{=}1$ parity, bracket ordering, budget unification, cut baselines), \texttt{tests/test\_schedule\_parity.py} (pre-change payload snapshots).
 
+% -------------------------------------------------------
+\section{Schedule Model vs.\ Pre-Schedule Model vs.\ Observations}
+\label{sec:sched_comparison}
+
+This section compares the night-schedule model of Sec.~\ref{sec:schedule} against both the pre-schedule (one-timescale) model and the ZTF observations, at the two real observing modes.  Numbers are from \texttt{analysis/ztf\_validation.py} (run of 2026-08-19, saved in \texttt{analysis/validation\_output.txt}); the observational targets and the distance-yardstick decision (comoving $D_C$ as the primary measure for a rate-calibrated Euclidean model) are documented in \texttt{analysis/model\_gap\_report.md}.
+
+\subsection{Setup}
+
+Both encodings are evaluated with the current calibrated physics ($\varepsilon_B=10^{-4}$, $D_{\rm euc}=4.55$\,Gpc, $p=2.2$), in exact rate mode with the from-peak window, the identification cuts $s_{\rm fade}=0.3$, $s_{\rm rise}=0.5$\,mag/day, and the external coverage factor $\varepsilon_{\rm cov}=0.35$ (weather, moon, Galactic plane, reference availability — a data-quality loss, distinct from the time budget $f_{\rm eff}$):
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{lll}
+\toprule
+mode & pre-schedule encoding & schedule encoding \\
+\midrule
+A (public) & $i{=}2$, 1 visit / 2 nights, $f_{\rm eff}{=}0.19$ & $i{=}2$, \textbf{2 visits/night} @ 2\,h, every 2 nights, $f_{\rm eff}{=}0.40$ \\
+B (high-cad) & $i{=}6$ (conflated), $\Delta t{=}t_{\rm night}/6$ cont. & \textbf{$i{=}2$}, 6 visits/night @ 1.5\,h, nightly, $f_{\rm eff}{=}0.40$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Results}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{lcccccc}
+\toprule
+ & \multicolumn{3}{c}{Mode A (public)} & \multicolumn{3}{c}{Mode B (high-cadence)} \\
+ & pre-sched & schedule & observed & pre-sched & schedule & observed \\
+\midrule
+rate $\times\,\varepsilon_{\rm cov}$ [yr$^{-1}$] & 4.7 & 14.5 & 2.0 & 5.0 & 13.3 & 2.5 \\
+$q_{\rm med}$ & 1.17 & 1.02 & $\lesssim 1.5$ & 1.14 & 1.05 & $\lesssim 1.5$ \\
+on-axis-consistent ($q<1.5$) & 78\% & 88\% & $\ge 60\%$ & 85\% & 89\% & $\ge 60\%$ \\
+$D_{\rm med}$ [Gpc, $D_C$] & 1.00 & 1.90 & 3.67 & 1.82 & 2.92 & 3.88 \\
+$D_{90}$ [Gpc] & 1.41 & 3.91 & --- & 2.67 & 4.25 & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Findings}
+
+\paragraph{(i) The distance gap closes by half, exactly through the hypothesized mechanism.}  Crediting the public mode's intra-night pair — a required span of $S_A=\Delta t_v\approx 2$\,h at $G/t_{\rm cad}\approx 96\%$ phase weight, instead of the pre-schedule $T_{\rm req}=i\,t_{\rm cad}\approx 4$\,d — moves the cadence horizon out and with it $D_{\rm med}$ ($\times 1.9$) and $D_{90}$ ($\times 2.8$).  The model's spurious low-vs-high-cadence median split narrows from $\times 2.5$ to $\times 1.54$ (observed: $\times 1.06$), and the angular statistics ($q_{\rm med}\approx 1.0$, 88--89\% on-axis-consistent) now sit inside the observed targets.
+
+\paragraph{(ii) The rates overshoot ($\times 5$--$7$) --- the same structural coupling seen from the other side.}  In every regime $R\propto H^3$ while $D_{\rm med}\approx 0.79\,H$ ($H$ the binding horizon), so a model with a single burst luminosity cannot move the median outward without the rate following.  The pre-schedule encoding matched the observed rates \emph{because} its horizon was artificially short — an error cancellation, not an agreement.  Removing the encoding error exposes the underlying deficiency: no calibration of the single-luminosity model can now match rates and medians simultaneously.  This is precisely the deferred luminosity-function prescription of \texttt{analysis/model\_gap\_report.md}: a lognormal $F_{\rm dec}$ spread ($\sigma\approx 1.2$--$1.5$\,mag, literature-anchored) with a joint ($\sigma$, median-brightness) refit of the rates.  Per the standing assessment-only decision, it is \emph{not} applied here.
+
+\paragraph{(iii) The window-convention bracket collapses.}  The pre-schedule model bracketed the detection criterion between $T_{\rm req}=i\,t_{\rm cad}$ and $(i{-}1)\,t_{\rm cad}$ (a factor ~[3, 13] in Mode A's rate across the toggles).  In exact mode the schedule integrates the phase ramp $P_i(T)$ exactly, so the two conventions now coincide by construction and the associated modeling uncertainty is resolved, not bracketed.
+
+\paragraph{(iv) Sensitivities at the final configuration (Mode A).}  The schedule knobs are weak once the ramp is exact: $\Delta t_v\in[0.5, 5]$\,h changes the rate by $<5\%$; $N_v{=}2\to 1$ at the same budget is $\times 0.68$.  The restored overnight rise gap gives the identification cuts real teeth ($s_{\rm rise}=1.0$: $\times 0.38$ --- the pre-schedule sub-day encoding had $\eta\to 1$); $\varepsilon_B\pm 0.5$\,dex spans $\times 0.30$--$2.8$.  The Ho et al.\ \S4.1 strict intranight benchmark is unchanged ($13.4$/yr vs.\ their MC $0.52$/yr): its overshoot was never a cadence-encoding problem and carries the same luminosity-function signature.
+
+\paragraph{Bottom line.}  The schedule model is \emph{better} on every observable it was built to fix — distances, viewing angles, and the cross-mode consistency ($f_{\rm eff}\approx 0.40$ for both modes, vs.\ the old $\times 2.1$ split in $f_{\rm live}$) — and \emph{worse} on the raw rate normalization, in a way that is now cleanly attributable: the residual pattern (rates $\times 5$--$7$ high at horizons still $\times 1.3$--$1.9$ short) is the quantified signature of the single-luminosity population, with an identified, deferred fix.  No parameter recalibration is applied without approval.
+
 \end{document}
