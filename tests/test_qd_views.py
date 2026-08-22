@@ -154,7 +154,7 @@ def test_qdview_cumulative_endpoint_matches_rate(full_on):
     assert payload.get("error") is None
 
     state = bridge._build_models(params)
-    model = state["model_day"]  # default_params has optical=False
+    model = state["model"]  # default_params has optical=False
     rate_fn = (model.rate_log10_full_integral if full_on else model.rate_log10)
 
     # Rq_cum at q=0: rate filtered to q≥0, D≥D_sidebar

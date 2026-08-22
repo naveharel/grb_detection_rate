@@ -9,30 +9,24 @@ Definitions
   Covered solid angle: Omega_srv = N_exp * Omega_exp, with hard cap
   Omega_srv <= Omega_srv,max.
 
-- t_cad: cadence, time between consecutive visits to the same field.
+- t_cad: cadence. In optical-survey mode this is the inter-night revisit
+  period t_cad = n · 86400 s (integer nights); intra-night revisits are
+  described by the night schedule (N_v visits at spacing dt_v — see
+  grb_detect/schedule.py and docs/implementation_reference.tex,
+  Sec. "Two-Timescale Night Schedule").
 
-Given live fraction f_live and overhead per exposure t_overhead, the exposure
-time per visit is:
+Given wall-clock live fraction f_live and overhead per exposure t_overhead,
+the exposure time per visit is:
 
-    t_exp = f_live_eff * t_cad / N_exp - t_overhead.
+    t_exp = f_live * t_cad / (N_exp * N_v) - t_overhead,
 
-Here f_live_eff depends on the cadence regime:
-
-- Discrete (per-day) cadences  t_cad = n · 86400 s:
-    f_live_eff = f_live  — f_live is the fraction of wall-clock time the
-    telescope observes.
-
-- Continuous (sub-night) cadences  t_cad < 86400 s, optical-survey mode:
-    f_live_eff = f_live / f_night,  where f_night = t_night / 86400.
-    All exposures land inside the night window of length t_night, so the
-    within-night live fraction is (f_live · 86400) / t_night = f_live / f_night.
-    The total detection rate on this branch is additionally multiplied by
-    f_night to account for the nighttime accessibility of GRBs.
-
-The rescaling is applied implicitly: in standalone_bridge.py the night-mode
-DetectionRateModel is constructed with instrument.f_live = f_live / f_night,
-so this function (and the rest of the survey/detection code) reads the
-already-correct value via instrument.f_live and needs no branching.
+with N_v = 1 when no schedule is attached (non-optical mode, or a bare
+model).  In optical mode the bridge derives f_live = f_eff * f_night from
+the user-facing f_eff (usable fraction of the night window) and
+f_night = t_night / 86400; the budget above is Eq. (budget_unified) of the
+tex.  The schedule-aware division lives in DetectionRateModel.t_exp_s —
+the scalar helper below keeps the N_v = 1 form and is retained for
+non-schedule callers.
 
 The limiting flux is modeled as:
 

@@ -5,11 +5,13 @@ D_med). Plotly renders the raw ``%{customdata[i]}`` token literally when a
 referenced cell is null, so any cell that is *drawn* (finite plotted rate) but
 has NaN/None extras shows template garbage in the app.
 
-Root cause of the historical bug: after model_night gained
-``instrument.f_live = f_live / f_night``, ``compute_surface`` and
-``_eval_point`` kept computing the extras with model_day on sub-day optical
-cells — where model_day's ``t_exp = f_live * t_cad / N_exp - t_OH`` can be
-<= 0 while model_night's rate is finite, yielding NaN medians on drawn cells.
+Root cause of the historical bug (pre-schedule two-model era): the extras
+were computed with a differently-parameterized model than the rate, so cells
+whose rate was finite could carry NaN medians.  The single-model schedule
+architecture removes the dispatch, but the failure class survives wherever
+the budget can go negative on drawn-adjacent cells — e.g. at N_v > 1 the
+budget t_exp = f_live·t_cad/(N_exp·N_v) − t_OH turns negative at N_v-times
+smaller N_exp, so the invariant is exercised with both N_v = 1 and N_v = 6.
 
 These tests pin the invariant at three depths (engine grid, single-point
 evaluator, full JSON payload) so any future change that reintroduces a
@@ -85,28 +87,29 @@ def state() -> dict:
 
 
 @pytest.mark.parametrize(
-    "q_min,D_min_cm",
-    [(0.0, 0.0), (1.0, 1.0 * GPC_TO_CM)],
-    ids=["no-filters", "qmin-dmin-filters"],
+    "q_min,D_min_cm,N_v,dt_v_h",
+    [
+        (0.0, 0.0, 1, 2.0),
+        (1.0, 1.0 * GPC_TO_CM, 1, 2.0),
+        (0.0, 0.0, 6, 1.5),
+    ],
+    ids=["no-filters", "qmin-dmin-filters", "schedule-Nv6"],
 )
-def test_surface_drawn_cells_have_finite_extras(state, q_min, D_min_cm):
+def test_surface_drawn_cells_have_finite_extras(q_min, D_min_cm, N_v, dt_v_h):
     """Every cell with a finite plotted rate must have finite t_exp / q_med /
     D_med — the exact property whose violation renders literal hover
-    templates. Covers both cadence branches (model_night sub-day vs model_day
-    multi-day) in optical-survey mode with t_OH > 0."""
+    templates. Exercised with t_OH > 0 at N_v = 1 and N_v = 6 (the schedule
+    divides the budget, moving the t_exp <= 0 boundary to smaller N_exp)."""
+    st = sb._build_models(_optical_params(N_v=N_v, dt_v_h=dt_v_h))
     X, Y_s, Z_plot, Z_raw, rid, t_exp_g, q_med_g, D_med_Gpc_g = compute_surface(
-        state["model_day"], state["model_night"], state["i_det"],
+        st["model"], st["i_det"],
         optical_survey=True, color_regimes=False,
-        t_night_s=state["t_night_s"],
+        t_night_s=st["t_night_s"],
         nx=60, ny=90,
         q_min=q_min, D_min_cm=D_min_cm,
     )
     drawn = np.isfinite(Z_plot)
     assert drawn.any(), "no drawn cells — fixture params no longer produce a surface"
-
-    # The historical bug lived on the sub-day branch: make sure it is sampled.
-    subday_drawn = drawn & (Y_s < DAY_S)
-    assert subday_drawn.any(), "no drawn sub-day cells — invariant not exercised"
 
     for name, arr in [("t_exp", t_exp_g), ("q_med", q_med_g), ("D_med_Gpc", D_med_Gpc_g)]:
         bad = drawn & ~np.isfinite(arr)
@@ -118,42 +121,41 @@ def test_surface_drawn_cells_have_finite_extras(state, q_min, D_min_cm):
 
 
 # --------------------------------------------------------------------------- #
-# 2. Point evaluator: screenshot repro (sub-day optical, t_OH > 0)            #
+# 2. Point evaluator: budget boundary under the N_v > 1 schedule              #
 # --------------------------------------------------------------------------- #
 
 
-def test_eval_point_subday_extras_match_night_model(state):
-    """Repro of the reported point (N_exp ~ 10, t_cad = 0.174 h): finite rate
-    must come with finite extras, and t_exp must follow the *night* formula
-    (f_live/f_night) * t_cad / N_exp - t_OH."""
-    N_exp, t_cad_s = 10.0, 0.174 * 3600.0
+def test_eval_point_schedule_budget_boundary():
+    """At N_v = 6 the budget t_exp = f_live·t_cad/(N_exp·N_v) − t_OH turns
+    negative at 6× smaller N_exp: a point valid at N_v = 1 must return the
+    all-NaN tuple at N_v = 6 (no finite rate with NaN extras), and a valid
+    schedule point's t_exp must follow the schedule formula."""
+    st1 = sb._build_models(_optical_params())
+    st6 = sb._build_models(_optical_params(N_v=6, dt_v_h=1.5))
+    t_cad_s = 2.0 * DAY_S
 
-    # Precondition that made the old code fail: model_day's t_exp is invalid
-    # (t_exp_s returns NaN where f_live*t_cad/N_exp - t_OH <= 0) while the
-    # sub-day rate (model_night) is finite.
-    t_exp_day = float(state["model_day"].t_exp_s(np.array([N_exp]), np.array([t_cad_s]))[0])
-    assert not math.isfinite(t_exp_day), (
-        "fixture no longer reproduces the failure precondition "
-        f"(model_day t_exp = {t_exp_day:.3g} s is valid) — adjust t_overhead_s/f_live"
-    )
+    # Pick N_exp so that the N_v=1 budget is positive but the N_v=6 one is not.
+    f_live, t_oh = st1["f_live"], st1["t_overhead_s"]
+    N_boundary_1 = f_live * t_cad_s / t_oh
+    N_exp = N_boundary_1 / 3.0          # valid at N_v=1, invalid at N_v=6
 
-    R, t_exp, q_med, D_med_Gpc = sb._eval_point(
-        N_exp, t_cad_s, state["i_det"],
-        state["model_day"], state["model_night"],
-        state["f_live"], state["f_live_night"], state["f_night"],
-        optical_on=True, approx_on=False,
-        t_overhead_s=state["t_overhead_s"],
-        full_integral=False,
-    )
-    assert math.isfinite(R) and R > 0, f"rate not finite at repro point (R={R})"
-    assert math.isfinite(t_exp), "t_exp is NaN on a point with finite rate"
-    assert math.isfinite(q_med), "q_med is NaN on a point with finite rate"
-    assert math.isfinite(D_med_Gpc), "D_med is NaN on a point with finite rate"
+    common = dict(full_integral=False)
+    R1, t_exp1, q1, d1 = sb._eval_point(
+        N_exp, t_cad_s, st1["i_det"], st1["model"], False, t_oh, **common)
+    assert math.isfinite(R1) and math.isfinite(t_exp1) and math.isfinite(q1)
+    assert t_exp1 == pytest.approx(f_live * t_cad_s / N_exp - t_oh, rel=1e-9)
 
-    expected_t_exp = state["f_live_night"] * t_cad_s / N_exp - state["t_overhead_s"]
-    assert t_exp == pytest.approx(expected_t_exp, rel=1e-9), (
-        "sub-day t_exp does not follow the night-model formula"
-    )
+    R6, t_exp6, q6, d6 = sb._eval_point(
+        N_exp, t_cad_s, st6["i_det"], st6["model"], False, t_oh, **common)
+    assert not math.isfinite(R6), "negative-budget schedule point returned a rate"
+    assert not math.isfinite(t_exp6) and not math.isfinite(q6) and not math.isfinite(d6)
+
+    # A valid N_v=6 point follows the schedule budget formula.
+    N_ok = N_boundary_1 / 20.0
+    R6b, t_exp6b, q6b, d6b = sb._eval_point(
+        N_ok, t_cad_s, st6["i_det"], st6["model"], False, t_oh, **common)
+    assert math.isfinite(R6b) and math.isfinite(q6b) and math.isfinite(d6b)
+    assert t_exp6b == pytest.approx(f_live * t_cad_s / (N_ok * 6) - t_oh, rel=1e-9)
 
 
 # --------------------------------------------------------------------------- #

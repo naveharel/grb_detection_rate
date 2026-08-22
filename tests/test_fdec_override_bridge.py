@@ -61,10 +61,8 @@ def _params(**overrides) -> dict:
 
 def _rate_at(state: dict, N_exp: float, t_cad_s: float) -> float:
     R, _t_exp, _q_med, _D_med = sb._eval_point(
-        N_exp, t_cad_s, state["i_det"],
-        state["model_day"], state["model_night"],
-        state["f_live"], state["f_live_night"], state["f_night"],
-        state["optical_on"], state["toh_approx"], state["t_overhead_s"],
+        N_exp, t_cad_s, state["i_det"], state["model"],
+        state["toh_approx"], state["t_overhead_s"],
     )
     return R
 
@@ -72,14 +70,14 @@ def _rate_at(state: dict, N_exp: float, t_cad_s: float) -> float:
 @pytest.fixture(scope="module")
 def F0() -> float:
     """Physics-derived F_dec at UI defaults (no override)."""
-    return float(sb._build_models(_params())["model_day"].derived.F_dec_Jy)
+    return float(sb._build_models(_params())["model"].derived.F_dec_Jy)
 
 
 def test_override_sets_effective_F_dec(F0):
     k = 10.0
     base = sb._build_models(_params())
     st = sb._build_models(_params(F_dec_override_Jy=k * F0))
-    d0, d1 = base["model_day"].derived, st["model_day"].derived
+    d0, d1 = base["model"].derived, st["model"].derived
 
     assert st["fdec_override_applied"] is True
     assert base["fdec_override_applied"] is False
@@ -115,23 +113,25 @@ def test_override_absent_or_null_is_noop(F0):
     assert st_null["fdec_override_applied"] is False
     assert st_ident["fdec_override_applied"] is True
 
-    assert st_absent["model_day"].derived.F_dec_Jy == F0
-    assert st_null["model_day"].derived.F_dec_Jy == F0
+    assert st_absent["model"].derived.F_dec_Jy == F0
+    assert st_null["model"].derived.F_dec_Jy == F0
     # Identity override: k = 1.0 multiply is exact.
-    assert st_ident["model_day"].derived.F_dec_Jy == F0
+    assert st_ident["model"].derived.F_dec_Jy == F0
 
 
 def test_no_cache_mutation(F0):
     # Override must never leak into the lru_cached model.
     sb._build_models(_params(F_dec_override_Jy=100.0 * F0))
     st = sb._build_models(_params())
-    assert st["model_day"].derived.F_dec_Jy == F0
+    assert st["model"].derived.F_dec_Jy == F0
 
 
-def test_optical_night_model_also_overridden(F0):
+def test_optical_schedule_model_also_overridden(F0):
+    # The override must reach the optical (schedule-carrying) model too.
     k = 10.0
-    base = sb._build_models(_params(optical_survey=True))
-    st = sb._build_models(_params(optical_survey=True, F_dec_override_Jy=k * F0))
-    F0_night = float(base["model_night"].derived.F_dec_Jy)
-    assert st["model_night"] is not None
-    assert st["model_night"].derived.F_dec_Jy == pytest.approx(k * F0_night, rel=1e-12)
+    base = sb._build_models(_params(optical_survey=True, N_v=6, dt_v_h=1.5))
+    st = sb._build_models(_params(optical_survey=True, N_v=6, dt_v_h=1.5,
+                                  F_dec_override_Jy=k * F0))
+    F0_opt = float(base["model"].derived.F_dec_Jy)
+    assert st["model"].schedule is not None and st["model"].schedule.N_v == 6
+    assert st["model"].derived.F_dec_Jy == pytest.approx(k * F0_opt, rel=1e-12)

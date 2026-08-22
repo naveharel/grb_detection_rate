@@ -35,6 +35,7 @@ from .afterglow_ism import t_j_s as t_j_s_fn
 from .constants import DAY_S
 from .params import AfterglowPhysicalParams, MicrophysicsParams, SurveyInstrumentParams, SurveyStrategy
 from .pls import PLSG, PLSModel
+from .schedule import NightSchedule
 from .survey import N_exp_max, exposure_time_s, is_strategy_physical, limiting_flux_Jy, sky_fraction
 
 # Tolerance used to make boundary cases robust (e.g. N_exp = N_exp_max exactly)
@@ -92,6 +93,21 @@ class DetectionRateModel:
         the uncorrected q_i boundaries as an approximate classification.
 
     With both settings on, the criterion is t_+(D) − t_p,eff(q) ≥ (i−1)·t_cad.
+
+    Night schedule (optical mode; docs/implementation_reference.tex,
+    Sec. "Two-Timescale Night Schedule"):
+
+    schedule
+        A :class:`~grb_detect.schedule.NightSchedule` describing N_v visits at
+        spacing Δt_v inside each visit-night; t_cad is then the inter-night
+        period (integer days).  ``None`` (the default) is the legacy uniform
+        cadence — every existing code path is bit-identical.  With a schedule,
+        the exposure budget becomes t_exp = f_live·t_cad/(N_exp·N_v) − t_OH
+        (f_live = f_eff·f_night stays the wall-clock live fraction), and
+        schedule-infeasible strategies (visit run not fitting the night,
+        overlapping revisits) yield NaN t_exp — hence A0-invalid everywhere,
+        exactly like t_exp ≤ 0.  At N_v = 1 both the budget and feasibility
+        reduce identically to the legacy behaviour.
     """
 
     def __init__(
@@ -103,6 +119,7 @@ class DetectionRateModel:
         *,
         win_i_minus_one: bool = False,
         win_from_peak: bool = False,
+        schedule: NightSchedule | None = None,
     ):
         self.phys = phys
         self.instrument = instrument
@@ -110,6 +127,7 @@ class DetectionRateModel:
         self.pls = pls if pls is not None else PLSG()
         self.win_i_minus_one = bool(win_i_minus_one)
         self.win_from_peak = bool(win_from_peak)
+        self.schedule = schedule
 
         self._derived = self._compute_derived_scales()
 
@@ -156,10 +174,25 @@ class DetectionRateModel:
 
     # ---------- Core building blocks (vectorized) ----------
     def t_exp_s(self, N_exp: np.ndarray, t_cad_s: np.ndarray) -> np.ndarray:
-        """Exposure time per pointing (vectorized). Returns NaN where t_exp ≤ 0."""
+        """Exposure time per pointing (vectorized). Returns NaN where t_exp ≤ 0.
 
-        t_exp = self.instrument.f_live * t_cad_s / N_exp - self.instrument.t_overhead_s
-        return np.where(t_exp > 0, t_exp, np.nan)
+        With a night schedule, the budget divides among the N_v visits per
+        night (Eq. budget_unified of the tex) and schedule-infeasible
+        strategies also map to NaN — the single choke point through which
+        A0-invalidity reaches the rates, medians, and hover extras.
+        """
+
+        if self.schedule is None:
+            t_exp = self.instrument.f_live * t_cad_s / N_exp - self.instrument.t_overhead_s
+            return np.where(t_exp > 0, t_exp, np.nan)
+        t_exp = (
+            self.instrument.f_live * t_cad_s / (N_exp * self.schedule.N_v)
+            - self.instrument.t_overhead_s
+        )
+        ok = (t_exp > 0) & self.schedule.feasible(
+            t_exp, t_oh_s=self.instrument.t_overhead_s
+        )
+        return np.where(ok, t_exp, np.nan)
 
     def F_lim_Jy(self, t_exp_s: np.ndarray) -> np.ndarray:
         """Limiting flux model F_lim ∝ t_exp^{-alpha} (vectorized)."""
