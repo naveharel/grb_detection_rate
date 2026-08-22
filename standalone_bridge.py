@@ -48,13 +48,18 @@ def _prof_add(label: str, t0: float) -> float:
 ZTF_OMEGA_EXP_DEG2: float = 47.0
 
 # The two real ZTF observing modes used as reference points on the surface
-# (Ho et al. 2022; Andreoni et al. 2021):
-#   public all-sky  — ~15,000 deg² every 2 nights (g+r),
-#   high-cadence    — ~2,500 deg² partnership/ZUDS, 6 visits per night.
+# (Ho et al. 2022; Andreoni et al. 2021), expressed as night schedules:
+#   public all-sky  — ~15,000 deg² every 2 nights (g+r), 2 visits/night a few
+#                     hours apart,
+#   high-cadence    — ~2,500 deg² partnership/ZUDS, 6 visits per night, nightly.
 ZTF_PUBLIC_OMEGA_SRV_DEG2: float = 15000.0
 ZTF_PUBLIC_T_CAD_S: float = 2.0 * DAY_S
+ZTF_PUBLIC_N_V: int = 2
+ZTF_PUBLIC_DT_V_S: float = 2.0 * 3600.0
 ZTF_HC_OMEGA_SRV_DEG2: float = 2500.0
 ZTF_HC_VISITS_PER_NIGHT: int = 6
+ZTF_HC_T_CAD_S: float = 1.0 * DAY_S
+ZTF_HC_DT_V_S: float = 1.5 * 3600.0
 
 # Grid resolutions. Regime-colour mode uses the denser grid so the discrete
 # boundaries between regimes stay crisp.
@@ -475,6 +480,29 @@ def _build_models(params) -> dict:
             fdec_override_applied = True
     # TEMP-FDEC-OVERRIDE — end
 
+    # ZTF marker aux models: each marker carries its own hard-coded schedule
+    # (public: 2 visits/night every 2 nights; high-cadence: 6 visits/night,
+    # nightly), evaluated with the sidebar's remaining parameters.  Rate,
+    # t_exp and medians of a marker all come from its own model (the hover
+    # invariant); infeasible marker schedules (e.g. a short t_night) yield
+    # NaN and hide the marker automatically.  Non-optical mode keeps the
+    # sidebar model (no night structure).
+    def _marker_model(N_v_m: int, dt_v_s_m: float):
+        if not optical_on:
+            return model
+        m = make_rate_model(
+            A_log=A_log, f_live=f_live, t_overhead_s=t_oh_model,
+            omega_exp_deg2=omega_exp, design=design,
+            schedule_on=True, N_v=N_v_m, dt_v_s=dt_v_s_m, t_night_s=t_night_s,
+            win_i_minus_one=win_iminus1, win_from_peak=win_tp, **physics_kw,
+        )
+        if fdec_override_applied:  # TEMP-FDEC-OVERRIDE
+            m = _apply_F_dec_override(m, _fdec_ov)
+        return m
+
+    model_ztf = _marker_model(ZTF_PUBLIC_N_V, ZTF_PUBLIC_DT_V_S)
+    model_ztf_hc = _marker_model(ZTF_HC_VISITS_PER_NIGHT, ZTF_HC_DT_V_S)
+
     N_exp_max = model.instrument.omega_survey_max_sr / model.instrument.omega_exp_sr
 
     return {
@@ -503,6 +531,8 @@ def _build_models(params) -> dict:
         "A_log":        A_log,
         "omega_exp":    omega_exp,
         "model":        model,
+        "model_ztf":    model_ztf,
+        "model_ztf_hc": model_ztf_hc,
         "fdec_override_applied": fdec_override_applied,  # TEMP-FDEC-OVERRIDE
     }
 
@@ -1017,25 +1047,27 @@ def compute_all(params) -> dict:
         )
 
         # ── ZTF reference points (the two real observing modes) ─────────────
-        # Mode A — public all-sky: ~15,000 deg² every 2 nights.
+        # Each marker is evaluated on its own aux model carrying that mode's
+        # hard-coded schedule (see _build_models).
+        # Mode A — public all-sky: ~15,000 deg² every 2 nights, 2 visits/night.
         N_ztf = min(ZTF_PUBLIC_OMEGA_SRV_DEG2 / ZTF_OMEGA_EXP_DEG2, N_exp_max)
         t_cad_ztf_s = ZTF_PUBLIC_T_CAD_S
         R_ztf, t_exp_ztf_s, q_med_ztf, D_med_Gpc_ztf = _eval_point(
-            N_ztf, t_cad_ztf_s, i_det, model, toh_approx, t_overhead_s,
+            N_ztf, t_cad_ztf_s, i_det, state["model_ztf"],
+            toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
             rise_random_start=rise_random_start,
             fade_random_start=fade_random_start,
         )
 
-        # Mode B — high-cadence partnership/ZUDS: ~2,500 deg², 6 visits/night,
-        # i.e. t_cad = 1 day with the N_v = 6 schedule.  Until the marker gets
-        # its own schedule-specific aux model (app-integration phase), it is
-        # evaluated on the sidebar model at the 1-day cadence.
+        # Mode B — high-cadence partnership/ZUDS: ~2,500 deg², 6 visits/night
+        # every night (t_cad = 1 day, N_v = 6).
         N_ztf_hc = min(ZTF_HC_OMEGA_SRV_DEG2 / ZTF_OMEGA_EXP_DEG2, N_exp_max)
-        t_cad_ztf_hc_s = float(DAY_S)
+        t_cad_ztf_hc_s = ZTF_HC_T_CAD_S
         R_ztf_hc, t_exp_ztf_hc_s, q_med_ztf_hc, D_med_Gpc_ztf_hc = _eval_point(
-            N_ztf_hc, t_cad_ztf_hc_s, i_det, model, toh_approx, t_overhead_s,
+            N_ztf_hc, t_cad_ztf_hc_s, i_det, state["model_ztf_hc"],
+            toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
             rise_random_start=rise_random_start,

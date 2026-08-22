@@ -83,7 +83,14 @@ def _cs_slider(sid: str, smin: float, smax: float, step: float,
 _SLIDERS = [
     # (KEY, sid, min, max, step, default, marks, slider_id_override?)
     ('I',           'i',           2,      100,     1,      2,       [(2,'2'),(10,'10'),(30,'30'),(100,'100')]),
-    ('FLIVE',       'flive',       0.01,   1,       0.01,   0.2,     [(0.01,'0.01'),(0.2,'0.2'),(0.5,'0.5'),(1,'1')]),
+    # f_eff = usable fraction of the night window (replaces the old wall-clock
+    # f_live = f_eff * f_night). Default 0.48 = old default 0.2 / (10 h / 24 h),
+    # preserving the optical default surface.
+    ('FEFF',        'feff',        0.01,   1,       0.01,   0.48,    [(0.01,'0.01'),(0.4,'0.4'),(0.48,'0.48'),(0.7,'0.7'),(1,'1')]),
+    # Night schedule: N_v visits per visit-night at spacing dt_v (optical mode,
+    # t_cad >= 1 day). N_v = 1 reproduces the pre-schedule model.
+    ('NV',          'nv',          1,      10,      1,      1,       [(1,'1'),(2,'2'),(3,'3'),(6,'6'),(10,'10')]),
+    ('DTV',         'dtv',         0.25,   12,      0.25,   2,       [(0.25,'0.25'),(2,'2'),(5,'5'),(8,'8'),(12,'12')]),
     ('ALOG',        'Alog',        -12,    -2,      0.01,   -4.68,   [(-12,'-12'),(-8,'-8'),(-4.68,'-4.68'),(-2,'-2')]),
     ('OMEGAEXP',    'omegaexp',    1,      200,     1,      47,      [(1,'1'),(47,'47'),(100,'100'),(200,'200')]),
     ('TOH',         'toh',         0,      30,      0.5,    0,       [(0,'0'),(15,'15'),(30,'30')]),

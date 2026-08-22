@@ -48,7 +48,7 @@
     <div class="metric-badge"><span class="metric-label">t<sub>exp</sub></span><span class="metric-value metric-muted" id="m-texp-opt">—</span></div>
   </div>
   <div class="metric-sep-prominent"></div>
-  <div class="metric-group" id="mg-ztf" title="ZTF public all-sky mode: ~15,000 deg² every 2 nights, evaluated with your current strategy &amp; physics. Dimmed when those differ from the ZTF public preset.">
+  <div class="metric-group" id="mg-ztf" title="ZTF public all-sky mode: ~15,000 deg² every 2 nights, 2 visits per visit-night, evaluated with your current strategy &amp; physics. Dimmed when those differ from the ZTF public preset.">
     <span class="metric-group-label mg-ztf">ZTF public</span>
     <div class="metric-badge"><span class="metric-label">R<sub>det</sub></span><span class="metric-value metric-coral" id="m-R-ztf">—</span></div>
     <div class="metric-badge"><span class="metric-label">t<sub>cad</sub></span><span class="metric-value metric-muted" id="m-tcad-ztf">—</span></div>
@@ -80,17 +80,33 @@
 <div class="acc-body">
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="i_slider" title="Number of detections required per GRB to count as a detection event. ZTF reference: ~2 epochs in the public 2-night survey, ~6 visits/night in the high-cadence mode.">i</label>
+      <label class="param-label" for="i_slider" title="Number of detection epochs the identification pipeline requires per GRB — a pipeline property, independent of how many visits per night (N_v) the schedule offers. ZTF-like pipelines: ~2.">i</label>
       <input type="number" id="i_input" class="param-input" min="2" max="100" step="1" value="2">
     </div>
     %%SLIDER_I%%
   </div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="flive_slider" title="Fraction of total time the telescope is actually observing (0=never, 1=always)">f<sub>live</sub></label>
-      <input type="number" id="flive_input" class="param-input" min="0.01" max="1" step="0.01" value="0.2">
+      <label class="param-label" for="feff_slider" title="Usable fraction of the observing window: weather, moon, engineering, and the program's time share. Optical mode: fraction of the night window (wall-clock duty = f_eff x f_night with f_night = t_night/24 h; the old f_live = f_eff x f_night). Non-optical mode: fraction of total time. ~1 for a dedicated survey in good weather, ~0.4 per ZTF program. Modes of the same telescope should have similar f_eff — a large mismatch signals a modeling error.">f<sub>eff</sub></label>
+      <input type="number" id="feff_input" class="param-input" min="0.01" max="1" step="0.01" value="0.48">
     </div>
-    %%SLIDER_FLIVE%%
+    %%SLIDER_FEFF%%
+  </div>
+  <div id="schedule-block" style="display:none">
+    <div class="param-block">
+      <div class="param-row">
+        <label class="param-label" for="nv_slider" title="Visits to each field per visit-night. Applies to the inter-night cadences t_cad = n x 1 day of optical mode; N_v = 1 is the classic one-visit-per-night survey (the pre-schedule model). ZTF public: 2, ZTF high-cadence: 6.">N<sub>v</sub> [visits/night]</label>
+        <input type="number" id="nv_input" class="param-input" min="1" max="10" step="1" value="1">
+      </div>
+      %%SLIDER_NV%%
+    </div>
+    <div class="param-block" id="dtv-block">
+      <div class="param-row">
+        <label class="param-label" for="dtv_slider" title="Spacing between same-night visits, in hours. The visit run must fit the night: (N_v - 1) x dt_v <= t_night — infeasible combinations render as invalid cells. Inert when N_v = 1.">Δt<sub>v</sub> [hr]</label>
+        <input type="number" id="dtv_input" class="param-input" min="0.25" max="12" step="0.25" value="2">
+      </div>
+      %%SLIDER_DTV%%
+    </div>
   </div>
 </div>
 </details>
@@ -172,8 +188,6 @@
       <input type="number" id="tnight_input" class="param-input" min="1" max="24" step="0.25" value="10">
     </div>
     %%SLIDER_TNIGHT%%
-    <div id="tnight-floor-note"></div>
-    <div id="subnight-limit-display"></div>
   </div>
 </div>
 </details>
@@ -286,7 +300,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('optical-switch').click()">Optical survey mode</span>
   </div>
-  <p class="toggle-hint">Requires ≥ i detections in one night (intra-night) or a single detection per night across nights (inter-night). Activates t<sub>night</sub> and defines f<sub>night</sub> = t<sub>night</sub>/24 h; sub-night (intra-night) cadences are rescaled by f<sub>night</sub>, per-day (inter-night) cadences are unchanged. Requires f<sub>night</sub> ≥ f<sub>live</sub>.</p>
+  <p class="toggle-hint">Two-timescale night schedule: each field is revisited every t<sub>cad</sub> = n × 1 day (the only valid optical cadences), with N<sub>v</sub> visits at spacing Δt<sub>v</sub> inside each visit-night of length t<sub>night</sub>. Activates t<sub>night</sub>, N<sub>v</sub>, Δt<sub>v</sub>; the exposure budget becomes f<sub>eff</sub>·f<sub>night</sub>·t<sub>cad</sub>/(N<sub>exp</sub>·N<sub>v</sub>) − t<sub>OH</sub>, and detection counts ≥ i visits inside the detectable window (intra-night pairs and multi-night accumulation both included).</p>
   <div class="param-switch-row">
     <label class="toggle-switch" for="regime-color-switch">
       <input type="checkbox" id="regime-color-switch">

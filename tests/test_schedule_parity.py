@@ -70,9 +70,9 @@ OPTICAL_COMPARE_KEYS = {
     "N_sweep_flat", "N_sweep_R_flat", "N_sweep_t_exp_flat",
     "N_sweep_q_med_flat", "N_sweep_D_med_Gpc_flat", "N_sweep_regime_flat",
     "t_cad_fix_s", "t_cad_fix_h",
-    # ZTF public marker (2-day cadence)
-    "N_ztf", "t_cad_ztf_h", "t_cad_ztf_s", "R_ztf", "t_exp_ztf_s",
-    "q_med_ztf", "D_med_Gpc_ztf",
+    # ZTF public marker coordinates (the marker VALUES moved by design: the
+    # marker now carries its true schedule, 2 visits/night, on an aux model)
+    "N_ztf", "t_cad_ztf_h", "t_cad_ztf_s",
     # domain-independent scalars
     "R_int_yr", "R_toward_day", "t_dec_s", "F_nu_tdec_Jy", "N_exp_max",
     "F_dec_override_applied", "error",

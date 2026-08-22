@@ -32,24 +32,34 @@ const PLASMA_SCALE = [
   [1.0,                'rgb(240, 249, 33)'],
 ];
 
-// Presets — each one only touches: i, f_live, A_log, omega_exp, t_oh, optical.
-// Constraints (omega_srv, s_fade, s_rise) and physics sliders are left alone,
-// same as any other field not listed in PRESET_MAP — no special-casing needed.
+// Presets — each one only touches: i, f_eff, N_v, dt_v, A_log, omega_exp,
+// t_oh, optical. Constraints (omega_srv, s_fade, s_rise) and physics sliders
+// are left alone, same as any other field not listed in PRESET_MAP.
 // The two ZTF entries are the survey's two real observing modes (Ho et al.
-// 2022; Andreoni et al. 2021):
-//   public   — ~15,000 deg² every 2 nights; detected events have i ≈ 2;
-//              f_live = 0.08 gives t_exp ≈ 30 s at (N = 319, t_cad = 2 d).
-//   high-cad — ~2,500 deg² partnership/ZUDS, 6 visits/night; f_live = 0.17
-//              gives t_exp ≈ 30 s at (N = 53, t_cad = t_night/6).
+// 2022; Andreoni et al. 2021), now expressed as night schedules with the
+// identification requirement i decoupled from the visits offered N_v:
+//   public   — ~15,000 deg² every 2 nights, 2 visits/night ~hours apart;
+//              i = 2 (pipeline needs 2 epochs).
+//   high-cad — ~2,500 deg² partnership/ZUDS, 6 visits/night every night;
+//              i = 2 (same pipeline requirement).
+// Both modes take ~319 exposures/night on the same telescope, so both give
+// f_eff = 319·45 s / 36000 s ≈ 0.40 (t_exp ≈ 30 s + t_OH = 15 s), matching
+// ZTF's documented ~40% public time share — the cross-mode consistency the
+// f_eff parameterization is designed to expose (the old f_live 0.08 vs 0.17
+// split was the public mode's unmodelled second visit).
+//   rubin    — universal cadence ~2 visits/night ~30 min apart; f_eff = 0.7
+//              (the old wall-clock 0.7 was impossible: it exceeded f_night).
 const PRESETS = {
-  ztf_public: {i:2, f_live:0.08, A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
-  ztf_hc:     {i:6, f_live:0.17, A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
-  rubin:      {i:2, f_live:0.7,  A_log:-7.0,  omega_exp:9.6, t_oh:30, optical:true},
+  ztf_public: {i:2, f_eff:0.40, nv:2, dtv:2,    A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
+  ztf_hc:     {i:2, f_eff:0.40, nv:6, dtv:1.5,  A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
+  rubin:      {i:2, f_eff:0.7,  nv:2, dtv:0.5,  A_log:-7.0,  omega_exp:9.6, t_oh:30, optical:true},
 };
 // Map preset keys to DOM slider/switch IDs.
 const PRESET_MAP = {
   i:         'i_slider',
-  f_live:    'flive_slider',
+  f_eff:     'feff_slider',
+  nv:        'nv_slider',
+  dtv:       'dtv_slider',
   A_log:     'Alog_slider',
   omega_exp: 'omegaexp_slider',
   t_oh:      'toh_slider',
@@ -133,7 +143,7 @@ document.querySelectorAll('.view-btn').forEach(btn => {
 
 // ── Slider ↔ input sync ────────────────────────────────────────────────────
 const SLIDER_IDS = [
-  'i','flive','Alog','omegaexp','toh','omega_srv','qmin','Dmin','sfade','srise','tnight',
+  'i','feff','nv','dtv','Alog','omegaexp','toh','omega_srv','qmin','Dmin','sfade','srise','tnight',
   'p','nu_log','Ekiso_log','n0_log','gamma0_log','thetaj','epse','epsB','deuc','rho_grb_log',
   'fdec_log', // TEMP-FDEC-OVERRIDE
 ];
@@ -176,8 +186,7 @@ function syncFromSlider(id) {
   updateSliderVisual(sl);
   if (id === 'deuc' || id === 'thetaj' || id === 'rho_grb_log') updateGrbCounts();
   if (id === 'Alog') updateMagDisplay();
-  if (id === 'flive') _updateTnightFloor();
-  if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
+  if (id === 'nv') _updateDtvDim();
   if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
   if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
   _checkPresetDrift();
@@ -204,8 +213,7 @@ function syncFromInput(id) {
   updateSliderVisual(sl);
   if (id === 'deuc' || id === 'thetaj' || id === 'rho_grb_log') updateGrbCounts();
   if (id === 'Alog') updateMagDisplay();
-  if (id === 'flive') _updateTnightFloor();
-  if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
+  if (id === 'nv') _updateDtvDim();
   if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
   if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
   _checkPresetDrift();
@@ -318,11 +326,10 @@ SLIDER_IDS.forEach(id => {
   if (inp) inp.addEventListener('change', () => syncFromInput(id));
 });
 
-// Optical switch shows/hides t_night
+// Optical switch shows/hides t_night and the night-schedule (N_v, Δt_v) block
 document.getElementById('optical-switch').addEventListener('change', function() {
   document.getElementById('tnight-block').style.display = this.checked ? 'block' : 'none';
-  updateSubnightLimitDisplay();
-  _updateTnightFloorNote();
+  document.getElementById('schedule-block').style.display = this.checked ? 'block' : 'none';
   _checkPresetDrift();
   triggerUpdate();
 });
@@ -360,10 +367,6 @@ document.getElementById('omegaexp_slider').addEventListener('input', updateNexpM
 document.getElementById('omegaexp_input').addEventListener('change', updateNexpMaxDisplay);
 document.getElementById('omega_srv_slider').addEventListener('input', updateNexpMaxDisplay);
 document.getElementById('omega_srv_input').addEventListener('change', updateNexpMaxDisplay);
-document.getElementById('i_slider').addEventListener('input', updateSubnightLimitDisplay);
-document.getElementById('i_input').addEventListener('change', updateSubnightLimitDisplay);
-document.getElementById('tnight_slider').addEventListener('input', updateSubnightLimitDisplay);
-document.getElementById('tnight_input').addEventListener('change', updateSubnightLimitDisplay);
 
 // Slice-position sliders: live label + debounced partial recompute
 function triggerSliceUpdate(which) {
@@ -471,30 +474,32 @@ document.getElementById('preset-select').addEventListener('change', function() {
   for (const [k, domId] of Object.entries(PRESET_MAP)) {
     _setSliderValue(domId, p[k]);
   }
-  // Optical toggle: drives t_night visibility
+  // Optical toggle: drives t_night + schedule-block visibility
   const opticalSwitch = document.getElementById('optical-switch');
   const newOptical = !!p.optical;
   if (opticalSwitch.checked !== newOptical) {
     opticalSwitch.checked = newOptical;
     document.getElementById('tnight-block').style.display = newOptical ? 'block' : 'none';
+    document.getElementById('schedule-block').style.display = newOptical ? 'block' : 'none';
   }
   _activePresetKey = key;
   _presetApplying = false;
   updateGrbCounts();
-  _updateTnightFloor();
+  _updateDtvDim();
   _fdecOverride = false; _updateFdecNote();  // TEMP-FDEC-OVERRIDE — presets return to physics-derived F_dec
   triggerUpdate();
 });
 
 // True when the current sidebar matches this preset on the parameters that
-// actually define/affect the ZTF marker: i, f_live, log A, Ω_exp, t_OH.
-// Ω_srv,max, the optical-survey toggle and the physics sliders are intentionally
-// ignored — the marker hard-codes ZTF's footprint, and physics is the shared GRB
-// population rather than a survey property. The rise/fade identification cuts
-// (s_rise, s_fade) are also excluded: they are free user knobs, not part of a
-// survey's identity, so toggling them does not gray the marker. Used to gray the
-// ZTF metrics/markers when the current configuration is no longer that survey.
-const PRESET_MATCH_KEYS = ['i', 'f_live', 'A_log', 'omega_exp', 't_oh'];
+// actually define/affect the ZTF marker: i, f_eff, N_v, Δt_v, log A, Ω_exp,
+// t_OH.  Ω_srv,max, the optical-survey toggle and the physics sliders are
+// intentionally ignored — the marker hard-codes ZTF's footprint (and its own
+// schedule), and physics is the shared GRB population rather than a survey
+// property. The rise/fade identification cuts (s_rise, s_fade) are also
+// excluded: they are free user knobs, not part of a survey's identity, so
+// toggling them does not gray the marker. Used to gray the ZTF
+// metrics/markers when the current configuration is no longer that survey.
+const PRESET_MATCH_KEYS = ['i', 'f_eff', 'nv', 'dtv', 'A_log', 'omega_exp', 't_oh'];
 function paramsMatchPreset(key) {
   const p = PRESETS[key];
   if (!p) return false;
@@ -534,7 +539,9 @@ function readParams() {
   return {
     i_det:           Math.round(v('i_slider')),
     A_log:           v('Alog_slider'),
-    f_live:          v('flive_slider'),
+    f_eff:           v('feff_slider'),
+    N_v:             Math.round(v('nv_slider')),
+    dt_v_h:          v('dtv_slider'),
     t_overhead_s:    v('toh_slider'),
     omega_exp_deg2:  v('omegaexp_slider'),
     omega_srv_deg2:  v('omega_srv_slider'),
@@ -626,76 +633,15 @@ function updateNexpMaxDisplay() {
   const nmax = Math.floor(os / oe);
   el.innerHTML = '<span class="derived-info">Max N<sub>exp</sub>: ' + nmax + '</span>';
 }
-function updateSubnightLimitDisplay() {
-  const el = document.getElementById('subnight-limit-display');
-  if (!el) return;
-  const optical = document.getElementById('optical-switch').checked;
-  const i_val   = parseFloat(document.getElementById('i_slider').value);
-  const tnight  = parseFloat(document.getElementById('tnight_slider').value);
-  if (!optical || !isFinite(i_val) || !isFinite(tnight) || i_val <= 0) { el.innerHTML = ''; return; }
-  const limit_h = tnight / i_val;
-  el.innerHTML = '<span class="derived-info">Sub-night limit: '
-               + limit_h.toFixed(2) + ' hr  (t<sub>night</sub> / i)</span>';
-}
-
-// Dynamic t_night lower bound: enforces f_night ≥ f_live so that the
-// continuous (sub-night) f_live_eff = f_live / f_night stays ≤ 1.
-// Sets data-min-floor on the t_night .cs-wrap (read by _effMin) and clamps
-// the current t_night value if it falls below the new floor.
-function _updateTnightFloor() {
-  const tn = document.getElementById('tnight_slider');
-  if (!tn) return;
-  const wrap = tn.closest('.cs-wrap');
-  if (!wrap) return;
-  const flive = parseFloat(document.getElementById('flive_slider').value);
-  const structuralMin = parseFloat(tn.min);
-  const max_h = parseFloat(tn.max);
-  const step = parseFloat(tn.step) || 0.25;
-  const rawFloor = Math.min(max_h, Math.max(structuralMin, isFinite(flive) ? 24 * flive : structuralMin));
-  // Snap up to the nearest step multiple so the floor lands on the slider grid.
-  const floor = Math.min(max_h, Math.ceil(rawFloor / step - 1e-9) * step);
-  wrap.dataset.minFloor = String(floor);
-  // Dim ticks/marks below the new floor (purely cosmetic — clamp is what
-  // actually prevents reaching them).
-  const pctFloor = (floor - structuralMin) / (max_h - structuralMin);
-  wrap.querySelectorAll('.cs-tick').forEach(t => {
-    const tp = parseFloat(t.dataset.pct);
-    t.classList.toggle('below-floor', isFinite(tp) && tp < pctFloor - 1e-6);
-  });
-  wrap.querySelectorAll('.cs-mark').forEach(m => {
-    const mp = parseFloat(m.style.getPropertyValue('--mpct'));
-    m.classList.toggle('below-floor', isFinite(mp) && mp < pctFloor - 1e-6);
-  });
-  // Clamp current value up to the new floor if necessary.
-  const cur = parseFloat(tn.value);
-  if (isFinite(cur) && cur < floor - 1e-9) {
-    tn.value = floor;
-    const inp = document.getElementById('tnight_input');
-    if (inp) inp.value = floor;
-    updateSliderVisual(tn);
-    updateSubnightLimitDisplay();
-  }
-  _updateTnightFloorNote();
-}
-
-function _updateTnightFloorNote() {
-  const el = document.getElementById('tnight-floor-note');
-  if (!el) return;
-  const optical = document.getElementById('optical-switch').checked;
-  const tn = document.getElementById('tnight_slider');
-  if (!optical || !tn) { el.innerHTML = ''; return; }
-  const wrap = tn.closest('.cs-wrap');
-  const floor = wrap ? parseFloat(wrap.dataset.minFloor) : NaN;
-  const cur = parseFloat(tn.value);
-  if (!isFinite(floor) || !isFinite(cur)) { el.innerHTML = ''; return; }
-  const structuralMin = parseFloat(tn.min);
-  if (Math.abs(cur - floor) <= 1e-6 && floor > structuralMin + 1e-9) {
-    const flive = parseFloat(document.getElementById('flive_slider').value);
-    el.innerHTML = '<span class="derived-info">f<sub>night</sub> must be bigger than ' +
-      'f<sub>live</sub> = ' + flive.toFixed(2) + '</span>';
-  } else {
-    el.innerHTML = '';
-  }
+// Δt_v is inert at N_v = 1 (a single visit per night has no spacing) — dim
+// its block so that reads at a glance. It stays interactive: raising N_v
+// re-activates whatever Δt_v was set.  The old dynamic t_night floor
+// (f_night ≥ f_live) is gone: f_eff ≤ 1 holds structurally.
+function _updateDtvDim() {
+  const block = document.getElementById('dtv-block');
+  if (!block) return;
+  const nv = parseFloat(document.getElementById('nv_slider').value);
+  block.style.opacity = (isFinite(nv) && nv <= 1) ? '0.45' : '';
 }
 
 // TEMP-FDEC-OVERRIDE — begin
@@ -741,7 +687,7 @@ function updateMagDisplay() {
     'm<sub>AB</sub> = ' + m_AB.toFixed(2) + ' mag';
 }
 updateMagDisplay();
-_updateTnightFloor();
+_updateDtvDim();
 
 // ── Debounced update trigger ───────────────────────────────────────────────
 function triggerUpdate() {
@@ -1594,16 +1540,12 @@ function renderNSlice(data) {
 }
 
 // ── T-slice render (R vs t_cad at optimal N_exp) ───────────────────────────
-// Builds two data regions: (1) a continuous sub-night sweep (t_cad < gap_lo_h)
-// taken from the 2-D grid column at N_opt, and (2) a discrete-day region
-// (integer-day cadences) extracted from the shared `dayLine` payload. In
-// optical mode an amber gap rectangle spans [gap_lo_h, gap_hi_h]. In regime-
-// colour mode both regions use `segmentsByRegime`, and discrete days get
-// per-day markers coloured by regime.
+// Builds up to two data regions: (1) a continuous cadence sweep (non-optical
+// mode), and (2) a discrete-day region (integer-day cadences — the only valid
+// optical cadences under the night schedule). In regime-colour mode both
+// regions use `segmentsByRegime`, and discrete days get per-day markers
+// coloured by regime.
 function renderTSlice(data) {
-  const opticalOn  = data.gap_lo_h != null && isFinite(data.gap_lo_h);
-  const gapLo      = data.gap_lo_h;
-  const gapHi      = data.gap_hi_h;
   // Slice position (N_exp) comes from the tslice-nfix-slider payload, with
   // optimum fallback for the initial render.
   const N_fix      = (data.N_fix != null && isFinite(data.N_fix))
@@ -1664,7 +1606,6 @@ function renderTSlice(data) {
 
   const dark = darkMode();
   const accent = dark ? '#6d9eff' : '#3b6fff';
-  const gapCol = dark ? 'rgba(255,200,100,0.07)' : 'rgba(200,140,0,0.07)';
   const hl = {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'};
   const colorOn = !!data.color_regimes;
 
@@ -1785,7 +1726,7 @@ function renderTSlice(data) {
     }
   }
 
-  // ── Shapes: gap rectangle + ZTF H-line + ZTF V-line + opt V-line ─────────
+  // ── Shapes: ZTF H-line + ZTF V-line + opt V-line ─────────────────────────
   const shapes = [];
   const annotations = [{
     text: 't<sub>cad</sub> slice  |  N<sub>exp</sub> = ' +
@@ -1801,21 +1742,6 @@ function renderTSlice(data) {
       text: 'Opt. N<sub>exp</sub> = ' + _fmtNexp(data.N_opt),
       xref: 'paper', yref: 'paper', x: 0.99, y: 0.98,
       showarrow: false, xanchor: 'right', yanchor: 'top',
-      font: {size: 10, color: AMBER},
-    });
-  }
-
-  if (opticalOn && gapLo != null && gapHi != null && gapLo < gapHi) {
-    shapes.push({
-      type: 'rect', xref: 'x', yref: 'paper',
-      x0: gapLo, x1: gapHi, y0: 0, y1: 1,
-      fillcolor: gapCol, line: {width: 0}, layer: 'below',
-    });
-    annotations.push({
-      text: 'gap',
-      xref: 'x', yref: 'paper',
-      x: Math.sqrt(gapLo * gapHi), y: 0.99,
-      xanchor: 'center', yanchor: 'top', showarrow: false,
       font: {size: 10, color: AMBER},
     });
   }
@@ -2261,7 +2187,7 @@ async function initPyodide() {
     await pyodide.runPythonAsync(`
 import standalone_bridge as _b
 _b.compute_all({
-    'i_det':2,'A_log':-4.68,'f_live':0.2,'t_overhead_s':0.0,
+    'i_det':2,'A_log':-4.68,'f_eff':0.48,'N_v':1,'dt_v_h':2.0,'t_overhead_s':0.0,
     'omega_exp_deg2':47.0,'omega_srv_deg2':27500.0,'t_night_h':10.0,
     'p':2.2,'nu_log10':14.7,'E_kiso_log10':53.0,'n0_log10':0.0,
     'epsilon_e_log10':-1.0,'epsilon_B_log10':-4.0,'theta_j_rad':0.1,
@@ -2282,7 +2208,6 @@ print('Bridge ready')
     setStatus('Ready — rendering initial surface…', true);
     updateGrbCounts();
     updateNexpMaxDisplay();
-    updateSubnightLimitDisplay();
     updateNsliceTfixDisplay();
     updateTsliceNfixDisplay();
     updateQdviewNfixDisplay();
