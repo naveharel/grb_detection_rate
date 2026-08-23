@@ -83,10 +83,16 @@ def _cs_slider(sid: str, smin: float, smax: float, step: float,
 _SLIDERS = [
     # (KEY, sid, min, max, step, default, marks, slider_id_override?)
     ('I',           'i',           2,      100,     1,      2,       [(2,'2'),(10,'10'),(30,'30'),(100,'100')]),
-    # f_eff = usable fraction of the night window (replaces the old wall-clock
-    # f_live = f_eff * f_night). Default 0.48 = old default 0.2 / (10 h / 24 h),
-    # preserving the optical default surface.
+    # Budget sliders — one per survey mode, visibility swapped by the optical
+    # switch (each mode has its own physical quantity; a single slider would
+    # silently change meaning with the toggle):
+    #   f_eff  (optical)     = usable fraction of the night window; wall-clock
+    #                          duty = f_eff * f_night. Default 0.48 = the old
+    #                          wall-clock 0.2 / (10 h / 24 h).
+    #   f_live (non-optical) = wall-clock live fraction — the pre-schedule
+    #                          slider verbatim (default 0.2).
     ('FEFF',        'feff',        0.01,   1,       0.01,   0.48,    [(0.01,'0.01'),(0.4,'0.4'),(0.48,'0.48'),(0.7,'0.7'),(1,'1')]),
+    ('FLIVE',       'flive',       0.01,   1,       0.01,   0.2,     [(0.01,'0.01'),(0.2,'0.2'),(0.5,'0.5'),(1,'1')]),
     # Night schedule: N_v visits per visit-night at spacing dt_v (optical mode,
     # t_cad >= 1 day). N_v = 1 reproduces the pre-schedule model.
     ('NV',          'nv',          1,      10,      1,      1,       [(1,'1'),(2,'2'),(3,'3'),(6,'6'),(10,'10')]),

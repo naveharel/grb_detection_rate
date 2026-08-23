@@ -143,7 +143,7 @@ document.querySelectorAll('.view-btn').forEach(btn => {
 
 // ── Slider ↔ input sync ────────────────────────────────────────────────────
 const SLIDER_IDS = [
-  'i','feff','nv','dtv','Alog','omegaexp','toh','omega_srv','qmin','Dmin','sfade','srise','tnight',
+  'i','feff','flive','nv','dtv','Alog','omegaexp','toh','omega_srv','qmin','Dmin','sfade','srise','tnight',
   'p','nu_log','Ekiso_log','n0_log','gamma0_log','thetaj','epse','epsB','deuc','rho_grb_log',
   'fdec_log', // TEMP-FDEC-OVERRIDE
 ];
@@ -326,10 +326,18 @@ SLIDER_IDS.forEach(id => {
   if (inp) inp.addEventListener('change', () => syncFromInput(id));
 });
 
-// Optical switch shows/hides t_night and the night-schedule (N_v, Δt_v) block
+// Optical switch shows/hides t_night, the night-schedule (N_v, Δt_v) block,
+// and swaps the mode's budget slider: f_eff (night-window fraction, optical)
+// vs f_live (wall-clock fraction, non-optical) — two different physical
+// quantities, never one slider reinterpreted.
+function _syncModeBlocks(opticalOn) {
+  document.getElementById('tnight-block').style.display = opticalOn ? 'block' : 'none';
+  document.getElementById('schedule-block').style.display = opticalOn ? 'block' : 'none';
+  document.getElementById('feff-block').style.display = opticalOn ? 'block' : 'none';
+  document.getElementById('flive-block').style.display = opticalOn ? 'none' : 'block';
+}
 document.getElementById('optical-switch').addEventListener('change', function() {
-  document.getElementById('tnight-block').style.display = this.checked ? 'block' : 'none';
-  document.getElementById('schedule-block').style.display = this.checked ? 'block' : 'none';
+  _syncModeBlocks(this.checked);
   _checkPresetDrift();
   triggerUpdate();
 });
@@ -474,13 +482,12 @@ document.getElementById('preset-select').addEventListener('change', function() {
   for (const [k, domId] of Object.entries(PRESET_MAP)) {
     _setSliderValue(domId, p[k]);
   }
-  // Optical toggle: drives t_night + schedule-block visibility
+  // Optical toggle: drives t_night / schedule / budget-slider visibility
   const opticalSwitch = document.getElementById('optical-switch');
   const newOptical = !!p.optical;
   if (opticalSwitch.checked !== newOptical) {
     opticalSwitch.checked = newOptical;
-    document.getElementById('tnight-block').style.display = newOptical ? 'block' : 'none';
-    document.getElementById('schedule-block').style.display = newOptical ? 'block' : 'none';
+    _syncModeBlocks(newOptical);
   }
   _activePresetKey = key;
   _presetApplying = false;
@@ -539,7 +546,10 @@ function readParams() {
   return {
     i_det:           Math.round(v('i_slider')),
     A_log:           v('Alog_slider'),
+    // Both budget sliders are sent; the bridge uses f_eff (night-window
+    // fraction) in optical mode and f_live (wall-clock) in non-optical mode.
     f_eff:           v('feff_slider'),
+    f_live:          v('flive_slider'),
     N_v:             Math.round(v('nv_slider')),
     dt_v_h:          v('dtv_slider'),
     t_overhead_s:    v('toh_slider'),
@@ -2187,7 +2197,7 @@ async function initPyodide() {
     await pyodide.runPythonAsync(`
 import standalone_bridge as _b
 _b.compute_all({
-    'i_det':2,'A_log':-4.68,'f_eff':0.48,'N_v':1,'dt_v_h':2.0,'t_overhead_s':0.0,
+    'i_det':2,'A_log':-4.68,'f_eff':0.48,'f_live':0.2,'N_v':1,'dt_v_h':2.0,'t_overhead_s':0.0,
     'omega_exp_deg2':47.0,'omega_srv_deg2':27500.0,'t_night_h':10.0,
     'p':2.2,'nu_log10':14.7,'E_kiso_log10':53.0,'n0_log10':0.0,
     'epsilon_e_log10':-1.0,'epsilon_B_log10':-4.0,'theta_j_rad':0.1,

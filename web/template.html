@@ -85,12 +85,23 @@
     </div>
     %%SLIDER_I%%
   </div>
-  <div class="param-block">
-    <div class="param-row">
-      <label class="param-label" for="feff_slider" title="Usable fraction of the observing window: weather, moon, engineering, and the program's time share. Optical mode: fraction of the night window (wall-clock duty = f_eff x f_night with f_night = t_night/24 h; the old f_live = f_eff x f_night). Non-optical mode: fraction of total time. ~1 for a dedicated survey in good weather, ~0.4 per ZTF program. Modes of the same telescope should have similar f_eff — a large mismatch signals a modeling error.">f<sub>eff</sub></label>
-      <input type="number" id="feff_input" class="param-input" min="0.01" max="1" step="0.01" value="0.48">
+  <div id="feff-block" style="display:none">
+    <div class="param-block">
+      <div class="param-row">
+        <label class="param-label" for="feff_slider" title="Usable fraction of the night window: weather, moon, engineering, and the program's time share. Wall-clock duty = f_eff x f_night with f_night = t_night/24 h (the old f_live = f_eff x f_night). ~1 for a dedicated survey in good weather, ~0.4 per ZTF program. Modes of the same telescope should have similar f_eff — a large mismatch signals a modeling error. Optical mode only; non-optical mode uses the wall-clock f_live instead.">f<sub>eff</sub></label>
+        <input type="number" id="feff_input" class="param-input" min="0.01" max="1" step="0.01" value="0.48">
+      </div>
+      %%SLIDER_FEFF%%
     </div>
-    %%SLIDER_FEFF%%
+  </div>
+  <div id="flive-block">
+    <div class="param-block">
+      <div class="param-row">
+        <label class="param-label" for="flive_slider" title="Fraction of wall-clock time spent collecting photons (no night structure in non-optical mode). Non-optical mode only; optical mode uses the night-window fraction f_eff instead.">f<sub>live</sub></label>
+        <input type="number" id="flive_input" class="param-input" min="0.01" max="1" step="0.01" value="0.2">
+      </div>
+      %%SLIDER_FLIVE%%
+    </div>
   </div>
   <div id="schedule-block" style="display:none">
     <div class="param-block">

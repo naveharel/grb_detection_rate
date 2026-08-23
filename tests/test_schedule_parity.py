@@ -161,3 +161,32 @@ def test_snapshots_exist():
     assert len(SNAPSHOTS) >= 10, (
         "parity snapshots missing — run tests/make_parity_snapshots.py "
         "on the pre-change code")
+
+
+def test_budget_keys_are_mode_specific():
+    """Each survey mode reads its own budget parameter — f_eff (usable
+    night-window fraction) in optical mode, f_live (wall-clock live fraction)
+    in non-optical mode.  They are different physical quantities; the mode
+    toggle must never silently reinterpret one number as the other (the
+    boot-parity bug of 2026-08-23)."""
+    from make_parity_snapshots import BASE
+    both = {**BASE, "f_eff": 0.48, "f_live": 0.2}
+
+    st_opt = sb._build_models({**both, "optical_survey": True})
+    f_night = float(st_opt["f_night"])
+    assert st_opt["model"].instrument.f_live == pytest.approx(
+        0.48 * f_night, rel=1e-9), "optical mode must use the f_eff key"
+
+    st_non = sb._build_models({**both, "optical_survey": False})
+    assert st_non["model"].instrument.f_live == pytest.approx(0.2, rel=1e-12), (
+        "non-optical mode must use the wall-clock f_live key")
+
+    # Legacy single-key callers stay bit-exact: f_live-only (pre-schedule)...
+    st_leg = sb._build_models({**BASE, "optical_survey": True})
+    assert st_leg["model"].instrument.f_live == pytest.approx(
+        BASE["f_live"], rel=1e-12)
+    # ...and f_eff-only (early-schedule era) still resolves in both modes.
+    feff_only = {k: v for k, v in BASE.items() if k != "f_live"}
+    feff_only["f_eff"] = 0.37
+    st_fo = sb._build_models({**feff_only, "optical_survey": False})
+    assert st_fo["model"].instrument.f_live == pytest.approx(0.37, rel=1e-12)

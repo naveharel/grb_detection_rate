@@ -454,15 +454,28 @@ def _build_models(params) -> dict:
 
     f_night = t_night_s / DAY_S if optical_on else 1.0
 
-    # Budget parameters — f_eff (new UI key) with a legacy f_live fallback.
-    # The legacy path passes f_live through untouched (no f_night round-trip)
-    # so pre-schedule callers reproduce their old numbers bit-for-bit.
-    if "f_eff" in params and params["f_eff"] is not None:
-        f_eff  = float(params["f_eff"])
-        f_live = f_eff * f_night if optical_on else f_eff
+    # Budget parameters — one per survey mode (two different physical
+    # quantities, never one number reinterpreted by the mode toggle):
+    #   optical:     f_eff  = usable fraction of the night window;
+    #                wall-clock f_live = f_eff · f_night.
+    #   non-optical: f_live = wall-clock live fraction (no night structure;
+    #                f_night is undefined there).
+    # The UI sends both keys; each mode reads its own.  Fallbacks keep every
+    # legacy caller bit-exact: pre-schedule callers send only f_live (used
+    # directly in both modes, no f_night round-trip), early-schedule callers
+    # send only f_eff.
+    _has_feff  = "f_eff"  in params and params["f_eff"]  is not None
+    _has_flive = "f_live" in params and params["f_live"] is not None
+    if optical_on:
+        if _has_feff:
+            f_eff  = float(params["f_eff"])
+            f_live = f_eff * f_night
+        else:
+            f_live = float(params["f_live"])
+            f_eff  = f_live / max(f_night, 1e-12)
     else:
-        f_live = float(params["f_live"])
-        f_eff  = f_live / max(f_night, 1e-12) if optical_on else f_live
+        f_live = float(params["f_live"]) if _has_flive else float(params["f_eff"])
+        f_eff  = f_live
 
     # Night schedule (optical mode only; N_v = 1 reproduces the legacy model).
     N_v    = int(params.get("N_v", 1)) if optical_on else 1
