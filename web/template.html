@@ -311,7 +311,7 @@
       </label>
       <span class="switch-label" onclick="document.getElementById('win-tp-switch').click()">Include t<sub>−</sub> ≈ t<sub>on</sub></span>
     </div>
-    <p class="toggle-hint">Measures the detectability window from the light-curve turn-on t<sub>on</sub> ≈ t<sub>p</sub> (window start t<sub>−</sub> ≈ t<sub>on</sub>) instead of from the burst: t<sub>+</sub> ≥ t<sub>p</sub> + i·t<sub>cad</sub>, so off-axis events must stay above the limit for the full duration <em>after</em> they peak (the legacy criterion credits detections to the pre-peak interval, where the off-axis flux is negligible). Suppresses the marginal off-axis population and moves the detected q-median on-axis. Combined with “Window spans (i−1)·t<sub>cad</sub>” gives the corrected criterion t<sub>+</sub> − t<sub>p</sub> ≥ (i−1)·t<sub>cad</sub>.</p>
+    <p class="toggle-hint">Measures the detectability window from the light-curve turn-on t<sub>on</sub> ≈ t<sub>p</sub> (window start t<sub>−</sub> ≈ t<sub>on</sub>) instead of from the burst: t<sub>+</sub> ≥ t<sub>p</sub> + i·t<sub>cad</sub>, so off-axis events must stay above the limit for the full duration <em>after</em> they peak (the legacy criterion credits detections to the pre-peak interval, where the off-axis flux is negligible). Suppresses the marginal off-axis population and moves the detected q-median on-axis. By default (“Detection window spans i·t<sub>cad</sub>” off) gives the corrected criterion t<sub>+</sub> − t<sub>p</sub> ≥ (i−1)·t<sub>cad</sub>; with that toggle also on, instead gives t<sub>+</sub> − t<sub>p</sub> ≥ i·t<sub>cad</sub>.</p>
     <div class="param-switch-row">
       <label class="toggle-switch" for="rise-rs-switch">
         <input type="checkbox" id="rise-rs-switch">
@@ -329,7 +329,6 @@
     </div>
     <p class="toggle-hint">Applies the s<sub>fade</sub> cut as a uniform random observation-start survival weight. Off: the best-case hard boundary, which raises the rate. No effect when s<sub>fade</sub> = 0.</p>
   </div>
-  <div class="param-group-label">Other options</div>
   <div class="param-switch-row">
     <label class="toggle-switch" for="toh-approx-switch">
       <input type="checkbox" id="toh-approx-switch">
@@ -339,13 +338,13 @@
   </div>
   <p class="toggle-hint">Drops t<sub>OH</sub> from the exposure formula to enable closed-form optimal strategies, while still enforcing t<sub>exp</sub> &gt; t<sub>OH</sub> as the validity boundary.</p>
   <div class="param-switch-row">
-    <label class="toggle-switch" for="win-iminus1-switch">
-      <input type="checkbox" id="win-iminus1-switch">
+    <label class="toggle-switch" for="win-i-switch">
+      <input type="checkbox" id="win-i-switch">
       <span class="toggle-track"><span class="toggle-thumb"></span></span>
     </label>
-    <span class="switch-label" onclick="document.getElementById('win-iminus1-switch').click()">Window spans (i−1)·t<sub>cad</sub></span>
+    <span class="switch-label" onclick="document.getElementById('win-i-switch').click()">Detection window spans i·t<sub>cad</sub></span>
   </div>
-  <p class="toggle-hint">Counts the required detectability duration as (i−1)·t<sub>cad</sub> — the gaps between i detections — instead of i·t<sub>cad</sub>, wherever it enters (q<sub>i</sub>, D<sub>i</sub>). Equivalent to the legacy criterion evaluated at i−1.</p>
+  <p class="toggle-hint">Adds one extra waiting gap: counts the required detectability duration as i·t<sub>cad</sub> instead of the i−1 gaps between the i detections (default, off). Enters wherever a hard window is used: q<sub>i</sub>, D<sub>i</sub>.</p>
 </div>
 </details>
 

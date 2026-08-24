@@ -449,7 +449,7 @@ def _build_models(params) -> dict:
     rise_random_start = bool(params.get("rise_random_start", True))
     fade_random_start = bool(params.get("fade_random_start", True))
     toh_approx   = bool(params.get("toh_approx", False))
-    win_iminus1  = bool(params.get("win_iminus1", False))
+    win_iminus1  = bool(params.get("win_iminus1", True))
     win_tp       = bool(params.get("win_tp", False))
 
     physics_kw = dict(

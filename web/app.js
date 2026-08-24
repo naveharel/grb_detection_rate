@@ -329,7 +329,7 @@ document.getElementById('optical-switch').addEventListener('change', function() 
 
 // Other toggles
 ['toh-approx-switch','regime-color-switch',
- 'win-iminus1-switch','win-tp-switch','rise-rs-switch','fade-rs-switch'].forEach(id => {
+ 'win-i-switch','win-tp-switch','rise-rs-switch','fade-rs-switch'].forEach(id => {
   document.getElementById(id).addEventListener('change', triggerUpdate);
 });
 
@@ -560,7 +560,7 @@ function readParams() {
     rise_random_start: b('rise-rs-switch'),
     fade_random_start: b('fade-rs-switch'),
     toh_approx:      b('toh-approx-switch'),
-    win_iminus1:     b('win-iminus1-switch'),
+    win_iminus1:     !b('win-i-switch'),
     win_tp:          exactOn && b('win-tp-switch'),
     nslice_tfix_log: v('nslice-tfix-slider'),
     tslice_nfix_log: v('tslice-nfix-slider'),
@@ -2269,7 +2269,7 @@ _b.compute_all({
     'optical_survey':False,'color_regimes':False,
     'full_integral':False,'qmin':0.0,'Dmin_cm':0.0,'s_fade':0.0,'s_rise':0.0,
     'rise_random_start':True,'fade_random_start':True,'toh_approx':False,
-    'win_iminus1':False,'win_tp':False,'nx':60,'ny':80,
+    'win_iminus1':True,'win_tp':False,'nx':60,'ny':80,
 })
 print('Bridge ready')
 `);
