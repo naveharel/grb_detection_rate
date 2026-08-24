@@ -1,13 +1,18 @@
-"""Generate pre-schedule-model parity snapshots of standalone_bridge.compute_all.
+"""Generate compute_all regression snapshots of standalone_bridge.
 
-Run from the repo root on the pre-change code (the schedule-cadence branch
-point, main @ e5dd9ff) to (re)create tests/data/parity_*.json.gz:
+Run from the repo root to (re)create tests/data/parity_*.json.gz:
 
     .venv/Scripts/python tests/make_parity_snapshots.py
 
 tests/test_schedule_parity.py replays the stored params through compute_all
-after the value-preserving refactor phases and asserts the payloads match.
-Regenerate only if the pre-change baseline itself is being redefined.
+and asserts the payloads match — pinning the full payload against accidental
+regressions.  Originally these snapshots pinned the pre-schedule baseline
+through the schedule-cadence refactor (branch point main @ e5dd9ff); that
+role is complete and the current baseline includes the schedule model, the
+two-phase exact-mode window, the ramp-averaged dominant mixture, the (i−1)
+window default and the snapped optical slice cadences (re-baselined
+2026-08-24).  Regenerate ONLY after deliberate, reviewed physics or payload
+changes — never to silence an unexplained parity failure.
 
 Grid resolutions are shrunk (module-level monkeypatch, mirrored by the parity
 test) — identical code paths, a fraction of the runtime and file size.
@@ -30,8 +35,11 @@ GPC_TO_CM = 3.085677581491367e27
 SNAP_GRIDS = dict(NX_REGIME=48, NY_REGIME=60, NX_DEFAULT=40, NY_DEFAULT=50)
 
 # App boot defaults (web slider defaults; optical switch boots unchecked).
+# Both budget keys are sent, exactly as readParams does; the bridge picks the
+# mode's own (f_eff in optical mode, f_live otherwise).
 BASE = {
-    "i_det": 2, "A_log": -4.68, "f_live": 0.2, "t_overhead_s": 0.0,
+    "i_det": 2, "A_log": -4.68, "f_eff": 0.48, "f_live": 0.2,
+    "N_v": 1, "dt_v_h": 2.0, "t_overhead_s": 0.0,
     "omega_exp_deg2": 47.0, "omega_srv_deg2": 41253.0, "t_night_h": 10.0,
     "p": 2.2, "nu_log10": 14.7, "E_kiso_log10": 53.0, "n0_log10": 0.0,
     "epsilon_e_log10": -1.0, "epsilon_B_log10": -4.0, "theta_j_rad": 0.1,
@@ -39,7 +47,7 @@ BASE = {
     "optical_survey": False, "color_regimes": False, "full_integral": False,
     "qmin": 0.0, "Dmin_cm": 0.0, "s_fade": 0.0, "s_rise": 0.0,
     "rise_random_start": True, "fade_random_start": True,
-    "toh_approx": False, "win_iminus1": False, "win_tp": False,
+    "toh_approx": False, "win_iminus1": True, "win_tp": False,
     # Slice-slider positions (app defaults), pinned explicitly.
     "nslice_tfix_log": 4.936514, "tslice_nfix_log": 2.0,
     "qdview_nfix_log": 2.0, "qdview_tfix_log": 4.936514,
@@ -48,8 +56,7 @@ BASE = {
 CONFIGS: dict[str, dict] = {
     # Boot state and the two master modes of the surface.
     "boot_nonoptical":  {},
-    # Non-optical variants: these stay FULL-payload parity through the
-    # schedule-cadence refactor (non-optical mode is untouched by design).
+    # Non-optical variants (full-payload parity).
     "nonopt_regimes":    {"color_regimes": True},
     "nonopt_toh_approx": {"t_overhead_s": 15.0, "toh_approx": True},
     "nonopt_toh_exact":  {"t_overhead_s": 15.0},
@@ -71,15 +78,15 @@ CONFIGS: dict[str, dict] = {
         "s_fade": 0.3, "s_rise": 0.5, "qmin": 1.03, "Dmin_cm": 0.5 * GPC_TO_CM,
         "win_iminus1": True, "win_tp": True, "fade_random_start": False,
     },
-    # The three UI presets (preset fields only; the UI's old dynamic t_night
-    # floor clamps rubin's t_night to 17 h, mirrored here).
-    "preset_ztf_public": {"optical_survey": True, "f_live": 0.08,
-                          "t_overhead_s": 15.0},
-    "preset_ztf_hc":     {"optical_survey": True, "i_det": 6, "f_live": 0.17,
-                          "t_overhead_s": 15.0},
-    "preset_rubin":      {"optical_survey": True, "f_live": 0.7, "A_log": -7.0,
-                          "omega_exp_deg2": 9.6, "t_overhead_s": 30.0,
-                          "t_night_h": 17.0},
+    # The three UI presets, exactly as web/app.js PRESETS applies them
+    # (night schedules; the pipeline requirement i decoupled from N_v).
+    "preset_ztf_public": {"optical_survey": True, "f_eff": 0.40,
+                          "N_v": 2, "dt_v_h": 2.0, "t_overhead_s": 15.0},
+    "preset_ztf_hc":     {"optical_survey": True, "f_eff": 0.40,
+                          "N_v": 6, "dt_v_h": 1.5, "t_overhead_s": 15.0},
+    "preset_rubin":      {"optical_survey": True, "f_eff": 0.7, "A_log": -7.0,
+                          "N_v": 2, "dt_v_h": 0.5,
+                          "omega_exp_deg2": 9.6, "t_overhead_s": 30.0},
 }
 
 

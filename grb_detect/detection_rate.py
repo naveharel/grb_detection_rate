@@ -33,10 +33,10 @@ from .afterglow_ism import q_nr as q_nr_fn
 from .afterglow_ism import t_dec_s as t_dec_s_fn
 from .afterglow_ism import t_j_s as t_j_s_fn
 from .constants import DAY_S
-from .params import AfterglowPhysicalParams, MicrophysicsParams, SurveyInstrumentParams, SurveyStrategy
+from .params import AfterglowPhysicalParams, MicrophysicsParams, SurveyInstrumentParams
 from .pls import PLSG, PLSModel
 from .schedule import NightSchedule
-from .survey import N_exp_max, exposure_time_s, is_strategy_physical, limiting_flux_Jy, sky_fraction
+from .survey import N_exp_max
 
 # Tolerance used to make boundary cases robust (e.g. N_exp = N_exp_max exactly)
 _REGION_BOUNDARY_EPS: float = 1e-12
@@ -73,10 +73,30 @@ def _safe_log10(x: np.ndarray) -> np.ndarray:
     return out
 
 
+def _gauss_legendre_01(n: int) -> tuple[np.ndarray, np.ndarray]:
+    """Gauss–Legendre nodes/weights on [0, 1] (weights sum to 1)."""
+    x, w = np.polynomial.legendre.leggauss(n)
+    return 0.5 * (x + 1.0), 0.5 * w
+
+
+# Ramp-averaged dominant mixture: within a channel the wait to the first
+# visit is uniform on [0, g_c], so the channel rate is exactly the average
+# (1/g_c)·∫ R_rect(S_c + u) du of the piecewise-power-law rectangle rate —
+# a fixed low-order rule evaluates it (tex Eq. R_mixture).
+_GL5_NODES, _GL5_WEIGHTS = _gauss_legendre_01(5)
+# Mixed-exponent segment of the schedule weighted volume (Phase-III detection
+# ramp against a Phase-II rise ramp has no closed-form crossing): composite
+# quadrature in v = D̃³ over that segment, split at the closed-form clip
+# breakpoints so each piece is smooth up to one crossing kink.
+_GL8_NODES, _GL8_WEIGHTS = _gauss_legendre_01(8)
+
+
 class DetectionRateModel:
     """Implements the   piecewise rate surface.
 
-    Detection-window settings (both default off — the legacy simple mode):
+    Detection-window settings (constructor defaults off = the legacy simple
+    mode, kept for library callers and parity baselines; the APP defaults to
+    win_i_minus_one ON — the bridge's params.get fallback is True):
 
     win_i_minus_one
         Require the detectability window to span only (i−1)·t_cad — the gaps
@@ -430,7 +450,6 @@ class DetectionRateModel:
             N_exp: np.ndarray,
             t_cad_s: np.ndarray,
             *,
-            include_unphysical: bool = False,
             T_req_s: np.ndarray | None = None,
     ) -> Dict[str, np.ndarray]:
         """Return boolean masks for the seven   regions.
@@ -454,7 +473,7 @@ class DetectionRateModel:
                 & (t_exp > 0.0)
         )
 
-        F_lim = self.F_lim_Jy(self.t_exp_s(N_exp, t_cad_s))
+        F_lim = self.F_lim_Jy(t_exp)
         qE = self.q_Euc(F_lim)
         qi = self.q_i(i_det, t_cad_s, T_req_s=T_req_s)
 
@@ -736,6 +755,36 @@ class DetectionRateModel:
         t_p = np.where(q_arr < q_j, t_j * qt ** (8.0 / 3.0), t_j * qt ** 2.0)
         return np.maximum(t_p, t_dec)
 
+    def _t_plus_sched(
+        self,
+        t_p_eff: np.ndarray,
+        k_sel: np.ndarray,
+        C: np.ndarray,
+        D_safe: np.ndarray,
+    ) -> np.ndarray:
+        """Two-phase limit-crossing time t_+(q, D̃) of the from-peak window.
+
+        Inverts the post-peak decline at the flux limit for a viewer whose
+        horizon constant is ``C`` (t_+ = t_p,eff at D̃ = C): the single-phase
+        form t_+ = t_p,eff·(C/D̃)^k, continued past the jet break for Phase-II
+        viewers (t_p,eff < t_j), where the decline steepens to α_III:
+
+            t_+ = t_j·(D̃_b/D̃)^{k_III},   D̃ < D̃_b ≡ C·(t_p,eff/t_j)^{1/k},
+
+        D̃_b being the distance whose crossing lands exactly at t_j.  Phase-III
+        viewers (t_p,eff ≥ t_j, k = k_III) are single-phase exact already.
+        This is `D_from_t_plus` read in the other direction, so the schedule
+        exact mode and the legacy N_v = 1 from-peak window share one
+        inversion (tex Sec. sched_window).
+        """
+        t_j = float(self.derived.t_j_s)
+        k_III = 2.0 / abs(float(self.pls.alpha_III_temporal(self.phys.p)))
+        with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+            t_plus = t_p_eff * (C / D_safe) ** k_sel
+            D_b = C * (t_p_eff / t_j) ** (1.0 / k_sel)
+            t_plus_III = t_j * (D_b / D_safe) ** k_III
+            return np.where((t_p_eff < t_j) & (t_plus > t_j), t_plus_III, t_plus)
+
     def _rise_eta(
         self,
         t_cad_s: np.ndarray,
@@ -911,11 +960,15 @@ class DetectionRateModel:
 
         with per-channel baselines: fade span S_c, rise gap g_c.  The
         detection term is the from-peak window ramp T(q,D̃) − S_c under
-        `win_from_peak` (T = t_+ − t_p,eff = t_p,eff[(D̃_max/D̃)^k − 1]), or
-        the hard per-channel rectangle D̃ ≤ D̃_dec·(D_i/D_dec)(T_req,c) with it
-        off — mirroring the legacy exact-mode treatment channel-wise.  The
-        `*_random_start=False` hard-boundary semantics apply per channel
-        exactly as in `_joint_survival`.
+        `win_from_peak`, with T = t_+ − t_p,eff and t_+ the TWO-phase
+        inversion `_t_plus_sched` (continued past the jet break for Phase-II
+        viewers — matching the legacy N_v = 1 from-peak window), or the hard
+        per-channel rectangle D̃ ≤ D̃_dec·(D_i/D_dec)(T_req,c) with it off —
+        mirroring the legacy exact-mode treatment channel-wise.  The rise
+        deadline t_lim keeps the single-phase inversion, exactly like the
+        legacy exact mode at N_v = 1 (a documented approximation shared by
+        both paths).  The `*_random_start=False` hard-boundary semantics
+        apply per channel exactly as in `_joint_survival`.
         """
         sched = self.schedule
         t_cad_arr = np.asarray(t_cad_s, dtype=float)
@@ -946,7 +999,8 @@ class DetectionRateModel:
                         t_lim = np.where(t_lim >= t_p_eff, np.inf, -np.inf)
                     lim = np.minimum(lim, t_lim - t_p_eff)
                 if self.win_from_peak:
-                    T_det = t_p_eff * ((D_max_arr / D_safe) ** k_sel - 1.0)
+                    T_det = (self._t_plus_sched(t_p_eff, k_sel, D_max_arr,
+                                                D_safe) - t_p_eff)
                     lim = np.minimum(lim, T_det - S_c)
                 else:
                     T_c = S_c if self.win_i_minus_one else S_c + g_arr
@@ -1114,22 +1168,34 @@ class DetectionRateModel:
         fade_random_start: bool = True,
         D_tilde_dec: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Night-schedule weighted D-volume: ∫ 3D̃² W(q, D̃) dD̃ in closed form.
+        """Night-schedule weighted D-volume: ∫ 3D̃² W(q, D̃) dD̃, closed form.
 
         Per channel the weight is [min(g_c, τ_f,c, ramps)]₊/t_cad with at most
-        two D̃-dependent ramps sharing the exponent k = 2/|α_phase|:
+        two D̃-dependent ramps:
 
             rise:      t_p,eff·(D̃_max·η_c^{−1/2}/D̃)^k − t_p,eff
-            detection: t_p,eff·(D̃_max/D̃)^k − (t_p,eff + S_c)   (win_from_peak)
+            detection: t_+(D̃) − (t_p,eff + S_c)            (win_from_peak)
 
-        Their difference is monotone in D̃, so min(rise, det) switches once at
+        with t_+ the TWO-phase inversion of `_t_plus_sched`: for Phase-II
+        viewers the detection ramp switches to the Phase-III exponent below
+        D̃_b = D̃_max·(t_p,eff/t_j)^{1/k} (crossing past the jet break), each
+        segment integrating with the same `_ramp_volume` closed form.  The
+        rise ramp keeps the single-phase inversion, exactly like the legacy
+        exact mode at N_v = 1.  With both ramps active, min(rise, det) above
+        D̃_b shares the exponent k and switches once at the closed-form
         D̃_x = [t_p,eff·D̃_max^k·(1 − η_c^{−k/2})/S_c]^{1/k} (rise below, det
-        above); each side integrates with `_ramp_volume`.  Hard-boundary
+        above); below D̃_b the exponents differ (k_III vs k) and the crossing
+        is transcendental, so that low-volume-weight segment integrates the
+        pointwise min by a corner-aligned composite 8-point Gauss–Legendre
+        rule in log v (v = D̃³; the smooth pieces are power laws, i.e.
+        exponentials in log v — resolved even across decades).  The exact
+        mode already integrates q numerically.  Hard-boundary
         variants shrink the upper limit instead of ramping: the per-channel
         detection rectangle D̃_dec·(D_i/D_dec)(T_req,c) with `win_from_peak`
-        off, and D̃_0,c with `rise_random_start=False` — exactly the legacy
-        semantics channel-wise.  ``D_eff_glob`` is the global min(D̃_max, 1)
-        cap; the sum is over channels weighted by their multiplicities.
+        off, and D̃_0,c with `rise_random_start=False` (a pure flux statement
+        at the peak — exact in both phases) — the legacy semantics
+        channel-wise.  ``D_eff_glob`` is the global min(D̃_max, 1) cap; the
+        sum is over channels weighted by their multiplicities.
         """
         sched = self.schedule
         t_cad_arr = np.asarray(t_cad_s, dtype=float)
@@ -1141,6 +1207,9 @@ class DetectionRateModel:
         if not self.win_from_peak and D_tilde_dec is None:
             raise ValueError("schedule weighted volume needs D_tilde_dec for "
                              "the per-channel detection rectangles")
+
+        t_j = float(self.derived.t_j_s)
+        k_III = 2.0 / abs(float(self.pls.alpha_III_temporal(self.phys.p)))
 
         acc = None
         with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
@@ -1160,9 +1229,22 @@ class DetectionRateModel:
                 U = D_glob
                 rise_ramp = s_rise_on and rise_random_start
                 if s_rise_on and not rise_random_start:
+                    # Hard rise: D̃ ≤ D̃_max·η^{−1/2} is a flux statement at
+                    # the peak — exact in both phases, no inversion involved.
                     U = np.minimum(U, D_max_arr * ise_c)
                 det_ramp = self.win_from_peak
-                if not det_ramp:
+                if det_ramp:
+                    # Two-phase detection ramp (`_t_plus_sched`): below D̃_b
+                    # the crossing lands past the jet break and the ramp
+                    # continues with the Phase-III exponent, so t_+ =
+                    # t_j·(D̃_b/D̃)^{k_III}.  Phase-III viewers (t_p,eff ≥
+                    # t_j) get D̃_b = 0: single-phase exact, empty lower
+                    # segment.
+                    a_d = t_p_eff + S_arr
+                    D_b = np.where(
+                        t_p_eff < t_j,
+                        D_max_arr * (t_p_eff / t_j) ** (1.0 / k_sel), 0.0)
+                else:
                     T_c = S_c if self.win_i_minus_one else S_c + g_arr
                     U = np.minimum(
                         U,
@@ -1174,25 +1256,86 @@ class DetectionRateModel:
                 elif rise_ramp and det_ramp:
                     C_r = D_max_arr * ise_c
                     C_d = D_max_arr
-                    # min = rise below D̃_x, detection above; S_c = 0 or
-                    # η_c = 1 degenerate cases resolve via ±∞/0 crossings.
+                    # Upper segment [max(lo, D̃_b), U]: both ramps share the
+                    # exponent k_sel, so min = rise below D̃_x, detection
+                    # above; S_c = 0 or η_c = 1 degenerate cases resolve via
+                    # ±∞/0 crossings.
                     gap_k = np.maximum(C_d ** k_sel - C_r ** k_sel, 0.0)
                     S_safe = np.maximum(S_arr, 1e-300)
                     D_x = (t_p_eff * gap_k / S_safe) ** (1.0 / k_sel)
                     D_x = np.where(S_arr > 0, D_x, np.inf)
+                    lo_up = np.maximum(lo, D_b)
                     V_c = self._ramp_volume(
                         t_p_eff, k_sel, m0, C_r, t_p_eff,
-                        lo, np.minimum(U, D_x),
+                        lo_up, np.maximum(np.minimum(U, D_x), lo_up),
                     ) + self._ramp_volume(
-                        t_p_eff, k_sel, m0, C_d, t_p_eff + S_arr,
-                        np.minimum(np.maximum(D_x, lo), U), U,
+                        t_p_eff, k_sel, m0, C_d, a_d,
+                        np.minimum(np.maximum(D_x, lo_up), U), U,
                     )
+                    # Lower segment [lo, min(U, D̃_b)]: the detection ramp
+                    # carries k_III while the rise ramp keeps k_sel — mixed
+                    # exponents have no closed-form crossing, so integrate
+                    # the pointwise min by Gauss–Legendre in v = D̃³ (the
+                    # 3D̃² Jacobian absorbed).  The integrand's sharp
+                    # features are its clip corners, and those ARE closed
+                    # form — each ramp's τ = m0 and τ = 0 distances — so the
+                    # rule is composite over the corner-aligned sub-intervals
+                    # and each piece is smooth up to the one rise/detection
+                    # crossing kink (which GL handles at high accuracy).
+                    hi_seg = np.minimum(U, D_b)
+                    if np.any(hi_seg ** 3 - lo ** 3 > 0.0):
+                        m0p = np.maximum(m0, 0.0)
+                        corners = np.stack([
+                            np.clip(c, lo, hi_seg) for c in (
+                                D_b * (t_j / (a_d + m0p)) ** (1.0 / k_III),
+                                D_b * (t_j / a_d) ** (1.0 / k_III),
+                                C_r * (t_p_eff / (t_p_eff + m0p))
+                                ** (1.0 / k_sel),
+                                np.minimum(C_r, hi_seg),
+                            )
+                        ])
+                        corners = np.sort(corners, axis=0)
+                        lo_arr = np.broadcast_to(
+                            np.asarray(lo, dtype=float), hi_seg.shape)
+                        edges = ([lo_arr] + [corners[n] for n in range(4)]
+                                 + [hi_seg])
+                        # Nodes in log v: between corners the integrand is a
+                        # power law in D̃ (an exponential in log v), which the
+                        # log-spaced rule resolves to ~1e-6 relative even when
+                        # a piece spans decades — linear-v nodes under-resolve
+                        # such pieces.  The [v_lo, a_v] sliver dropped by the
+                        # a-floor is bounded by m0·v_hi·1e-9 (negligible).
+                        V_seg = None
+                        for e_lo, e_hi in zip(edges[:-1], edges[1:]):
+                            v_lo = e_lo ** 3
+                            v_hi = e_hi ** 3
+                            a_v = np.maximum(v_lo, v_hi * 1e-9)
+                            ln_r = np.log(np.maximum(
+                                v_hi / np.maximum(a_v, 1e-300), 1.0))
+                            acc_seg = None
+                            for x_n, om_n in zip(_GL8_NODES, _GL8_WEIGHTS):
+                                v_n = a_v * np.exp(x_n * ln_r)
+                                D_n = np.maximum(v_n, 1e-300) ** (1.0 / 3.0)
+                                tau_r = t_p_eff * (
+                                    (C_r / D_n) ** k_sel - 1.0)
+                                tau_d = t_j * (D_b / D_n) ** k_III - a_d
+                                w_n = om_n * v_n * np.maximum(np.minimum(
+                                    np.minimum(m0, tau_r), tau_d), 0.0)
+                                acc_seg = (w_n if acc_seg is None
+                                           else acc_seg + w_n)
+                            piece = ln_r * acc_seg
+                            V_seg = piece if V_seg is None else V_seg + piece
+                        V_c = V_c + V_seg
                 elif rise_ramp:
                     V_c = self._ramp_volume(
                         t_p_eff, k_sel, m0, D_max_arr * ise_c, t_p_eff, lo, U)
-                else:  # detection ramp only
+                else:  # detection ramp only — two segments of one closed form
                     V_c = self._ramp_volume(
-                        t_p_eff, k_sel, m0, D_max_arr, t_p_eff + S_arr, lo, U)
+                        t_j, k_III, m0, D_b, a_d, lo, np.minimum(U, D_b),
+                    ) + self._ramp_volume(
+                        t_p_eff, k_sel, m0, D_max_arr, a_d,
+                        np.maximum(lo, D_b), U,
+                    )
 
                 term = m_c * V_c
                 acc = term if acc is None else acc + term
@@ -1340,7 +1483,7 @@ class DetectionRateModel:
         D_i = self.D_i(i_det, t_cad_b, F_lim, T_req_s=_T_req)
 
         masks = self.region_masks(
-            i_det, N_exp_b, t_cad_b, include_unphysical=False, T_req_s=_T_req)
+            i_det, N_exp_b, t_cad_b, T_req_s=_T_req)
 
         R_int = self.phys.R_int_yr
         theta_j = self.phys.theta_j_rad
@@ -1509,19 +1652,29 @@ class DetectionRateModel:
         rise_random_start: bool = True,
         fade_random_start: bool = True,
     ) -> np.ndarray:
-        """Dominant-term night-schedule rate: mixture of rectangles.
+        """Dominant-term night-schedule rate: ramp-averaged mixture of
+        rectangles.
 
-        Tex Eq. R_mixture: R = Σ_c w_c · R_rect(T_req,c) with phase weights
-        w_c = m_c·g_c/t_cad and per-channel required durations
-        T_req,c = S_c + g_c (legacy worst-case-wait convention) or S_c
-        (`win_i_minus_one`, zero wait) — the two exact brackets of the phase
-        ramp P_i(T).  Each R_rect is the unmodified A1–A7 machinery evaluated
-        with the channel's span (detection), fade baseline S_c and rise gap
-        g_c.  At N_v = 1 this is a single channel with T_req = i·t_cad — the
-        legacy model (that case never reaches here; see `_sched_multi`).
-        Under `win_from_peak` no closed rectangle exists and the exact
-        q-integral (which carries its own schedule branch) is used, exactly
-        mirroring the legacy fallback.
+        Tex Eq. R_mixture: R = Σ_c w_c · R̄_c with phase weights
+        w_c = m_c·g_c/t_cad and the channel rate the exact gap-average
+
+            R̄_c = (1/g_c) · ∫₀^{g_c} R_rect(T = S_c + u) du,
+
+        since within a channel the wait u to the first visit is uniform on
+        [0, g_c] and a fixed wait makes the detection criterion the hard
+        rectangle at T = S_c + u.  A 5-point Gauss–Legendre rule evaluates
+        the average (R_rect is piecewise power-law in T); the endpoint
+        conventions T = S_c (zero wait) and S_c + g_c (worst-case wait) are
+        this average's exact brackets, so `win_i_minus_one` is inert here —
+        the average replaces the bracket, mirroring how the exact mode's
+        phase ramp replaced it there.  Each R_rect is the unmodified A1–A7
+        machinery evaluated with the channel's duration (detection), fade
+        baseline S_c and rise gap g_c.  At N_v = 1 this is a single channel
+        with T_req = i·t_cad or (i−1)·t_cad — the legacy model with its live
+        toggle (that case never reaches here; see `_sched_multi`).  Under
+        `win_from_peak` no closed rectangle exists and the exact q-integral
+        (which carries its own schedule branch) is used, exactly mirroring
+        the legacy fallback.
         """
         if self.win_from_peak:
             return self.rate_log10_full_integral(
@@ -1543,20 +1696,22 @@ class DetectionRateModel:
             if m_c == 0:
                 continue
             g_arr = np.asarray(g_c, dtype=float)
-            T_c = S_c if self.win_i_minus_one else S_c + g_arr
-            Z_c = self.rate_log10(
-                i_det, N_exp, t_cad_s,
-                q_min=q_min, D_min_cm=D_min_cm,
-                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
-                rise_random_start=rise_random_start,
-                fade_random_start=fade_random_start,
-                _channel=(T_c, S_c, g_arr),
-            )
             w_c = m_c * g_arr / t_cad_b
-            finite = np.isfinite(Z_c)
-            with np.errstate(over="ignore"):
-                R_acc = np.where(finite, R_acc + w_c * 10.0 ** Z_c, R_acc)
-            any_finite |= finite
+            for x_n, om_n in zip(_GL5_NODES, _GL5_WEIGHTS):
+                T_n = S_c + x_n * g_arr
+                Z_n = self.rate_log10(
+                    i_det, N_exp, t_cad_s,
+                    q_min=q_min, D_min_cm=D_min_cm,
+                    s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                    rise_random_start=rise_random_start,
+                    fade_random_start=fade_random_start,
+                    _channel=(T_n, S_c, g_arr),
+                )
+                finite = np.isfinite(Z_n)
+                with np.errstate(over="ignore"):
+                    R_acc = np.where(
+                        finite, R_acc + w_c * om_n * 10.0 ** Z_n, R_acc)
+                any_finite |= finite
         R_acc = np.where(any_finite, R_acc, np.nan)
         return _safe_log10(R_acc)
 
@@ -1798,7 +1953,7 @@ class DetectionRateModel:
         q_dec  = float(self.derived.q_dec)
         D_Euc  = self.phys.D_euc_cm
 
-        masks = self.region_masks(i_det, N_exp_b, t_cad_b, include_unphysical=False)
+        masks = self.region_masks(i_det, N_exp_b, t_cad_b)
 
         # Fading-rate q-caps (per phase). +∞ when bypassed → minima below are no-ops.
         q_s_II, q_s_III = self._q_s_fading_caps(i_det, t_cad_b, s_fade, s_mode)
@@ -1874,6 +2029,7 @@ class DetectionRateModel:
         s_mode: str = "discrete",
         rise_random_start: bool = True,
         fade_random_start: bool = True,
+        dominant_sched_avg: bool = False,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Median q and D for the full-integral mode, computed numerically.
 
@@ -1885,6 +2041,15 @@ class DetectionRateModel:
         D (filtered): p(D) ∝ D² · ∫ q · 1{D_eff(q) ≥ D} · 1{q ≥ q_min} ·
         w_joint(q, D̃) dq restricted to D ≥ D_min, with w_joint the pointwise
         joint survival of `_joint_survival`.
+
+        ``dominant_sched_avg`` (N_v >= 2, hard-rectangle windows only): make
+        the detected population the same (channel, Gauss-node) mixture the
+        ramp-averaged dominant rate integrates — every detection rectangle is
+        evaluated at the 5 gap-average nodes T = S_c + x_n·g_c with weights
+        ω_n, instead of the endpoint convention (which exact-rect mode keeps,
+        matching its own rate).  Without this the dominant rate can be finite
+        at cells whose endpoint-rectangle population is empty (NaN medians on
+        drawn cells).
 
         Returns
         -------
@@ -1957,15 +2122,61 @@ class DetectionRateModel:
         # reduce to the fade-only forms at s_rise = 0, and to 1 when bypassed).
         q_keep_mask = q_g >= q_min_f                                         # (N_q, 1, ...)
 
+        # Detection-rectangle node set for the schedule branches: the
+        # ramp-averaged dominant mode's population is the (channel, node)
+        # mixture; exact-rect keeps the single endpoint-convention node.
+        dominant_avg = (bool(dominant_sched_avg) and sched_multi
+                        and not self.win_from_peak)
+
         # ── Median q ──────────────────────────────────────────────────────────
         # Filtered marginal: w(q) = 1{q ≥ q_min} · q · V_w(q).
-        V_w = self._weighted_D_volume(
-            q_g, D_tilde_max, D_eff, D_min_norm,
-            i_det, t_cad_b, s_fade, s_rise, s_mode,
-            rise_random_start=rise_random_start,
-            fade_random_start=fade_random_start,
-            D_tilde_dec=D_tilde_dec if sched_multi else None,
-        )
+        if dominant_avg:
+            # Node-averaged rectangle mixture (matches `_rate_log10_schedule`):
+            # per node a hard window U_{c,n} = D̃_dec·(D_i/D_dec)(S_c + x_n·g_c);
+            # the fade cap and (single-phase) rise ramp ride the wait exactly
+            # as in the endpoint volume branch.
+            s_rise_on_m = float(s_rise) > 0.0
+            V_w = None
+            with np.errstate(invalid="ignore", over="ignore",
+                             divide="ignore"):
+                for m_c, g_c, S_c in self.schedule.channels(i_det, t_cad_b):
+                    if m_c == 0:
+                        continue
+                    g_arr = np.asarray(g_c, dtype=float)
+                    t_p_c, t_fs_c, k_sel_c, ise_c = self._rise_fade_windows(
+                        q_g, i_det, t_cad_b, s_fade, s_rise, s_mode,
+                        fade_baseline_s=S_c, rise_gap_s=g_c)
+                    if not fade_random_start:
+                        t_fs_c = np.where(t_fs_c >= t_p_c, np.inf, -np.inf)
+                    m0 = np.minimum(g_arr, t_fs_c - t_p_c)
+                    rise_ramp_m = s_rise_on_m and rise_random_start
+                    U_cap = D_eff
+                    if s_rise_on_m and not rise_random_start:
+                        U_cap = np.minimum(U_cap, D_tilde_max * ise_c)
+                    acc_c = None
+                    for x_n, om_n in zip(_GL5_NODES, _GL5_WEIGHTS):
+                        U_n = np.minimum(U_cap, D_tilde_dec * self._D_i_ratio(
+                            i_det, t_cad_b, T_req_s=S_c + x_n * g_arr))
+                        if rise_ramp_m:
+                            V_n = self._ramp_volume(
+                                t_p_c, k_sel_c, m0, D_tilde_max * ise_c,
+                                t_p_c, D_min_norm, U_n)
+                        else:
+                            V_n = np.maximum(m0, 0.0) * np.maximum(
+                                U_n ** 3 - D_min_norm ** 3, 0.0)
+                        w_n = om_n * V_n
+                        acc_c = w_n if acc_c is None else acc_c + w_n
+                    term = m_c * acc_c
+                    V_w = term if V_w is None else V_w + term
+            V_w = V_w / t_cad_b
+        else:
+            V_w = self._weighted_D_volume(
+                q_g, D_tilde_max, D_eff, D_min_norm,
+                i_det, t_cad_b, s_fade, s_rise, s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+                D_tilde_dec=D_tilde_dec if sched_multi else None,
+            )
         w_q        = np.where(q_keep_mask, q_g * V_w, 0.0)                   # (N_q, *shape)
         cumsum_q   = np.cumsum(w_q, axis=0)
         total_q    = cumsum_q[-1:] + 1e-300
@@ -1980,7 +2191,26 @@ class DetectionRateModel:
         # analytic form).  With a filter active the integrand carries the
         # continuous joint survival weight, so we integrate numerically.
         D_eff_max  = np.maximum(D_eff.max(axis=0), 1e-30)  # (*shape)
-        D_eff_norm = D_eff / D_eff_max[np.newaxis, ...]    # (N_q, *shape), in [0, 1]
+        if sched_multi and not self.win_from_peak:
+            # Hard-rectangle schedule windows live inside the weights, so the
+            # flux profile alone can vastly overestimate the population's
+            # distance support (e.g. long cadences where every channel's
+            # D_i ≪ D_max) — the 100-level grid would then have no cell
+            # inside the population.  Cap the level span by the largest
+            # possible per-channel window, D_i at the zero-wait duration S_c
+            # (an upper bound of every node/endpoint window).
+            win_cap = None
+            with np.errstate(invalid="ignore", over="ignore",
+                             divide="ignore"):
+                for m_c, g_c, S_c in self.schedule.channels(i_det, t_cad_b):
+                    if m_c == 0:
+                        continue
+                    W_c = D_tilde_dec * self._D_i_ratio(
+                        i_det, t_cad_b, T_req_s=S_c)
+                    win_cap = (W_c if win_cap is None
+                               else np.maximum(win_cap, W_c))
+            D_eff_max = np.maximum(np.minimum(D_eff_max, win_cap), 1e-30)
+        D_eff_norm = D_eff / D_eff_max[np.newaxis, ...]    # (N_q, *shape)
 
         N_D    = 100
         d_grid = np.linspace(1.0 / N_D, 1.0, N_D)     # normalized D levels, (N_D,)
@@ -1996,60 +2226,170 @@ class DetectionRateModel:
         trap_c[-1] *= 0.5
         trap_c   = trap_c.reshape((-1,) + (1,) * ndim)                        # (N_q, 1, …)
 
-        if sched_multi:
-            # Night schedule: the weight depends on the level d through every
-            # channel's detection window (and rise ramp), so neither the
-            # survival trick nor the single-ramp hoisting below applies.
-            # Mirror `_joint_survival_schedule` with the level-independent
+        if sched_multi and not self.win_from_peak and float(s_rise) <= 0.0:
+            # Night-schedule fast path (the app's default dominant
+            # configuration at N_v >= 2): with the detection window a hard
+            # per-channel rectangle and the rise cut off, each channel's
+            # weight m_c·[min(g_c, τ_f,c)]₊/t_cad is level-independent and
+            # only gated by d ≤ D_i_c/D_eff_max — so per (channel, q-point)
+            # the level dependence is one survival threshold
+            # min(D̃_eff_norm(q), D_i_c/D_eff_max), and the bincount trick of
+            # the s_rise ≤ 0 branch below applies channel-by-channel.  This
+            # replaces the O(N_D·N_q·grid) level loop (the dominant cost of
+            # every optical N_v >= 2 surface) with ≤3 O((N_D+N_q)·grid)
+            # passes.
+            M = int(np.prod(shape, dtype=np.int64)) if shape else 1
+            Hf_total = np.zeros(N_D * M, dtype=float)
+            cols_1d = np.arange(M)
+            det_nodes = (list(zip(_GL5_NODES, _GL5_WEIGHTS)) if dominant_avg
+                         else [(None, 1.0)])
+            with np.errstate(invalid="ignore", over="ignore",
+                             divide="ignore"):
+                for m_c, g_c, S_c in self.schedule.channels(i_det, t_cad_b):
+                    if m_c == 0:
+                        continue
+                    g_arr = np.asarray(g_c, dtype=float)
+                    t_p_eff_c, t_fs_c, _k_c, _ise_c = self._rise_fade_windows(
+                        q_g, i_det, t_cad_b, s_fade, 0.0, s_mode,
+                        fade_baseline_s=S_c, rise_gap_s=g_c)
+                    if not fade_random_start:
+                        t_fs_c = np.where(t_fs_c >= t_p_eff_c, np.inf, -np.inf)
+                    w_ch = m_c * np.maximum(
+                        np.minimum(g_arr, t_fs_c - t_p_eff_c), 0.0) / t_cad_b
+                    base = (trap_c * q_g * q_keep_mask) * w_ch
+                    base_f = np.ascontiguousarray(base).reshape(-1, M)
+                    for x_n, om_n in det_nodes:
+                        if x_n is None:
+                            T_n = S_c if self.win_i_minus_one else S_c + g_arr
+                        else:
+                            T_n = S_c + x_n * g_arr
+                        D_i_c = D_tilde_dec * self._D_i_ratio(
+                            i_det, t_cad_b, T_req_s=T_n)
+                        thr = np.minimum(
+                            D_eff_norm, (D_i_c / D_eff_max)[np.newaxis, ...])
+                        thr_f = np.ascontiguousarray(thr).reshape(-1, M)
+                        bins = np.searchsorted(d_grid, thr_f, side="right") - 1
+                        cols = np.broadcast_to(cols_1d, bins.shape)
+                        keep = bins >= 0
+                        # np.bincount needs intp indices: int64 is an unsafe
+                        # cast on 32-bit platforms (wasm/Pyodide).
+                        lin = bins[keep].astype(np.intp) * M + cols[keep]
+                        Hf_total += om_n * np.bincount(
+                            lin, weights=base_f[keep], minlength=N_D * M)
+            H = Hf_total.reshape((N_D,) + shape)
+            Q_sq_eff = 2.0 * np.cumsum(H[::-1], axis=0)[::-1]
+        elif sched_multi:
+            # Night schedule with a level-dependent weight (from-peak window
+            # or rise ramp): the level loop is unavoidable, but the
+            # per-channel (N_q, *grid) slabs are large — chunk the q axis
+            # (same memory budget as rate_log10_full_integral) and accumulate
+            # the trapezoid sums per chunk.  Mirrors
+            # `_joint_survival_schedule` with the level-independent
             # per-channel quantities hoisted out of the level loop.
-            chan_data = []
-            for m_c, g_c, S_c in self.schedule.channels(i_det, t_cad_b):
-                if m_c == 0:
-                    continue
-                g_arr = np.asarray(g_c, dtype=float)
-                t_p_eff_c, t_fs_c, k_sel_c, ise_c = self._rise_fade_windows(
-                    q_g, i_det, t_cad_b, s_fade, s_rise, s_mode,
-                    fade_baseline_s=S_c, rise_gap_s=g_c)
-                if not fade_random_start:
-                    t_fs_c = np.where(t_fs_c >= t_p_eff_c, np.inf, -np.inf)
-                lim0 = np.minimum(g_arr, t_fs_c - t_p_eff_c)
-                if self.win_from_peak:
-                    D_i_c = None
-                else:
-                    T_c = S_c if self.win_i_minus_one else S_c + g_arr
-                    D_i_c = D_tilde_dec * self._D_i_ratio(
-                        i_det, t_cad_b, T_req_s=T_c)
-                chan_data.append((m_c, np.asarray(S_c, dtype=float),
-                                  t_p_eff_c, k_sel_c, ise_c, lim0, D_i_c))
             s_rise_on_sched = float(s_rise) > 0.0
-            Q_sq_eff = np.empty((N_D,) + shape, dtype=float)
-            for j, d in enumerate(d_grid):
-                D_safe = np.maximum(d * D_eff_max[np.newaxis, ...], 1e-300)
-                acc = None
+            t_j = float(self.derived.t_j_s)
+            k_III = 2.0 / abs(float(self.pls.alpha_III_temporal(self.phys.p)))
+            M = int(np.prod(shape, dtype=np.int64)) if shape else 1
+            n_chunk = max(1, int(_FULL_INTEGRAL_CHUNK_ELEMS // max(M, 1)))
+            Q_sq_eff = np.zeros((N_D,) + shape, dtype=float)
+            for a0 in range(0, q_g.shape[0], n_chunk):
+                sl = slice(a0, a0 + n_chunk)
+                q_c      = q_g[sl]
+                trap_sl  = trap_c[sl]
+                keep_sl  = q_keep_mask[sl]
+                Deffn_sl = D_eff_norm[sl]
+                Dmax_sl  = D_tilde_max[sl]
+                # Level-loop hoists.  t_p,eff and k_sel depend only on q; the
+                # detection window t_+ is channel-independent (channels
+                # differ only in the subtracted span S_c); and every pow is
+                # separable in the scalar level d — t_+ = t_p·(D̃_max/(d·
+                # D̃_effmax))^k factors into a hoisted (D̃_max/D̃_effmax)^k
+                # array times the scalar d^{−k}, with k taking only the two
+                # global values (k_II, k_III).  The level loop then runs with
+                # no vector pow at all; each channel's t_lim reuses the shared
+                # t_+ through the level-independent factor η_c^{−k/2}.
+                t_p_c = self._t_p_eff(q_c)
+                q_j_v = float(self.derived.q_j)
+                k_II = 2.0 / abs(float(self.pls.alpha_II_temporal(self.phys.p)))
+                mask_II_k = q_c < q_j_v          # k_sel = k_II here, k_III else
+                k_sel_c = np.where(mask_II_k, k_II, k_III)
+                Deffm_b = D_eff_max[np.newaxis, ...]
                 with np.errstate(invalid="ignore", over="ignore",
                                  divide="ignore"):
-                    for (m_c, S_arr, t_p_eff_c, k_sel_c, ise_c, lim0,
-                         D_i_c) in chan_data:
-                        lim = lim0
-                        if s_rise_on_sched:
-                            t_lim = t_p_eff_c * (
-                                D_tilde_max * ise_c / D_safe) ** k_sel_c
-                            if not rise_random_start:
-                                t_lim = np.where(
-                                    t_lim >= t_p_eff_c, np.inf, -np.inf)
-                            lim = np.minimum(lim, t_lim - t_p_eff_c)
-                        if self.win_from_peak:
-                            T_det = t_p_eff_c * (
-                                (D_tilde_max / D_safe) ** k_sel_c - 1.0)
-                            lim = np.minimum(lim, T_det - S_arr)
+                    is_II = t_p_c < t_j
+                    ratio_sp = t_p_c * (Dmax_sl / Deffm_b) ** k_sel_c
+                    D_b_c = np.where(
+                        is_II,
+                        Dmax_sl * (t_p_c / t_j) ** (1.0 / k_sel_c), 0.0)
+                    ratio_III = t_j * (D_b_c / Deffm_b) ** k_III
+                chan_data = []
+                for m_c, g_c, S_c in self.schedule.channels(i_det, t_cad_b):
+                    if m_c == 0:
+                        continue
+                    g_arr = np.asarray(g_c, dtype=float)
+                    _t_p, t_fs_c, _k, ise_c = self._rise_fade_windows(
+                        q_c, i_det, t_cad_b, s_fade, s_rise, s_mode,
+                        fade_baseline_s=S_c, rise_gap_s=g_c)
+                    if not fade_random_start:
+                        t_fs_c = np.where(t_fs_c >= t_p_c, np.inf, -np.inf)
+                    lim0 = np.minimum(g_arr, t_fs_c - t_p_c)
+                    with np.errstate(invalid="ignore", over="ignore"):
+                        eta_k = ise_c ** k_sel_c
+                    if self.win_from_peak:
+                        thrs_c = None
+                    else:
+                        # Rect gate thresholds d ≤ thr: one endpoint node
+                        # (exact-rect), or the 5 gap-average nodes matching
+                        # the ramp-averaged dominant rate.
+                        if dominant_avg:
+                            nodes = [(S_c + x_n * g_arr, om_n) for x_n, om_n
+                                     in zip(_GL5_NODES, _GL5_WEIGHTS)]
                         else:
-                            lim = np.where(D_safe <= D_i_c, lim, -np.inf)
-                        term = m_c * np.maximum(lim, 0.0)
-                        acc = term if acc is None else acc + term
-                w_joint = acc / t_cad_b
-                above_and_keep = (D_eff_norm >= d) & q_keep_mask
-                integrand_q = np.where(above_and_keep, q_g * w_joint, 0.0)
-                Q_sq_eff[j] = 2.0 * np.trapezoid(integrand_q, q_vals, axis=0)
+                            T_c = S_c if self.win_i_minus_one else S_c + g_arr
+                            nodes = [(T_c, 1.0)]
+                        thrs_c = [
+                            (D_tilde_dec * self._D_i_ratio(
+                                i_det, t_cad_b, T_req_s=T_n) / D_eff_max,
+                             om_n)
+                            for T_n, om_n in nodes
+                        ]
+                    chan_data.append((m_c, np.asarray(S_c, dtype=float),
+                                      eta_k, lim0, thrs_c))
+                base_sl = trap_sl * np.where(keep_sl, q_c, 0.0)
+                for j, d in enumerate(d_grid):
+                    acc = None
+                    with np.errstate(invalid="ignore", over="ignore",
+                                     divide="ignore"):
+                        d_k = np.where(mask_II_k,
+                                       d ** (-k_II), d ** (-k_III))
+                        t_plus_sp = ratio_sp * d_k
+                        if self.win_from_peak:
+                            t_plus = np.where(
+                                is_II & (t_plus_sp > t_j),
+                                ratio_III * d ** (-k_III), t_plus_sp)
+                            T_det = t_plus - t_p_c
+                        for (m_c, S_arr, eta_k, lim0, thrs_c) in chan_data:
+                            lim = lim0
+                            if s_rise_on_sched:
+                                t_lim = t_plus_sp * eta_k
+                                if not rise_random_start:
+                                    t_lim = np.where(
+                                        t_lim >= t_p_c, np.inf, -np.inf)
+                                lim = np.minimum(lim, t_lim - t_p_c)
+                            if self.win_from_peak:
+                                lim = np.minimum(lim, T_det - S_arr)
+                                term = m_c * np.maximum(lim, 0.0)
+                            else:
+                                frac = None
+                                for thr_n, om_n in thrs_c:
+                                    f_n = om_n * (d <= thr_n)
+                                    frac = f_n if frac is None else frac + f_n
+                                term = m_c * np.maximum(lim, 0.0) * frac
+                            acc = term if acc is None else acc + term
+                    w_joint = acc / t_cad_b
+                    integrand_q = np.where(Deffn_sl >= d,
+                                           base_sl * w_joint, 0.0)
+                    Q_sq_eff[j] += 2.0 * np.sum(integrand_q, axis=0)
         elif float(s_rise) <= 0.0:
             # Rise cut off ⇒ w_joint = _fading_survival is independent of the
             # distance level d.  Then Q_sq_eff over all N_D levels is a survival
@@ -2074,7 +2414,9 @@ class DetectionRateModel:
             bins   = np.searchsorted(d_grid, De_f, side="right") - 1          # (N_q, M)
             cols   = np.broadcast_to(np.arange(M), bins.shape)
             keep   = bins >= 0
-            lin    = bins[keep].astype(np.int64) * M + cols[keep]
+            # np.bincount needs intp indices: int64 is an unsafe cast on
+            # 32-bit platforms (wasm/Pyodide).
+            lin    = bins[keep].astype(np.intp) * M + cols[keep]
             Hf     = np.bincount(lin, weights=base_f[keep], minlength=N_D * M)
             H      = Hf.reshape((N_D,) + shape)
             # Q_sq_eff[j] = 2·Σ_{k ≥ j} H[k]  (reverse cumulative sum over levels)
@@ -2355,6 +2697,10 @@ class DetectionRateModel:
                 s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
                 rise_random_start=rise_random_start,
                 fade_random_start=fade_random_start,
+                # Dominant mode's schedule rate is the gap-average of
+                # rectangles — its medians must describe that same
+                # (channel, node) mixture; exact mode keeps its own windows.
+                dominant_sched_avg=not full_integral,
             )
         return self.compute_medians_analytic(
             i_det, N_exp, t_cad_s,
@@ -2362,106 +2708,3 @@ class DetectionRateModel:
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
 
-    # ---------- Analytic optimal strategy (from  ) ----------
-    def analytic_optimum(self, i_det: int) -> Dict[str, float]:
-        """Analytic optimum from the   derivation.
-
-        This reproduces the   definitions:
-        - N_exp,opt = Omega_srv,max / Omega_exp
-        - t_cad,opt: piecewise formula supplied by the user
-        - t_exp,opt from the exposure-time relation
-
-        Returns
-        -------
-        dict
-            Keys: N_exp_opt, t_cad_opt_s, t_exp_opt_s, log10_R_det_opt, R_det_opt
-        """
-
-        i_det = int(i_det)
-        if i_det < 1:
-            raise ValueError("i_det must be >= 1")
-
-        # N_exp,opt
-        N_opt = N_exp_max(self.instrument)
-
-        t_dec = self.derived.t_dec_s
-        p = self.phys.p
-
-        theta_j = self.phys.theta_j_rad
-        Gamma0 = self.phys.gamma0
-
-        F_dec = self.derived.F_dec_Jy
-        A = self.instrument.F_lim_ref_Jy  # F_ref in the limiting-flux model
-        t_ref = self.instrument.t_exp_ref_s
-        f_live = self.instrument.f_live
-
-        # Candidate expressions (as in the   code)
-        exprA = (
-            (t_dec / i_det) ** (2.0 * p)
-            * (Gamma0 * theta_j) ** (4.0 * (p + 3.0) / 3.0)
-            * (A / F_dec) ** (-2.0)
-            * (f_live / (t_ref * N_opt))
-        ) ** (1.0 / (2.0 * p - 1.0))
-
-        exprB = (
-            (t_dec / i_det) ** (3.0 * (p - 1.0) / 2.0)
-            * (A / F_dec) ** (-2.0)
-            * (f_live / (t_ref * N_opt))
-        ) ** (2.0 / (3.0 * p - 5.0))
-
-        # Piecewise choice (interpreting the middle condition as t_dec/i < exprB < exprA)
-        if exprA < exprB:
-            t_cad_opt = float(exprA)
-        elif (t_dec / i_det) < exprB < exprA:
-            t_cad_opt = float(exprB)
-        else:
-            t_cad_opt = float(t_dec / i_det)
-
-        strat_opt = SurveyStrategy(N_exp=N_opt, t_cad_s=t_cad_opt)
-        t_exp_opt = exposure_time_s(strat_opt, self.instrument)
-
-        logR_opt = float(self.rate_log10(i_det, np.array([N_opt]), np.array([t_cad_opt]))[0])
-        R_opt = float(10.0**logR_opt)
-
-        return {
-            "N_exp_opt": float(N_opt),
-            "t_cad_opt_s": float(t_cad_opt),
-            "t_exp_opt_s": float(t_exp_opt),
-            "log10_R_det_opt": logR_opt,
-            "R_det_opt_yr": R_opt,
-        }
-
-    def grid_search_optimum(
-        self,
-        i_det: int,
-        N_exp_grid: np.ndarray,
-        t_cad_grid_s: np.ndarray,
-    ) -> Dict[str, float]:
-        """Brute-force optimum on a rectangular grid.
-
-        Useful as a sanity check against the analytic optimum and as a tool
-        when the model is extended to cases where no closed-form optimum is
-        known.
-        """
-
-        logR = self.rate_log10(i_det, N_exp_grid[:, None], t_cad_grid_s[None, :])
-
-        if np.all(np.isnan(logR)):
-            raise RuntimeError("All strategies on the provided grid are unphysical (A0 is empty).")
-
-        idx = np.nanargmax(logR)
-        iN, it = np.unravel_index(idx, logR.shape)
-
-        N_best = float(N_exp_grid[iN])
-        t_cad_best = float(t_cad_grid_s[it])
-        logR_best = float(logR[iN, it])
-
-        t_exp_best = float(self.t_exp_s(np.array([N_best]), np.array([t_cad_best]))[0])
-
-        return {
-            "N_exp_opt": N_best,
-            "t_cad_opt_s": t_cad_best,
-            "t_exp_opt_s": t_exp_best,
-            "log10_R_det_opt": logR_best,
-            "R_det_opt_yr": float(10.0**logR_best),
-        }

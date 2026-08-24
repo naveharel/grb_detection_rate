@@ -3,11 +3,20 @@
 **Companion script:** [`ztf_validation.py`](ztf_validation.py) (regenerate the numbers with
 `.venv/Scripts/python analysis/ztf_validation.py`).
 
-> **Staleness note (2026-08-14):** the tables in the body below quote the pre-`6ca135f`
-> run (ε_B = 10⁻³·⁴, p = 2.5). [`validation_output.txt`](validation_output.txt) has been
-> regenerated at the current defaults (ε_B = 10⁻⁴, p = 2.2) and matches the
-> [distance-distribution assessment](#distance-distribution-assessment-2026-08-14) at the
-> end of this report, which carries the up-to-date numbers.
+> **Staleness note (2026-08-14, extended 2026-08-19/24):** the tables in the body below
+> quote the pre-`6ca135f` run (ε_B = 10⁻³·⁴, p = 2.5). [`validation_output.txt`](validation_output.txt)
+> has been regenerated at the current defaults (ε_B = 10⁻⁴, p = 2.2) and matches the
+> [distance-distribution assessment](#distance-distribution-assessment-2026-08-14) and the
+> [two-timescale night-schedule section](#two-timescale-night-schedule-model-2026-08-19)
+> at the end of this report, which carry the up-to-date numbers.
+>
+> ⚠ **The executive summary below is superseded on its headline conclusions.** With the
+> night-schedule model (2026-08-19) the correct encodings give **Mode A = 14.4/yr and
+> Mode B = 13.3/yr against 2.0/2.5 observed (×5–7 over, both modes)** while the distance
+> and viewing-angle statistics improve — the pre-schedule "3.3–22/yr, low end matches"
+> claim below was an error cancellation from an artificially short horizon. Read the
+> schedule section for the current story; the body below is kept as the historical record
+> of the pre-schedule analysis.
 
 ## Executive summary
 
@@ -441,7 +450,9 @@ Euclidean compression with a hard wall — to be stated, not fixed.
 > (t_cad = n·day, N_v visits/night at spacing Δt_v; exact detection probability P_i(T);
 > per-channel fade/rise baselines) and the pipeline requirement i is decoupled from the
 > visits offered. Formalism + derivations: docs/implementation_reference.tex,
-> Sec. "Two-Timescale Night Schedule". Run saved in `validation_output.txt` (2026-08-19).
+> Sec. "Two-Timescale Night Schedule". Run saved in `validation_output.txt`
+> (2026-08-24 rerun: includes the two-phase from-peak window and the gap-averaged
+> dominant mixture — ≲1% shift at these presets vs the 2026-08-19 numbers).
 
 ### Encoding change
 
@@ -458,10 +469,10 @@ f_live split was the public mode's unmodelled second visit.
 
 | quantity | A pre-sched | A schedule | A observed | B pre-sched | B schedule | B observed |
 |---|---|---|---|---|---|---|
-| rate ×ε_cov [/yr] | 4.7 | **14.5** | 2.0 | 5.0 | **13.3** | 2.5 |
+| rate ×ε_cov [/yr] | 4.7 | **14.4** | 2.0 | 5.0 | **13.3** | 2.5 |
 | q_med | 1.17 | 1.02 | ≲1.5 | 1.14 | 1.05 | ≲1.5 |
-| D_med [Gpc] | 1.00 | **1.90** | 3.67 | 1.82 | **2.92** | 3.88 |
-| D_90 [Gpc] | 1.41 | **3.91** | — | 2.67 | **4.25** | — |
+| D_med [Gpc] | 1.00 | **1.91** | 3.67 | 1.82 | **2.92** | 3.88 |
+| D_90 [Gpc] | 1.41 | **3.92** | — | 2.67 | **4.25** | — |
 
 (The pre-schedule A row differs slightly from the 2026-08-14 tables because it is
 re-evaluated through the new engine at the same encoding — bit-parity holds only at
@@ -473,7 +484,7 @@ identical settings; the old bracket [0.99, 4.7] quoted its two window convention
    mode's intra-night pair (span ~2 h at 96% phase weight instead of a 4-day window)
    moves D_med ×1.9 and D_90 ×2.8 toward the observations, and the model's spurious
    low-vs-high-cadence median split narrows ×2.5 → ×1.54 (observed ×1.06). q_med ≈ 1.0
-   and the on-axis-consistent fraction (88–89%) now sit inside the observed targets.
+   and the on-axis-consistent fraction (88–90%) now sit inside the observed targets.
 2. **The rates overshoot ×5–7 — the same structural coupling, seen from the other
    side.** In every regime R ∝ H³ while D_med ≈ 0.79·H (see "Why no single-luminosity
    parameter can fix it" above): the pre-schedule model matched the rates *because* its

@@ -442,7 +442,7 @@ def compute_surface(
     regime_id: np.ndarray | None = None
     if color_regimes:
         regime_id = np.full(Z_raw.shape, np.nan, dtype=float)
-        masks = model.region_masks(i_det, N_exp, t_cad_eff, include_unphysical=False)
+        masks = model.region_masks(i_det, N_exp, t_cad_eff)
         for k, key in enumerate(("A1", "A2", "A3", "A4", "A5", "A6", "A7"), start=1):
             regime_id[masks[key]] = k
         if valid is not None:

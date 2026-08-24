@@ -60,6 +60,10 @@ def _default_params() -> dict:
         qmin=0.0,
         Dmin_cm=0.0,
         toh_approx=False,
+        # Pinned explicitly: these are numerical-consistency tests whose grid
+        # tolerances were set at this configuration; the bridge's window
+        # default is now (i−1) and would otherwise shift the D_i cliff.
+        win_iminus1=False,
     )
 
 

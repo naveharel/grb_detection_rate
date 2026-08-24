@@ -226,10 +226,6 @@ class SurveyInstrumentParams:
     def alpha(self) -> float:
         return self.design.alpha
 
-    @property
-    def t_night_s(self) -> float:
-        return self.design.t_night_s
-
 
 # -------------------------------------------------------
 # Strategy variables

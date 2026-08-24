@@ -104,9 +104,31 @@ def _profile(model, i_det, point, N_q=200):
     return q_vals, D_eff_norm, D_max, pref, Ddec
 
 
+def _two_phase_T(m, q_vals, D_max, d):
+    """Reference window length T(q, D̃) = t_+ − t_p,eff with the TWO-phase
+    inversion (tex Sec. sched_window): single power law t_p·(D̃_max/D̃)^k,
+    continued past the jet break for Phase-II viewers (t_p,eff < t_j) with
+    t_+ = t_j·(D̃_b/D̃)^{k_III}, D̃_b = D̃_max·(t_p,eff/t_j)^{1/k}."""
+    p = m.phys.p
+    q_j = float(m.derived.q_j)
+    t_j = float(m.derived.t_j_s)
+    k_III = 2.0 / abs(float(m.pls.alpha_III_temporal(p)))
+    t_p = m._t_p_eff(q_vals)
+    k = np.where(q_vals < q_j,
+                 2.0 / abs(float(m.pls.alpha_II_temporal(p))), k_III)
+    with np.errstate(over="ignore", divide="ignore"):
+        d_safe = np.maximum(d, 1e-300)
+        t_plus = t_p[None, :] * ((D_max[None, :] / d_safe) ** k[None, :])
+        D_b = D_max[None, :] * (t_p[None, :] / t_j) ** (1.0 / k[None, :])
+        t_plus_III = t_j * (D_b / d_safe) ** k_III
+        t_plus = np.where((t_p[None, :] < t_j) & (t_plus > t_j),
+                          t_plus_III, t_plus)
+    return t_plus - t_p[None, :]
+
+
 def test_pointwise_weight_is_Pi_without_cuts():
-    """win_from_peak, no cuts: W(q, D̃) must equal P_i(T) with
-    T = t_p,eff·[(D̃_max/D̃)^k − 1] — the exact detection probability."""
+    """win_from_peak, no cuts: W(q, D̃) must equal P_i(T) with T the
+    two-phase from-peak window length — the exact detection probability."""
     i_det, point = 2, (319.0, 2)
     m = sched_model(2, 2.0, win_tp=True)
     q_vals, D_eff_norm, D_max, _pref, Ddec = _profile(m, i_det, point)
@@ -117,15 +139,7 @@ def test_pointwise_weight_is_Pi_without_cuts():
         q_vals[None, :], d, D_max[None, :], i_det, t_arr,
         0.0, 0.0, "discrete", D_tilde_dec=Ddec)
 
-    t_p = m._t_p_eff(q_vals)
-    q_j = float(m.derived.q_j)
-    p = m.phys.p
-    k = np.where(q_vals < q_j,
-                 2.0 / abs(float(m.pls.alpha_II_temporal(p))),
-                 2.0 / abs(float(m.pls.alpha_III_temporal(p))))
-    with np.errstate(over="ignore", divide="ignore"):
-        T = t_p[None, :] * ((D_max[None, :] / np.maximum(d, 1e-300))
-                            ** k[None, :] - 1.0)
+    T = _two_phase_T(m, q_vals, D_max, d)
     P = m.schedule.P_detect(np.minimum(T, 1e18), i_det, t_arr)
     np.testing.assert_allclose(W, P, rtol=1e-10, atol=1e-12)
 
@@ -149,7 +163,7 @@ def test_pointwise_weight_matches_schedule_joint_weight():
     k = np.where(q_vals < q_j,
                  2.0 / abs(float(m.pls.alpha_II_temporal(p))),
                  2.0 / abs(float(m.pls.alpha_III_temporal(p))))
-    T = t_p * ((D_max / np.maximum(d, 1e-300)) ** k - 1.0)
+    T = _two_phase_T(m, q_vals, D_max, d[None, :])[0]
 
     taus = []
     for m_c, g_c, S_c in m.schedule.channels(i_det, t_arr):
@@ -253,50 +267,81 @@ def test_exact_rate_matches_Pi_reference(N_v, dt_v_h, days, i_det):
 # --------------------------------------------------------------------------- #
 
 def test_mixture_convention_ordering():
-    """T_req,c = S_c (optimistic) gives at least the rate of S_c + g_c
-    (conservative) — pointwise, dominant mode and exact-rect mode."""
-    for full in (False, True):
-        m_opt = sched_model(2, 2.0, win_iminus1=True)
-        m_con = sched_model(2, 2.0, win_iminus1=False)
-        for point in POINTS:
-            N, t = _NT(point)
-            fn = "rate_log10_full_integral" if full else "rate_log10"
-            Z_o = float(getattr(m_opt, fn)(2, N, t)[0])
-            Z_c = float(getattr(m_con, fn)(2, N, t)[0])
-            if math.isfinite(Z_o) and math.isfinite(Z_c):
-                assert Z_o >= Z_c - 1e-12
+    """Exact-rect mode: T_req,c = S_c (optimistic) gives at least the rate of
+    S_c + g_c (conservative).  Dominant mode: the ramp-averaged mixture makes
+    `win_i_minus_one` inert at N_v >= 2 — the two settings must coincide."""
+    m_opt = sched_model(2, 2.0, win_iminus1=True)
+    m_con = sched_model(2, 2.0, win_iminus1=False)
+    for point in POINTS:
+        N, t = _NT(point)
+        Z_o = float(m_opt.rate_log10_full_integral(2, N, t)[0])
+        Z_c = float(m_con.rate_log10_full_integral(2, N, t)[0])
+        if math.isfinite(Z_o) and math.isfinite(Z_c):
+            assert Z_o >= Z_c - 1e-12
+        Z_od = float(m_opt.rate_log10(2, N, t)[0])
+        Z_cd = float(m_con.rate_log10(2, N, t)[0])
+        assert (Z_od == Z_cd) or (math.isnan(Z_od) and math.isnan(Z_cd))
 
 
-def test_ztf_public_conservative_identity():
-    """i=2, N_v=2: both channels' conservative durations equal t_cad, so the
-    mixture must equal the legacy rectangle at T_req = t_cad — i.e. a
-    schedule-free model with win_i_minus_one and the same t_cad (its
-    T_req = (i−1)·t_cad = t_cad), cuts off."""
-    m_mix = sched_model(2, 2.0)                       # conservative convention
-    m_ref = sched_model(1, 0.0, on=False, win_iminus1=True)
-    N = np.array([319.0])
-    t = np.array([2 * DAY_S])
-    # Budget must match too: the reference needs the same t_exp, so evaluate
-    # the mixture model's channels against a reference with half the f_live
-    # (N_v = 2 halves the budget).
-    m_ref_half = make_rate_model(
-        A_log=-4.68, f_live=0.1, t_overhead_s=0.0, omega_exp_deg2=47.0,
-        win_i_minus_one=True)
-    assert float(m_mix.t_exp_s(N, t)[0]) == pytest.approx(
-        float(m_ref_half.t_exp_s(N, t)[0]), rel=1e-12)
-    Z_mix = float(m_mix.rate_log10(2, N, t)[0])
-    Z_ref = float(m_ref_half.rate_log10(2, N, t)[0])
-    assert Z_mix == pytest.approx(Z_ref, rel=1e-12)
-    del m_ref
+def test_dominant_mixture_is_gap_average():
+    """The dominant mixture must equal Σ_c w_c · (1/g_c)∫ R_rect(S_c + u) du
+    (the exact gap-average of per-channel rectangles), evaluated here by a
+    dense trapezoid over the wait u — and lie inside the endpoint bracket
+    [R(S_c + g_c), R(S_c)]."""
+    m = sched_model(2, 2.0)
+    i_det = 2
+    for point in [(319.0, 2), (100.0, 3)]:
+        N, t = _NT(point)
+        t_b = np.broadcast_to(t, np.broadcast(N, t).shape)
+        R_avg = 0.0
+        R_lo = 0.0
+        R_hi = 0.0
+        for m_c, g_c, S_c in m.schedule.channels(i_det, t_b):
+            if m_c == 0:
+                continue
+            g = float(np.asarray(g_c).ravel()[0])
+            S = float(np.asarray(S_c).ravel()[0])
+            w_c = m_c * g / float(t[0])
+            u_grid = np.linspace(0.0, g, 801)
+            R_u = []
+            for u in u_grid:
+                Z_u = float(m.rate_log10(
+                    i_det, N, t, _channel=(np.array([S + u]), np.array([S]),
+                                           np.array([g])))[0])
+                R_u.append(10.0 ** Z_u if math.isfinite(Z_u) else 0.0)
+            R_avg += w_c * float(np.trapezoid(np.asarray(R_u), u_grid)) / g
+            R_lo += w_c * R_u[-1]     # worst-case wait, T = S_c + g_c
+            R_hi += w_c * R_u[0]      # zero wait, T = S_c
+        Z_mix = float(m.rate_log10(i_det, N, t)[0])
+        R_mix = 10.0 ** Z_mix
+        # The 5-point rule carries a small kink-limited quadrature error
+        # (R_rect has regime-boundary kinks in T; measured ≲1.6%) — far
+        # below the ×3–12 endpoint-convention bracket it replaces.
+        assert R_mix == pytest.approx(R_avg, rel=3e-2), (
+            f"gap-average mismatch at {point}: {R_mix:.6g} vs {R_avg:.6g}")
+        assert R_lo - 1e-12 <= R_mix <= R_hi + 1e-12
 
 
 def test_medians_route_numerical_at_Nv2():
     m = sched_model(2, 2.0)
     N, t = np.array([319.0]), np.array([2 * DAY_S])
     q_a, D_a = m.compute_medians(2, N, t, full_integral=False)
-    q_n, D_n = m.compute_medians_numerical(2, N, t)
+    q_n, D_n = m.compute_medians_numerical(2, N, t, dominant_sched_avg=True)
     assert float(q_a[0]) == float(q_n[0])
     assert float(D_a[0]) == float(D_n[0])
+
+
+def test_dominant_medians_finite_where_rate_drawn():
+    """The ramp-averaged dominant rate can be finite far beyond the endpoint
+    rectangles' reach (long cadence, intra-night pair) — the medians must
+    describe the same node mixture and stay finite there (the hover
+    invariant)."""
+    m = sched_model(6, 1.5)
+    N, t = np.array([471.0]), np.array([352 * DAY_S])
+    Z = float(m.rate_log10(2, N, t)[0])
+    assert math.isfinite(Z) and Z > -2.0
+    q_med, D_med = m.compute_medians(2, N, t, full_integral=False)
+    assert math.isfinite(float(q_med[0])) and math.isfinite(float(D_med[0]))
 
 
 # --------------------------------------------------------------------------- #

@@ -27,7 +27,7 @@ def regime_id_at(model, N_exp, t_cad_s, i_det: int, *, scalar: bool = True):
     """Active regime id (1..7 for A1..A7; NaN if unphysical) at a strategy point."""
     N = _as_arr(N_exp)
     t = _as_arr(t_cad_s)
-    masks = model.region_masks(int(i_det), N, t, include_unphysical=False)
+    masks = model.region_masks(int(i_det), N, t)
     shape = np.broadcast(N, t).shape
     ids = np.full(shape, np.nan, dtype=float)
     for k, key in enumerate(_REGIME_KEYS, start=1):

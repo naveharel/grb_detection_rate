@@ -169,7 +169,7 @@ def _compute_rate(
 
     rid = np.full(len(N_arr), np.nan)
     if color_on:
-        masks = model.region_masks(i_det, N_arr, t_arr, include_unphysical=False)
+        masks = model.region_masks(i_det, N_arr, t_arr)
         rid = _masks_1d(masks, len(N_arr))
 
     q_med, D_med_cm = model.compute_medians(
@@ -188,6 +188,7 @@ def _compute_rate(
         t_exp     = np.where(_inv, np.nan, t_exp)
         q_med     = np.where(_inv, np.nan, q_med)
         D_med_Gpc = np.where(_inv, np.nan, D_med_Gpc)
+        rid       = np.where(_inv, np.nan, rid)
 
     return R, t_exp, q_med, D_med_Gpc, rid
 
@@ -284,13 +285,17 @@ def _build_day_line_arrays(
     s_mode: str = "discrete",
     rise_random_start: bool = True,
     fade_random_start: bool = True,
+    approx_on: bool = False,
+    t_overhead_s: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build flat per-day overlay arrays.
 
     Returns (day_vals, N_flat, R_flat, rid_flat, t_exp_flat, q_med_flat, D_med_Gpc_flat)
     where each *_flat array has length n_days * n_N in row-major (day, N_exp) order.
     Per-point values outside the display domain (log10R < ZMIN_DISPLAY_LOG10) are set
-    to NaN so the JS side can treat them as gaps.
+    to NaN so the JS side can treat them as gaps.  In t_OH-approx mode the same
+    validity mask that blanks the surface (`_toh_invalid_mask`) blanks the
+    overlay, so the day lines never extend past the surface's valid region.
     """
     N_cols = np.asarray(N_cols, dtype=float)
     n_N = int(N_cols.size)
@@ -337,12 +342,14 @@ def _build_day_line_arrays(
             fade_random_start=fade_random_start,
         )
         log10R = np.asarray(log10R).reshape(1, -1).ravel()
-
-        # Match the display-domain gate used for the 3D overlay.
-        good = np.isfinite(N_cols) & np.isfinite(log10R) & (log10R >= float(ZMIN_DISPLAY_LOG10))
-        R_row = np.where(good, 10.0 ** log10R, np.nan)
-
         t_arr = np.full_like(N_cols, t_s)
+
+        # Match the display-domain gate used for the 3D overlay, plus the
+        # t_OH-approx validity mask applied to the surface itself.
+        good = np.isfinite(N_cols) & np.isfinite(log10R) & (log10R >= float(ZMIN_DISPLAY_LOG10))
+        if approx_on and float(t_overhead_s) > 0:
+            good &= ~_toh_invalid_mask(model, N_cols, t_arr, t_overhead_s)
+        R_row = np.where(good, 10.0 ** log10R, np.nan)
         t_exp_arr = model.t_exp_s(N_cols, t_arr)
         q_med_arr, D_med_cm_arr = model.compute_medians(
             int(i_det), N_cols, t_arr, full_integral=full_integral,
@@ -354,8 +361,7 @@ def _build_day_line_arrays(
         D_med_Gpc_arr = D_med_cm_arr / GPC_TO_CM
 
         # Regime IDs (always computed; JS can decide whether to colour by them).
-        masks = model.region_masks(int(i_det), N_line, np.full_like(N_line, t_s),
-                                   include_unphysical=False)
+        masks = model.region_masks(int(i_det), N_line, np.full_like(N_line, t_s))
         rid_row = np.full(n_N, np.nan, dtype=float)
         for k, key in enumerate(["A1", "A2", "A3", "A4", "A5", "A6", "A7"], start=1):
             mk = np.asarray(masks[key]).reshape(1, -1).ravel()
@@ -432,7 +438,10 @@ def _build_models(params) -> dict:
     rise_random_start = bool(params.get("rise_random_start", True))
     fade_random_start = bool(params.get("fade_random_start", True))
     toh_approx   = bool(params.get("toh_approx", False))
-    win_iminus1  = bool(params.get("win_iminus1", False))
+    # Detection-window convention default: (i−1)·t_cad — i detections need
+    # only bracket the i−1 gaps between them.  Callers can still request the
+    # legacy i·t_cad convention explicitly (win_iminus1=False).
+    win_iminus1  = bool(params.get("win_iminus1", True))
     win_tp       = bool(params.get("win_tp", False))
 
     physics_kw = dict(
@@ -547,6 +556,25 @@ def _cr_kwargs_from_state(state: dict) -> dict:
     )
 
 
+def _snap_optical_tcad_s(t_cad_s: float, optical_on: bool) -> float:
+    """Snap a slice/view cadence to the nearest integer day in optical mode.
+
+    The slice-position sliders carry log-spaced stops whose day values are
+    inexact to <0.01% in either direction (round(log10(n·86400), 6) — e.g. the
+    "1 day" stop is 10^4.936514 s = 86400.05 s); the surface's validity mask
+    rejects such cadences, so views evaluated at the raw stop would sample a
+    state the surface calls invalid.  Mirrors the optimizer's integer-day snap
+    (core.maximize_log_surface_iterative), with a 0.1% tolerance below one day
+    so a rounded-down "1 day" stop still counts as one night.  Genuinely
+    sub-day values are returned unchanged — they stay invalid (empty views)
+    by design.
+    """
+    t = float(t_cad_s)
+    if not optical_on or not math.isfinite(t) or t < 0.999 * DAY_S:
+        return t
+    return float(max(1, round(t / float(DAY_S)))) * float(DAY_S)
+
+
 def _compute_nslice_sweep(state: dict, t_cad_fix_s: float) -> dict:
     """N-slice 1-D sweep at user-chosen t_cad. Returns flat payload for JS."""
     i_det        = state["i_det"]
@@ -554,6 +582,7 @@ def _compute_nslice_sweep(state: dict, t_cad_fix_s: float) -> dict:
     model        = state["model"]
     optical_on   = state["optical_on"]
 
+    t_cad_fix_s = _snap_optical_tcad_s(t_cad_fix_s, optical_on)
     N_sweep = np.logspace(0.0, math.log10(N_exp_max), 800)
     t_fixed = np.full_like(N_sweep, float(t_cad_fix_s))
     if optical_on and float(t_cad_fix_s) < DAY_S:
@@ -671,7 +700,7 @@ def _compute_qdview_sweep(
     fade_random_start = bool(state["fade_random_start"])
 
     N_exp_fix   = float(N_exp_fix)
-    t_cad_fix_s = float(t_cad_fix_s)
+    t_cad_fix_s = _snap_optical_tcad_s(float(t_cad_fix_s), optical_on)
 
     # win_from_peak has no closed dominant-term curves (q-dependent D_eff) —
     # the R(q)/R(D) views fall back to the full-integral branch for it; same
@@ -704,10 +733,11 @@ def _compute_qdview_sweep(
     )
     D_grid_Gpc = D_grid_cm / GPC_TO_CM
 
-    def _empty_payload() -> dict:
+    def _empty_payload(reason: str | None = None) -> dict:
         nans_q = [None] * N_q_view
         nans_D = [None] * N_D_view
         return {
+            "qdview_empty_reason":      reason,
             "qdview_q_grid_flat":       _array_to_list(q_grid),
             "qdview_Rq_cum_flat":       nans_q,
             "qdview_Rq_diff_flat":      nans_q,
@@ -730,13 +760,18 @@ def _compute_qdview_sweep(
 
     # Optical mode has no sub-day cadences (intra-night sampling is N_v/Δt_v).
     if optical_on and t_cad_fix_s < DAY_S:
-        return _empty_payload()
+        return _empty_payload(
+            "optical mode has no sub-day cadences — pick a whole number of "
+            "nights (intra-night sampling is the schedule's "
+            "N<sub>v</sub>/Δt<sub>v</sub>)")
 
     # t_OH approximation validity — same predicate as in _compute_rate.
     if approx_on and t_overhead_s > 0:
         if bool(_toh_invalid_mask(model, np.array([N_exp_fix]),
                                   np.array([t_cad_fix_s]), t_overhead_s)[0]):
-            return _empty_payload()
+            return _empty_payload(
+                "strategy is t<sub>OH</sub>-invalid at this point "
+                "(t<sub>exp</sub> ≤ t<sub>OH</sub>)")
 
     # rate_log10 with return_components gives us the active regime + the scalars
     # needed for the dominant-term R(q)/R(D) closed forms (q_E, q_i, D_dec, D_i, fO).
@@ -759,7 +794,8 @@ def _compute_qdview_sweep(
             active = k
             break
     if active is None:
-        return _empty_payload()
+        return _empty_payload("no active detection regime at this strategy "
+                              "point (rate ≈ 0 or outside the valid region)")
 
     regime_id_val = float(regime_keys.index(active) + 1)
     fO_val    = float(np.asarray(comps["f_Omega"]).ravel()[0])
@@ -999,7 +1035,6 @@ def compute_all(params) -> dict:
         if toh_approx and t_overhead_s > 0:
             invalid = _toh_invalid_mask(model, X, Y_s, t_overhead_s)
             Z_plot = np.where(invalid, np.nan, Z_plot)
-            Z_raw = np.where(invalid, np.nan, Z_raw)
             if regime_id is not None:
                 regime_id = np.where(invalid, np.nan, regime_id)
             t_exp_g     = np.where(invalid, np.nan, t_exp_g)
@@ -1130,13 +1165,6 @@ def compute_all(params) -> dict:
         zmax_log10 = float(np.nanmax(Z_plot)) if np.any(np.isfinite(Z_plot)) else 0.0
         R_surface_max = float(np.nanmax(R_lin)) if np.any(np.isfinite(R_lin)) else 0.0
 
-        # ── Gap times (retired) ──────────────────────────────────────────────
-        # Optical mode has no forbidden sub-day band any more (the whole
-        # sub-day region is out of the cadence domain); keep the keys as None
-        # so the JS gap rectangle stays hidden without a payload-shape change.
-        gap_lo_h = None
-        gap_hi_h = None
-
         # ── Discrete-day overlay payload (optical only) ──────────────────────
         if optical_on:
             N_cols = np.asarray(X[0, :], dtype=float)
@@ -1152,6 +1180,7 @@ def compute_all(params) -> dict:
                 s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
                 rise_random_start=rise_random_start,
                 fade_random_start=fade_random_start,
+                approx_on=toh_approx, t_overhead_s=t_overhead_s,
             )
             n_days, n_N = (int(day_vals.size),
                            int(day_N.shape[1]) if day_N.ndim == 2 and day_vals.size > 0 else 0)
@@ -1220,8 +1249,6 @@ def compute_all(params) -> dict:
             "F_nu_tdec_Jy": F_nu_tdec_Jy,
             "F_dec_override_applied": bool(state["fdec_override_applied"]),  # TEMP-FDEC-OVERRIDE
             "N_exp_max":    float(N_exp_max),
-            "gap_lo_h":     _nan_to_none(gap_lo_h) if gap_lo_h is not None else None,
-            "gap_hi_h":     _nan_to_none(gap_hi_h) if gap_hi_h is not None else None,
             "day_line_t_cad_days":     day_line_t_cad_days,
             "day_line_N_flat":         day_line_N_flat,
             "day_line_R_flat":         day_line_R_flat,

@@ -10,6 +10,10 @@ const REGIME_LABELS = [
 ];
 const TCAD_TICKVALS_H = [1/3600, 1/60, 1, 6, 24, 168, 730, 8760];
 const TCAD_TICKTEXT   = ['1 sec','1 min','1 hr','6 hr','1 day','1 wk','1 mo','1 yr'];
+// Optical mode: integer-night cadences only — sub-day ticks are meaningless
+// there, so the cadence axes switch to a day-scale tick set.
+const TCAD_TICKVALS_OPT_H = [24, 48, 96, 168, 336, 730, 2190, 8760];
+const TCAD_TICKTEXT_OPT   = ['1 d','2 d','4 d','1 wk','2 wk','1 mo','3 mo','1 yr'];
 const AMBER = '#fbbf24';
 const CORAL = '#f87171';
 const VIOLET = '#a78bfa';   // ZTF high-cadence reference marker
@@ -49,10 +53,13 @@ const PLASMA_SCALE = [
 // split was the public mode's unmodelled second visit).
 //   rubin    — universal cadence ~2 visits/night ~30 min apart; f_eff = 0.7
 //              (the old wall-clock 0.7 was impossible: it exceeded f_night).
+// t_night multiplies the budget directly (f_live = f_eff·f_night), so it is
+// part of a survey's identity: presets pin it (validation assumes 10 h) and
+// the match keys include it, so dragging t_night grays the ZTF markers.
 const PRESETS = {
-  ztf_public: {i:2, f_eff:0.40, nv:2, dtv:2,    A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
-  ztf_hc:     {i:2, f_eff:0.40, nv:6, dtv:1.5,  A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
-  rubin:      {i:2, f_eff:0.7,  nv:2, dtv:0.5,  A_log:-7.0,  omega_exp:9.6, t_oh:30, optical:true},
+  ztf_public: {i:2, f_eff:0.40, nv:2, dtv:2,    A_log:-4.68, omega_exp:47,  t_oh:15, tnight:10, optical:true},
+  ztf_hc:     {i:2, f_eff:0.40, nv:6, dtv:1.5,  A_log:-4.68, omega_exp:47,  t_oh:15, tnight:10, optical:true},
+  rubin:      {i:2, f_eff:0.7,  nv:2, dtv:0.5,  A_log:-7.0,  omega_exp:9.6, t_oh:30, tnight:10, optical:true},
 };
 // Map preset keys to DOM slider/switch IDs.
 const PRESET_MAP = {
@@ -63,6 +70,7 @@ const PRESET_MAP = {
   A_log:     'Alog_slider',
   omega_exp: 'omegaexp_slider',
   t_oh:      'toh_slider',
+  tnight:    'tnight_slider',
 };
 let _activePresetKey = null;     // which preset is currently active (drift detection)
 let _presetApplying  = false;    // suppress drift detection while we apply a preset
@@ -148,17 +156,6 @@ const SLIDER_IDS = [
   'fdec_log', // TEMP-FDEC-OVERRIDE
 ];
 
-// Effective minimum: respects optional `data-min-floor` on the .cs-wrap, which
-// is used to impose a dynamic lower bound on a slider while keeping its
-// structural `min` (and the baked-in tick positions) unchanged.
-function _effMin(sl) {
-  const slMin = parseFloat(sl.min);
-  const wrap = sl.closest('.cs-wrap');
-  if (!wrap) return slMin;
-  const floor = parseFloat(wrap.dataset.minFloor);
-  return isFinite(floor) && floor > slMin ? floor : slMin;
-}
-
 // Visual helpers: paint filled track up to current value + toggle active-dot class.
 function _sliderPct(sl) {
   const mn = parseFloat(sl.min), mx = parseFloat(sl.max);
@@ -187,6 +184,7 @@ function syncFromSlider(id) {
   if (id === 'deuc' || id === 'thetaj' || id === 'rho_grb_log') updateGrbCounts();
   if (id === 'Alog') updateMagDisplay();
   if (id === 'nv') _updateDtvDim();
+  if (id === 'nv' || id === 'dtv' || id === 'tnight') _updateScheduleRunDisplay();
   if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
   if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
   _checkPresetDrift();
@@ -204,9 +202,7 @@ function syncFromInput(id) {
     inp.value = sl.value;
     return;
   }
-  // Clamp to [effective min, slider.max]. _effMin honours an optional
-  // dynamic floor set via data-min-floor on the .cs-wrap.
-  const mn = _effMin(sl), mx = parseFloat(sl.max);
+  const mn = parseFloat(sl.min), mx = parseFloat(sl.max);
   const clamped = Math.min(Math.max(v, mn), mx);
   inp.value = clamped;
   sl.value = clamped;
@@ -214,6 +210,7 @@ function syncFromInput(id) {
   if (id === 'deuc' || id === 'thetaj' || id === 'rho_grb_log') updateGrbCounts();
   if (id === 'Alog') updateMagDisplay();
   if (id === 'nv') _updateDtvDim();
+  if (id === 'nv' || id === 'dtv' || id === 'tnight') _updateScheduleRunDisplay();
   if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
   if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
   _checkPresetDrift();
@@ -257,17 +254,13 @@ function _initCustomSliders() {
       const rect = area.getBoundingClientRect();
       const p = Math.min(1, Math.max(0, (clientX - rect.left - CS_R) / (rect.width - 2 * CS_R)));
       const slMin = parseFloat(sl.min), mx = parseFloat(sl.max), st = parseFloat(sl.step) || 1;
-      // Compute the value from the click position using the structural min so
-      // tick alignment stays consistent; clamp to the effective (dynamic) min
-      // at the end so sliders with a data-min-floor cannot be dragged below it.
       let v = slMin + p * (mx - slMin);
       if (discreteValues && discreteValues.length) {
         v = nearestDiscrete(v);
       } else if (st > 0) {
         v = Math.round((v - slMin) / st) * st + slMin;
       }
-      const floor = _effMin(sl);
-      return Math.min(mx, Math.max(floor, v));
+      return Math.min(mx, Math.max(slMin, v));
     }
     function applyVal(v) {
       sl.value = v;
@@ -292,7 +285,7 @@ function _initCustomSliders() {
     window.addEventListener('touchend', () => { dragging = false; wrap.classList.remove('cs-dragging'); });
 
     if (thumb) thumb.addEventListener('keydown', e => {
-      const mn = _effMin(sl), mx = parseFloat(sl.max), st = parseFloat(sl.step) || 1;
+      const mn = parseFloat(sl.min), mx = parseFloat(sl.max), st = parseFloat(sl.step) || 1;
       let v = parseFloat(sl.value);
       if (discreteValues && discreteValues.length) {
         // Discrete slider: arrows step between adjacent listed values.
@@ -338,9 +331,15 @@ function _syncModeBlocks(opticalOn) {
 }
 document.getElementById('optical-switch').addEventListener('change', function() {
   _syncModeBlocks(this.checked);
+  // Optical mode snaps slice cadences to whole nights — refresh the captions.
+  updateNsliceTfixDisplay();
+  updateQdviewTfixDisplay();
   _checkPresetDrift();
   triggerUpdate();
 });
+// Defensive boot sync: visibility must reflect the actual checkbox state even
+// if the template's inline display attributes ever drift from the default.
+_syncModeBlocks(document.getElementById('optical-switch').checked);
 
 // Other toggles
 ['toh-approx-switch','regime-color-switch',
@@ -493,6 +492,7 @@ document.getElementById('preset-select').addEventListener('change', function() {
   _presetApplying = false;
   updateGrbCounts();
   _updateDtvDim();
+  _updateScheduleRunDisplay();
   _fdecOverride = false; _updateFdecNote();  // TEMP-FDEC-OVERRIDE — presets return to physics-derived F_dec
   triggerUpdate();
 });
@@ -506,7 +506,7 @@ document.getElementById('preset-select').addEventListener('change', function() {
 // excluded: they are free user knobs, not part of a survey's identity, so
 // toggling them does not gray the marker. Used to gray the ZTF
 // metrics/markers when the current configuration is no longer that survey.
-const PRESET_MATCH_KEYS = ['i', 'f_eff', 'nv', 'dtv', 'A_log', 'omega_exp', 't_oh'];
+const PRESET_MATCH_KEYS = ['i', 'f_eff', 'nv', 'dtv', 'A_log', 'omega_exp', 't_oh', 'tnight'];
 function paramsMatchPreset(key) {
   const p = PRESETS[key];
   if (!p) return false;
@@ -584,7 +584,6 @@ function readParams() {
     qdview_nfix_log: v('qdview-nfix-slider'),
     qdview_tfix_log: v('qdview-tfix-slider'),
     F_dec_override_Jy: _fdecOverride ? Math.pow(10, v('fdec_log_slider')) : null,  // TEMP-FDEC-OVERRIDE
-    nx: 120, ny: 150,
   };
 }
 
@@ -608,10 +607,22 @@ function _fmtNexp(n) {
   return (n / 1e6).toFixed(1) + 'M';
 }
 
+// Optical mode snaps slice/view cadences to whole nights in the bridge — the
+// caption must show the value that is actually evaluated, not the raw stop.
+// The 0.1% tolerance below one day matches the bridge's _snap_optical_tcad_s
+// (slider stops are rounded log10 values, inexact in either direction).
+function _displayTcadS(raw_s) {
+  const optical = document.getElementById('optical-switch').checked;
+  if (optical && isFinite(raw_s) && raw_s >= 0.999 * DAY_S) {
+    return Math.max(1, Math.round(raw_s / DAY_S)) * DAY_S;
+  }
+  return raw_s;
+}
+
 function updateNsliceTfixDisplay() {
   const sl = document.getElementById('nslice-tfix-slider');
   const el = document.getElementById('nslice-tfix-value');
-  if (sl && el) el.textContent = _fmtTcad(Math.pow(10, parseFloat(sl.value)));
+  if (sl && el) el.textContent = _fmtTcad(_displayTcadS(Math.pow(10, parseFloat(sl.value))));
 }
 function updateTsliceNfixDisplay() {
   const sl = document.getElementById('tslice-nfix-slider');
@@ -626,7 +637,7 @@ function updateQdviewNfixDisplay() {
 function updateQdviewTfixDisplay() {
   const sl = document.getElementById('qdview-tfix-slider');
   const el = document.getElementById('qdview-tfix-value');
-  if (sl && el) el.textContent = _fmtTcad(Math.pow(10, parseFloat(sl.value)));
+  if (sl && el) el.textContent = _fmtTcad(_displayTcadS(Math.pow(10, parseFloat(sl.value))));
 }
 
 // ── Derived sidebar displays (instant, no Python needed) ──────────────────
@@ -652,6 +663,29 @@ function _updateDtvDim() {
   if (!block) return;
   const nv = parseFloat(document.getElementById('nv_slider').value);
   block.style.opacity = (isFinite(nv) && nv <= 1) ? '0.45' : '';
+}
+
+// Schedule feasibility readout: the visit run (N_v−1)·Δt_v must fit inside
+// the night window t_night (which lives in the collapsed Constraints section)
+// — surface the coupling as a derived line, warning when infeasible (the
+// engine then renders every optical cell invalid).
+function _updateScheduleRunDisplay() {
+  const el = document.getElementById('schedule-run-display');
+  if (!el) return;
+  const nv  = parseFloat(document.getElementById('nv_slider').value);
+  const dtv = parseFloat(document.getElementById('dtv_slider').value);
+  const tn  = parseFloat(document.getElementById('tnight_slider').value);
+  if (!isFinite(nv) || !isFinite(dtv) || !isFinite(tn)) { el.innerHTML = ''; return; }
+  if (nv <= 1) { el.innerHTML = ''; return; }
+  const run = (nv - 1) * dtv;
+  if (run > tn) {
+    el.innerHTML = '<span class="derived-info warning">⚠ visit run (N<sub>v</sub>−1)·Δt<sub>v</sub> = '
+      + run.toFixed(1) + ' h &gt; t<sub>night</sub> = ' + tn.toFixed(1)
+      + ' h — schedule infeasible, all cells invalid</span>';
+  } else {
+    el.innerHTML = '<span class="derived-info">visit run (N<sub>v</sub>−1)·Δt<sub>v</sub> = '
+      + run.toFixed(1) + ' h of t<sub>night</sub> = ' + tn.toFixed(1) + ' h</span>';
+  }
 }
 
 // TEMP-FDEC-OVERRIDE — begin
@@ -698,6 +732,7 @@ function updateMagDisplay() {
 }
 updateMagDisplay();
 _updateDtvDim();
+_updateScheduleRunDisplay();
 
 // ── Debounced update trigger ───────────────────────────────────────────────
 function triggerUpdate() {
@@ -988,17 +1023,22 @@ function regimeLegendTraces2D(colorOn) {
 }
 
 // Only emit the optional hover lines when the scalar is finite.
-function markerHover3D(label, t_exp_s, q_med, D_med_Gpc) {
+// `t_cad_days` (optional): optical mode — show the cadence in whole nights
+// alongside the hour value, matching the day-line axis/badges.
+function markerHover3D(label, t_exp_s, q_med, D_med_Gpc, t_cad_days) {
   const okTexp = t_exp_s   != null && isFinite(t_exp_s);
   const okQ    = q_med     != null && isFinite(q_med);
   const okD    = D_med_Gpc != null && isFinite(D_med_Gpc);
   const texpStr = okTexp ? ('<br>t<sub>exp</sub> = ' + fmtG(t_exp_s) + ' s') : '';
   const qStr    = okQ    ? ('<br>q<sub>med</sub> = ' + fmtG(q_med)) : '';
   const dStr    = okD    ? ('<br>D<sub>med</sub> = ' + fmtG(D_med_Gpc) + ' Gpc') : '';
+  const tcadStr = (t_cad_days != null && isFinite(t_cad_days))
+    ? '<br>t<sub>cad</sub> = ' + fmtG(t_cad_days) + ' day (%{y:.4g} hr)'
+    : '<br>t<sub>cad</sub> = %{y:.4g} hr';
   return (
     label +
     '<br>N<sub>exp</sub> = %{x:.4g}' +
-    '<br>t<sub>cad</sub> = %{y:.4g} hr' +
+    tcadStr +
     texpStr + qStr + dStr +
     '<br>R<sub>det</sub> = %{z:.4g} yr ⁻¹<extra></extra>'
   );
@@ -1110,6 +1150,10 @@ function addDay3DLines(traces, shared, params, zmaxLog) {
     const yG   = good.map(_ => yHr);
     const zG   = good.map(j => Rrow[j]);
     const cdG  = good.map(j => [cdNum(tErow[j]), cdNum(qErow[j]), cdNum(dErow[j])]);
+    // Constant per line: show the cadence in whole nights next to the hours.
+    const dayHover = XYZ_HOVER.replace(
+      't<sub>cad</sub> = %{y:.4g} hr',
+      't<sub>cad</sub> = ' + dl.days[d] + ' day (%{y:.4g} hr)');
 
     if (regimeMode && ridRow) {
       const ridG = good.map(j => ridRow[j]);
@@ -1131,7 +1175,7 @@ function addDay3DLines(traces, shared, params, zmaxLog) {
             line: {color: col, width: 6},
             marker: {size: 0, opacity: 0.001},
             showlegend: false,
-            hovertemplate: XYZ_HOVER,
+            hovertemplate: dayHover,
           });
         }
         start = end;
@@ -1145,7 +1189,7 @@ function addDay3DLines(traces, shared, params, zmaxLog) {
         mode: 'lines',
         line: {color: 'rgba(255,255,255,0.12)', width: 1.0},
         showlegend: false,
-        hovertemplate: XYZ_HOVER,
+        hovertemplate: dayHover,
       });
       pendingMarkers.push({
         type: 'scatter3d',
@@ -1162,7 +1206,7 @@ function addDay3DLines(traces, shared, params, zmaxLog) {
           showscale: false,
         },
         showlegend: false,
-        hovertemplate: XYZ_HOVER,
+        hovertemplate: dayHover,
       });
     }
   }
@@ -1257,7 +1301,8 @@ function render3DSurface(data, params) {
       marker: {size: 10, color: AMBER, symbol: 'diamond'},
       text: ['Optimum'], textposition: 'top center',
       name: 'Optimum',
-      hovertemplate: markerHover3D('Grid optimum', data.t_exp_opt_s, data.q_med_opt, data.D_med_Gpc_opt),
+      hovertemplate: markerHover3D('Grid optimum', data.t_exp_opt_s, data.q_med_opt, data.D_med_Gpc_opt,
+        params.optical_survey ? data.t_cad_opt_s / 86400 : null),
     });
   }
 
@@ -1275,7 +1320,8 @@ function render3DSurface(data, params) {
                opacity: ztfMatch ? 1.0 : 0.45},
       text: ['ZTF public'], textposition: 'top center',
       name: 'ZTF public (15k deg², 2-night)',
-      hovertemplate: markerHover3D('ZTF public (2-night)', data.t_exp_ztf_s, data.q_med_ztf, data.D_med_Gpc_ztf),
+      hovertemplate: markerHover3D('ZTF public (2-night)', data.t_exp_ztf_s, data.q_med_ztf, data.D_med_Gpc_ztf,
+        params.optical_survey ? data.t_cad_ztf_s / 86400 : null),
     });
   }
   if (data.R_ztf_hc != null && isFinite(data.R_ztf_hc)) {
@@ -1287,7 +1333,8 @@ function render3DSurface(data, params) {
                opacity: hcMatch ? 1.0 : 0.45},
       text: ['ZTF HC'], textposition: 'top center',
       name: 'ZTF high-cadence (2.5k deg², 6/night)',
-      hovertemplate: markerHover3D('ZTF high-cadence (6/night)', data.t_exp_ztf_hc_s, data.q_med_ztf_hc, data.D_med_Gpc_ztf_hc),
+      hovertemplate: markerHover3D('ZTF high-cadence (6/night)', data.t_exp_ztf_hc_s, data.q_med_ztf_hc, data.D_med_Gpc_ztf_hc,
+        params.optical_survey ? data.t_cad_ztf_hc_s / 86400 : null),
     });
   }
 
@@ -1304,11 +1351,16 @@ function render3DSurface(data, params) {
   // 3D scene grid colour (slightly stronger than the 2D grids).
   const grid3d = dark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.12)';
 
-  // Empty-state detection: a "real" surface trace is type==='surface'.
-  // Phantom legend traces (scatter3d with x=[null]) and 3D markers don't count.
-  const hasSurface = traces.some(t => t.type === 'surface');
+  // Empty-state detection.  In optical mode every integer-day row is drawn as
+  // a day line (the surface trace is empty by construction), so the predicate
+  // counts BOTH surface cells and day-line data — a surface-only test would
+  // print a false "No detections" banner over a populated optical plot.
+  const hasSurfaceData = Z2dSurf.some(row => row.some(v => v != null && isFinite(v)));
+  const hasDayLineData = !!(params.optical_survey
+    && data.day_line_R_flat && data.day_line_R_flat.some(v => v != null && isFinite(v)));
+  const hasData = hasSurfaceData || hasDayLineData;
   const annotText = dark ? '#8ba0c0' : '#4b6080';
-  const layoutAnnotations = hasSurface ? [] : [{
+  const layoutAnnotations = hasData ? [] : [{
     text: 'No detections above 0.01/yr — adjust filters',
     xref: 'paper', yref: 'paper', x: 0.5, y: 0.5,
     showarrow: false, xanchor: 'center', yanchor: 'middle',
@@ -1317,7 +1369,7 @@ function render3DSurface(data, params) {
 
   // Toggle uirevision based on data presence — forces a camera/zoom reset
   // across the empty ↔ populated transition so a stale view doesn't persist.
-  const uirev = hasSurface ? 'keep-view-v1-data' : 'keep-view-v1-empty';
+  const uirev = hasData ? 'keep-view-v1-data' : 'keep-view-v1-empty';
 
   const layout = {
     uirevision: uirev,
@@ -1330,7 +1382,8 @@ function render3DSurface(data, params) {
       xaxis: {title: 'N<sub>exp</sub>', type: 'log', gridcolor: grid3d, showbackground: false},
       yaxis: {
         title: 't<sub>cad</sub>', type: 'log',
-        tickvals: TCAD_TICKVALS_H, ticktext: TCAD_TICKTEXT,
+        tickvals: params.optical_survey ? TCAD_TICKVALS_OPT_H : TCAD_TICKVALS_H,
+        ticktext: params.optical_survey ? TCAD_TICKTEXT_OPT : TCAD_TICKTEXT,
         gridcolor: grid3d, showbackground: false,
       },
       zaxis: {
@@ -1395,8 +1448,10 @@ function renderNSlice(data) {
   const hl = {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'};
   const traces = [];
 
-  // Regime legend first (so labels sort to top)
-  regimeLegendTraces2D(!!data.color_regimes).forEach(t => traces.push(t));
+  // Regime legend first (so labels sort to top).  The colour flag is UI
+  // state, not a payload key (the bridge never sends it) — read the switch.
+  const colorOnN = document.getElementById('regime-color-switch').checked;
+  regimeLegendTraces2D(colorOnN).forEach(t => traces.push(t));
 
   if (xv.length === 0) {
     Plotly.react('plot-nslice', traces, {
@@ -1410,7 +1465,7 @@ function renderNSlice(data) {
   }
 
   // Main rate curve — regime-coloured segments or single accent line
-  if (data.color_regimes && ridV.some(v => v != null && isFinite(v))) {
+  if (colorOnN && ridV.some(v => v != null && isFinite(v))) {
     segmentsByRegime(xv, zv, ridV, cdV, {
       lineWidth: 2.5, hovertemplate: N_HOVER, hoverlabel: hl,
     }).forEach(t => traces.push(t));
@@ -1617,7 +1672,8 @@ function renderTSlice(data) {
   const dark = darkMode();
   const accent = dark ? '#6d9eff' : '#3b6fff';
   const hl = {bgcolor: hoverBg(), font: {color: hoverFontCol()}, bordercolor: 'rgba(0,0,0,0)'};
-  const colorOn = !!data.color_regimes;
+  // UI state, not a payload key (the bridge never sends it) — read the switch.
+  const colorOn = document.getElementById('regime-color-switch').checked;
 
   const traces = [];
   regimeLegendTraces2D(colorOn).forEach(t => traces.push(t));
@@ -1820,7 +1876,9 @@ function renderTSlice(data) {
     margin: {l: 64, r: 24, b: 48, t: 40},
     xaxis: Object.assign(
       {title: 't<sub>cad</sub>', type: 'log',
-       tickvals: TCAD_TICKVALS_H, ticktext: TCAD_TICKTEXT,
+       // Optical mode has only the discrete integer-day region → day ticks.
+       tickvals: (hasDisc && !hasCont) ? TCAD_TICKVALS_OPT_H : TCAD_TICKVALS_H,
+       ticktext: (hasDisc && !hasCont) ? TCAD_TICKTEXT_OPT : TCAD_TICKTEXT,
        showgrid: true, gridcolor: gridColLight()},
       xRangeT ? {range: xRangeT, autorange: false} : {autorange: true},
     ),
@@ -1879,7 +1937,9 @@ function _renderQDPlot(opts) {
       template: dark ? 'plotly_dark' : 'plotly_white',
       paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
       annotations: [{
-        text: 'No valid data — strategy may be t<sub>OH</sub>-invalid',
+        text: 'No valid data — ' + ((_lastData && _lastData.qdview_empty_reason)
+          ? _lastData.qdview_empty_reason
+          : 'strategy may be t<sub>OH</sub>-invalid'),
         xref: 'paper', yref: 'paper', x: 0.5, y: 0.5, showarrow: false,
         font: {size: 13, color: annotCol()},
       }],
@@ -2205,7 +2265,7 @@ _b.compute_all({
     'optical_survey':False,'color_regimes':False,
     'full_integral':False,'qmin':0.0,'Dmin_cm':0.0,'s_fade':0.0,'s_rise':0.0,
     'rise_random_start':True,'fade_random_start':True,'toh_approx':False,
-    'win_iminus1':False,'win_tp':False,'nx':60,'ny':80,
+    'win_iminus1':True,'win_tp':False,
 })
 print('Bridge ready')
 `);

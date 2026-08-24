@@ -553,11 +553,12 @@ The new formulation is numerically cleaner (no near-cancellation of two large nu
 \section{Detection-Window Settings}
 \label{sec:window_settings}
 
-Two independent, off-by-default settings refine how the ``$\ge i$ detections within the cadence'' requirement is counted. Both off reproduces the legacy simple mode bit-for-bit (parity-tested); both on gives the corrected criterion
+Two independent settings refine how the ``$\ge i$ detections within the cadence'' requirement is counted. Both on gives the corrected criterion
 \begin{equation}
 \label{eq:window_corrected}
 t_{+}(D)-t_{p,\rm eff}(q)\;\ge\;(i-1)\,t_{\rm cad}.
 \end{equation}
+\textbf{Defaults.} The app defaults to \texttt{win\_i\_minus\_one} ON (the $(i-1)$ convention below, in both survey modes); \texttt{win\_from\_peak} is off by default and belongs to the app's Exact rate mode. The engine constructor's own defaults keep both off (the legacy simple mode, bit-for-bit parity-tested) so that library callers and archived baselines are unaffected by the app-level default.
 
 \subsection{Setting 1: $(i-1)$ cadence intervals (\texttt{win\_i\_minus\_one})}
 
@@ -568,6 +569,8 @@ T_{\rm req}=(i-1)\,t_{\rm cad}
 T_{\rm req}=i\,t_{\rm cad},
 \]
 substituted everywhere $T_{\rm req}$ enters ($q_i$, $D_i$, and the window-mode $D_{\rm eff}$ below; helper \texttt{\_t\_req\_s()}). Exactly equivalent to the legacy criterion evaluated at $i-1$. Degenerate case $i_{\rm det}=1$: $T_{\rm req}=0$, so $q_i\to1$ and $D_i\to+\infty$ --- a single detection at the peak needs no duration and the cadence constraint vanishes.
+
+At $N_v\ge2$ the toggle survives only where a hard endpoint window is still used --- the per-channel rectangles of the exact-rectangle mode (span $S_c$ vs $S_c+g_c$, Sec.~\ref{sec:sched_exact}); the gap-averaged dominant mixture and the from-peak phase ramp \emph{integrate} the waiting time instead of bracketing it, so the convention choice dissolves there (Sec.~\ref{sec:sched_dominant}).
 
 \subsection{Setting 2: window measured from the peak (\texttt{win\_from\_peak})}
 
@@ -666,6 +669,8 @@ enforced as a validity mask (not by rounding); all $t_{\rm cad}<1$\,day grid poi
 
 \subsection{Motivation}
 
+\paragraph{The idea in one paragraph.} A real optical survey visits a field in \emph{bursts of attention}: a couple of images tonight, hours apart, then nothing until the schedule brings the field back some nights later. A transient therefore doesn't need to survive a full inter-night cadence to be caught twice --- if it is up when the survey arrives, the second image lands \emph{hours} later, not days. The one-timescale model of the preceding sections cannot say this: it has a single gap $t_{\rm cad}$ between any two visits, so ``two detections'' always costs two cadences of survival. The night schedule splits the two timescales --- \emph{how often the survey returns to the field} ($t_{\rm cad}=n$ nights) and \emph{how it samples the field within a visit-night} ($N_v$ visits spaced $\Delta t_v$) --- and then re-derives everything the old single number was doing from the actual visit times.
+
 The survey model of the preceding sections assumes that consecutive visits to the same field are always separated by the one cadence $t_{\rm cad}$. That single number then plays five physically distinct roles:
 \begin{center}
 \small
@@ -699,12 +704,27 @@ G\equiv t_{\rm cad}-(N_v-1)\,\Delta t_v & k=0\quad\text{(the overnight gap, back
 \Delta t_v & k=1,\dots,N_v-1 ,
 \end{cases}
 \]
-so that $\sum_k g_k=t_{\rm cad}$ exactly. Two integers characterise how $i$ required detections wrap around nights:
+so that $\sum_k g_k=t_{\rm cad}$ exactly --- the gaps tile the whole period, which is what later makes the phase probabilities sum to one.
+
+\paragraph{Worked timeline (ZTF public).} $n=2$ nights, $N_v=2$, $\Delta t_v=2$\,h. One period of a field's clock:
+\begin{center}
+\small
+\begin{tabular}{lllll}
+\toprule
+$t$ [h] & 0 & 2 & 2--48 & 48 \\
+event & visit $v_0$ & visit $v_1$ & \emph{nothing} (rest of night, day, off-night, day) & next $v_0$ \\
+preceding gap & $G=46$\,h & $\Delta t_v=2$\,h & --- & $G=46$\,h \\
+\bottomrule
+\end{tabular}
+\end{center}
+A transient that turns on at a uniformly random time lands, with probability $46/48\approx96\%$, in the long $G$ gap --- so its first two visits are the \emph{intra-night pair} 2\,h apart; only with probability $2/48\approx4\%$ does it land between $v_0$ and $v_1$, in which case its second detection waits for the next visit-night. This 96/4 split is the whole mechanism behind the corrected (much larger) detection horizon.
+
+Two integers characterise how $i$ required detections wrap around nights:
 \[
 \mu=\left\lfloor\frac{i-1}{N_v}\right\rfloor,\qquad
 \rho=(i-1)\bmod N_v ,
 \]
-and the \emph{span} of $i$ consecutive visits starting from visit $k$, $S_k=v_{k+i-1}-v_k$ (periodic extension $v_{k+mN_v}=v_k+m\,t_{\rm cad}$), takes only two values:
+and the \emph{span} of $i$ consecutive visits starting from visit $k$, $S_k=v_{k+i-1}-v_k$ (periodic extension $v_{k+mN_v}=v_k+m\,t_{\rm cad}$), answers the question ``if my first detection is visit $k$, how long until my $i$-th?''.  It takes only two values:
 \begin{equation}
 \label{eq:spans}
 S_k=\begin{cases}
@@ -721,11 +741,11 @@ The schedule replaces, rather than coexists with, sub-day cadences: in optical m
 \subsection{Unified exposure-time budget and $f_{\rm eff}$}
 \label{sec:sched_budget}
 
-\paragraph{Motivation for replacing $f_{\rm live}$.} The wall-clock live fraction $f_{\rm live}$ conflates two unrelated things: the astronomical night fraction $f_{\rm night}=t_{\rm night}/86400$ (geometry) and how much of the night the program actually uses (weather, moon, engineering, time-share). Define instead
+\paragraph{Motivation for replacing $f_{\rm live}$.} The wall-clock live fraction $f_{\rm live}$ conflates two unrelated things: the astronomical night fraction $f_{\rm night}=t_{\rm night}/86400$ (geometry) and how much of the night the program's exposures actually occupy (its time share of the telescope, plus engineering losses). Define instead
 \[
 f_{\rm eff}\in(0,1]:\quad\text{usable fraction of the night window},\qquad f_{\rm live}=f_{\rm eff}\,f_{\rm night}.
 \]
-A useful diagnostic follows: \emph{different observing modes of the same telescope should have similar $f_{\rm eff}$} (same weather, same time-share) --- a large mismatch signals a modelling error. The legacy calibration indeed carried one: ZTF public and high-cadence needed $f_{\rm live}=0.08$ vs $0.17$ ($\times2.1$ apart), an artefact of the public mode's hidden second visit per night (below). The replacement is optical-only: non-optical mode has no night window, so $f_{\rm eff}$ is undefined there and the wall-clock $f_{\rm live}$ remains that mode's own budget parameter.
+$f_{\rm eff}$ budgets telescope \emph{time} only.  Which field-nights yield usable \emph{discovery} data --- weather, moon/background quality, Galactic-plane and reference-image losses --- is a different loss and is carried by the external coverage factor $\varepsilon_{\rm cov}$ of the validation analysis (Sec.~\ref{sec:sched_comparison}); charging weather to both would double-count it.  A useful diagnostic follows: \emph{different observing modes of the same telescope should have similar $f_{\rm eff}$} (same telescope, same nights) --- a large mismatch signals a modelling error. The legacy calibration indeed carried one: ZTF public and high-cadence needed $f_{\rm live}=0.08$ vs $0.17$ ($\times2.1$ apart), an artefact of the public mode's hidden second visit per night (below). The replacement is optical-only: non-optical mode has no night window, so $f_{\rm eff}$ is undefined there and the wall-clock $f_{\rm live}$ remains that mode's own budget parameter.
 
 \paragraph{Budget derivation.} The survey footprint is $\Omega_{\rm srv}=N_{\rm exp}\Omega_{\rm exp}$. Fields are staggered so that each night $N_{\rm exp}/n$ fields are due, each receiving $N_v$ visits. The program's usable time per night, $f_{\rm eff}\,t_{\rm night}$, must accommodate them: $(N_{\rm exp}/n)\,N_v\,(t_{\rm exp}+t_{\rm OH})=f_{\rm eff}\,t_{\rm night}$, i.e.
 \begin{equation}
@@ -757,7 +777,9 @@ Both modes land on $f_{\rm eff}\approx0.40$ --- equal, as the diagnostic demands
 \subsection{Detection probability $P_i(T)$}
 \label{sec:sched_Pi}
 
-A burst at $(q,D)$ is detectable over a window of length $T(q,D)$ (Sec.~\ref{sec:sched_window}). The burst's phase relative to the schedule is uniform, $u\sim\mathcal U(0,t_{\rm cad})$. The window $[u,\,u+T]$ contains at least $i$ visits iff, conditioning on the first visit at or after $u$ being visit $k$ (i.e.\ $u$ falls in the gap of length $g_k$ preceding it), the $i$-th visit $v_{k+i-1}$ still fits: $v_{k+i-1}\le u+T\iff u\ge v_{k+i-1}-T$. The passing measure inside gap $k$ is $\min(g_k,\,[T-S_k]_+)$, so
+\paragraph{Intuition.} Imagine sliding a window of fixed length $T$ (the time the burst stays above threshold) along the periodic visit timeline, with a uniformly random starting phase. $P_i(T)$ is simply the fraction of starting phases for which the window covers at least $i$ visits. Because the visit pattern repeats every $t_{\rm cad}$, this fraction is a sum of ``passing lengths'', one per gap: a window starting inside gap $k$ catches visit $k$ first, and it catches $i$ visits precisely when it starts late enough in the gap that the $i$-th visit still fits inside it. Each gap therefore contributes a piece that grows linearly with $T$ (from zero once $T$ exceeds the span $S_k$, saturating at the full gap length $g_k$), and dividing by the period turns lengths into probabilities.
+
+Formally: a burst at $(q,D)$ is detectable over a window of length $T(q,D)$ (Sec.~\ref{sec:sched_window}). The burst's phase relative to the schedule is uniform, $u\sim\mathcal U(0,t_{\rm cad})$. The window $[u,\,u+T]$ contains at least $i$ visits iff, conditioning on the first visit at or after $u$ being visit $k$ (i.e.\ $u$ falls in the gap of length $g_k$ preceding it), the $i$-th visit $v_{k+i-1}$ still fits: $v_{k+i-1}\le u+T\iff u\ge v_{k+i-1}-T$. The passing measure inside gap $k$ is $\min(g_k,\,[T-S_k]_+)$, so
 \begin{equation}
 \label{eq:P_i}
 P_i(T)=\frac{1}{t_{\rm cad}}\Bigl[\min\bigl(G,\,[T-S_A]_+\bigr)
@@ -769,7 +791,7 @@ a piecewise-linear function of $T$ with at most four breakpoints. It replaces, i
 \paragraph{Limits and checks.}
 \begin{itemize}
 \item \textbf{$N_v=1$} ($\rho=0$, $\mu=i-1$, $G=t_{\rm cad}$): $P_i(T)=\operatorname{clip}\!\bigl(T/t_{\rm cad}-(i-1),\,0,\,1\bigr)$ --- the uniform-cadence ramp whose support endpoints $(i-1)\,t_{\rm cad}$ and $i\,t_{\rm cad}$ are precisely the two legacy window conventions (\texttt{win\_i\_minus\_one} on/off, Sec.~\ref{sec:window_settings}).
-\item \textbf{Saturation}: $P_i=1$ exactly for $T\ge T_{100}=S_A+\max(G,\Delta t_v)$ (in the standard regime $G\ge\Delta t_v$: $T_{100}=S_A+G$, and one checks $S_B+\Delta t_v=S_A+G$ identically). At $N_v=1$: $T_{100}=i\,t_{\rm cad}$.
+\item \textbf{Saturation}: $P_i=1$ exactly at $T_{100}=\max_c\,(S_c+g_c)$ over the \emph{nonempty} channels of Sec.~\ref{sec:sched_dominant}. Channel $A_G$ gives $S_A+G$ and channel $B$'s $S_B+\Delta t_v=S_A+G$ identically, so $T_{100}=S_A+\max(G,\Delta t_v)$ in general but $S_A+G$ whenever the $A_\Delta$ channel is empty ($\rho=N_v-1$ --- including every $N_v=1$ case, where $T_{100}=i\,t_{\rm cad}$ regardless of the inert $\Delta t_v$). \texttt{T\_certain()} implements exactly this.
 \item \textbf{$\Delta t_v\to0$}: $P_i\to\operatorname{clip}\!\bigl(T/t_{\rm cad}-\mu,\,0,\,1\bigr)$ --- $N_v$ simultaneous visits act as one, and only the $\lceil i/N_v\rceil$-night accumulation survives ($\mu=\lceil i/N_v\rceil-1$).
 \item \textbf{Short events, $i\le N_v$} ($\mu=0$, $S_A=(i-1)\Delta t_v$): for $T$ just above $S_A$ the first two terms ramp together, $P_i\approx(N_v-i+1)\,(T-S_A)/t_{\rm cad}$, saturating near $(N_v-i+1)\,\Delta t_v/t_{\rm cad}$. On the degenerate nightly schedule ($t_{\rm cad}=1$\,d, $N_v=t_{\rm night}/\Delta t_v$, $i\ll N_v$) this is $\approx t_{\rm night}/86400=f_{\rm night}$ --- the legacy continuous-branch night factor, now derived rather than imposed.
 \item \textbf{Monotonicity}: $P_i(T)$ is non-decreasing in $T$ and non-increasing in $i$; $\sum_k g_k=t_{\rm cad}$ guarantees $P_i\to1$ as $T\to\infty$.
@@ -779,21 +801,42 @@ a piecewise-linear function of $T$ with at most four breakpoints. It replaces, i
 \[
 P_2(T)=\frac{\min\bigl(G,[T-\Delta t_v]_+\bigr)+\min\bigl(\Delta t_v,[T-(2\,\mathrm d-\Delta t_v)]_+\bigr)}{2\,\mathrm d}.
 \]
-Reading: with probability $G/t_{\rm cad}\approx96\%$ the first two visits after the burst are an \emph{intra-night pair} spanning only $\Delta t_v$; with probability $\Delta t_v/t_{\rm cad}$ the burst lands between the pair and the two detections straddle the overnight gap. An event visible for $T\sim$\,half a period is caught with $P\approx T/t_{\rm cad}$ --- the ``factor $1/n$ for the missed nights''. The legacy encoding demanded $T_{\rm req}=4$\,d with certainty; the corrected requirement is a few hours at $96\%$ weight.
+Reading: with probability $G/t_{\rm cad}\approx96\%$ the first two visits after the burst are an \emph{intra-night pair} spanning only $\Delta t_v$; with probability $\Delta t_v/t_{\rm cad}$ the burst lands between the pair and the two detections straddle the overnight gap. An event visible for $T\sim$\,half a period is caught with $P\approx T/t_{\rm cad}$ --- the ``factor $1/n$ for the missed nights''. The legacy encoding demanded $T_{\rm req}=4$\,d with certainty; the corrected requirement is a few hours at $96\%$ weight. Numerically, with $\Delta t_v=2$\,h ($S_A=2$\,h, $G=S_B=46$\,h):
+\begin{center}
+\small
+\begin{tabular}{lcccccc}
+\toprule
+$T$ & 2\,h & 6\,h & 12\,h & 24\,h & 46\,h & 48\,h \\
+$P_2(T)$ & 0 & 8\% & 21\% & 46\% & 92\% & 100\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+--- a 6-hour transient, invisible to the legacy 4-day requirement, is already caught 8\% of the time; certainty needs the full period $S_A+G=48$\,h.
 
 \subsection{Detection window $T(q,D)$}
 \label{sec:sched_window}
 
 $P_i$ is a function of a \emph{window length}, so the detection criterion must be a window condition. The legacy from-burst rectangle ($t_p\le T_{\rm req}$ \textbf{and} $t_+\ge T_{\rm req}$) is not one --- it credits the pre-peak interval where the off-axis flux is negligible (Sec.~\ref{sec:window_settings}) --- but the corrected criterion of Eq.~\eqref{eq:window_corrected} is: the above-threshold window is $[\,t_{p,\rm eff}(q),\,t_+(q,D)\,]$ with
 \[
-T(q,D)=t_+(q,D)-t_{p,\rm eff}(q),
+T(q,D)=t_+(q,D)-t_{p,\rm eff}(q).
 \]
-and $t_+$ inverted from the single-phase decline exactly as in Eq.~\eqref{eq:D_window}. Every visit inside the window is above the flux limit, so counting visits is counting detections. The schedule machinery therefore composes with the existing window settings per channel (Sec.~\ref{sec:sched_dominant}): \texttt{win\_from\_peak} keeps its meaning (window measured from the peak), and \texttt{win\_i\_minus\_one} selects the optimistic span convention below.
+The crossing time $t_+$ is the \textbf{two-phase} inversion of the post-peak decline --- the same $D(t_+)$ relation as Eq.~\eqref{eq:D_window}, read in the other direction:
+\begin{equation}
+\label{eq:t_plus_two_phase}
+t_+(q,\tilde D)=
+\begin{cases}
+t_{p,\rm eff}\,(\tilde D_{\max}/\tilde D)^{k}, & \tilde D\ge\tilde D_b,\\[4pt]
+t_j\,(\tilde D_b/\tilde D)^{k_{\rm III}}, & \tilde D<\tilde D_b,
+\end{cases}
+\qquad
+\tilde D_b\equiv\tilde D_{\max}\,(t_{p,\rm eff}/t_j)^{1/k},
+\end{equation}
+with $k=2/|\alpha_\Phi|$ phase-selected at the peak and $\tilde D_b$ the distance whose crossing lands exactly at the jet break: closer events stay visible past $t_j$, where the decline steepens to $\alpha_{\rm III}$, so extrapolating the shallow pre-break slope would overestimate their windows (by up to a factor $\sim\!2$ in rate at multi-day cadences or $i\ge3$; at the ZTF presets the correction is small --- $1.4\%$ public, $0.1\%$ high-cadence).  Phase-III viewers ($t_{p,\rm eff}\ge t_j$) are single-phase exact already (\texttt{\_t\_plus\_sched()}, matching the legacy $N_v=1$ from-peak window \texttt{D\_from\_t\_plus()} --- the two modes share one inversion).  Every visit inside the window is above the flux limit, so counting visits is counting detections. The schedule machinery therefore composes with the existing window settings per channel (Sec.~\ref{sec:sched_dominant}): \texttt{win\_from\_peak} keeps its meaning (window measured from the peak), and \texttt{win\_i\_minus\_one} selects the optimistic span convention where a hard endpoint window survives.
 
-\subsection{Dominant-term (analytic) mode: mixture of rectangles}
+\subsection{Dominant-term (analytic) mode: gap-averaged mixture of rectangles}
 \label{sec:sched_dominant}
 
-Group the schedule phases by the gap the burst lands in. There are at most three \emph{channels} $c$, each a group of identical starting gaps:
+Group the schedule phases by the gap the burst lands in --- intuitively: ``which kind of wait did this burst draw?''.  There are at most three \emph{channels} $c$, each a group of identical starting gaps:
 \begin{center}
 \small
 \renewcommand{\arraystretch}{1.3}
@@ -807,28 +850,24 @@ $B$ & $\rho$ & $\Delta t_v$ & $S_B$ & the $i$ detections straddle one extra nigh
 \bottomrule
 \end{tabular}
 \end{center}
-with phase weights $w_c=m_c\,g_c/t_{\rm cad}$, $\sum_c w_c=1$. The analytic rate is the \textbf{mixture of the existing piecewise rectangles} evaluated at per-channel required durations:
+with phase weights $w_c=m_c\,g_c/t_{\rm cad}$, $\sum_c w_c=1$. Within channel $c$ the wait $u$ from the window start to the first visit is uniform on $[0,g_c]$, and \emph{a fixed wait makes the detection criterion a hard rectangle} at duration $T=S_c+u$ (the window must cover the wait plus the span). The channel rate is therefore, exactly,
 \begin{equation}
 \label{eq:R_mixture}
-R_{\rm dom}=\sum_c w_c\,R_{\rm rect}\bigl(T_{{\rm req},c}\bigr),
+R_{\rm dom}=\sum_c w_c\,\bar R_c,
 \qquad
-T_{{\rm req},c}=
-\begin{cases}
-S_c+g_c & \text{legacy convention (worst-case wait)}\\
-S_c & \texttt{win\_i\_minus\_one}\text{ (zero wait)},
-\end{cases}
+\bar R_c=\frac1{g_c}\int_0^{g_c} R_{\rm rect}\bigl(T=S_c+u\bigr)\,du,
 \end{equation}
-where $R_{\rm rect}(T)$ is the unmodified A1--A7 machinery with $q_i(T)$, $D_i(T)$ (and, under \texttt{win\_from\_peak}, $D_w(q;T)$) substituted for their $i\,t_{\rm cad}$ forms. No new integrals appear; the model stays closed-form and piecewise.
+where $R_{\rm rect}(T)$ is the unmodified A1--A7 machinery with $q_i(T)$, $D_i(T)$ and the per-channel cut baselines (Sec.~\ref{sec:sched_cuts}) substituted for their $i\,t_{\rm cad}$ forms. $R_{\rm rect}$ is piecewise power-law in $T$, so a fixed 5-point Gauss--Legendre rule evaluates the average (quadrature error $\lesssim2\%$ --- far below the endpoint spread it replaces, below). Under \texttt{win\_from\_peak} no closed rectangle exists in $T$ and the rate falls back to the exact $q$-integral, exactly mirroring the legacy fallback.
 
-\paragraph{Reduction and bracketing.} At $N_v=1$ there is a single channel with $w=1$ and $T_{\rm req}=i\,t_{\rm cad}$ (legacy) or $(i-1)\,t_{\rm cad}$ --- bit-identical to the legacy model, both conventions. In general, within channel $c$ the wait to the first visit is uniform on $[0,g_c]$, so
+\paragraph{Reduction and bracketing.} At $N_v=1$ there is a single channel and the legacy model is used verbatim (that case never reaches this code path), with its live window toggle $T_{\rm req}=i\,t_{\rm cad}$ / $(i-1)\,t_{\rm cad}$. At $N_v\ge2$ the endpoint conventions $T=S_c+g_c$ (worst-case wait) and $T=S_c$ (zero wait) are exact bounds of the average, because
 \[
 \sum_c w_c\,\mathbf 1\{T\ge S_c+g_c\}\;\le\;P_i(T)\;\le\;\sum_c w_c\,\mathbf 1\{T\ge S_c\}
 \]
-pointwise: the two conventions of Eq.~\eqref{eq:R_mixture} are exact conservative/optimistic brackets of the phase ramp, generalising the legacy window-toggle bracket (Sec.~\ref{sec:window_settings}) channel-by-channel. The exact mode (Sec.~\ref{sec:sched_exact}) integrates the ramp itself.
+pointwise --- the average of Eq.~\eqref{eq:R_mixture} \emph{resolves} this bracket the same way the exact mode's phase ramp does, so the \texttt{win\_i\_minus\_one} toggle is inert here.  (Earlier iterations used the endpoints directly; at the ZTF public preset they straddled the exact mode by $\times0.3$ to $\times3.7$, while the gap average lands within $\sim$10\% of it with the cuts off.)
 
-\paragraph{Worked example --- ZTF public, continued.} With $\rho=1$, $N_v=2$ the $A_\Delta$ channel is empty and both surviving channels have the \emph{same} conservative duration, $S_A+G=S_B+\Delta t_v=t_{\rm cad}$: the conservative mixture is $R_{\rm rect}(t_{\rm cad}{=}2\,\mathrm d)$ --- already a factor-2 shorter requirement than the legacy $i\,t_{\rm cad}=4$\,d, because only \emph{one} inter-night wait is needed, not two. The optimistic mixture $w_{A_G}R_{\rm rect}(\Delta t_v)+w_B\,R_{\rm rect}(2\,\mathrm d-\Delta t_v)$ is dominated by the intra-night pair. The exact ramp lies between.
+\paragraph{Worked example --- ZTF public, continued.} With $\rho=1$, $N_v=2$ the $A_\Delta$ channel is empty. The conservative endpoints of both surviving channels coincide at $S_A+G=S_B+\Delta t_v=t_{\rm cad}=2$\,d --- already a factor-2 shorter requirement than the legacy $i\,t_{\rm cad}=4$\,d, because only \emph{one} inter-night wait is needed, not two --- while the optimistic endpoints are dominated by the intra-night pair at $S_A=\Delta t_v$. The gap average integrates $R_{\rm rect}$ across each bracket: numerically $97/{\rm yr}$ against the exact mode's $92/{\rm yr}$ at the preset (cuts off), where the endpoints gave $29$ and $349/{\rm yr}$.
 
-\paragraph{Regime classification and medians.} The displayed regime is that of the channel with the largest contribution $w_c\,R_c$ (at $N_v=1$: unchanged). The detected population is a mixture of the per-channel rectangle populations, so the closed-form medians of Eq.~\eqref{eq:filter_medians} no longer apply for $N_v\ge2$; \texttt{compute\_medians} takes the numerical path (the same forcing already used under \texttt{win\_from\_peak}).
+\paragraph{Regime classification and medians.} The displayed regime (colouring/hover only) is classified with the single endpoint-convention duration --- $T_{100}$ of \texttt{T\_certain()} (legacy convention) or $\min_c S_c$ of \texttt{T\_first\_pass()} (\texttt{win\_i\_minus\_one}) --- and the $(S_A,G)$ cut baselines; at $N_v=1$ this is the unchanged legacy classification. The detected population of Eq.~\eqref{eq:R_mixture} is the (channel, Gauss-node) mixture of rectangle populations, so the closed-form medians of Eq.~\eqref{eq:filter_medians} no longer apply for $N_v\ge2$: \texttt{compute\_medians} takes the numerical path (the forcing already used under \texttt{win\_from\_peak}) with the \emph{same} node mixture as the rate --- guaranteeing that every cell with a drawn rate has finite medians (the hover invariant). Channels whose rectangle rate is zero simply drop out of the sum; a cell is invalid only when every channel is.
 
 \subsection{Identification filters per channel}
 \label{sec:sched_cuts}
@@ -848,7 +887,9 @@ Within channel $c$ the wait from window start to first visit is $u'\sim\mathcal 
 \label{eq:W_schedule}
 W(q,\tilde D)=\frac{1}{t_{\rm cad}}\sum_c m_c\,\Bigl[\min\bigl(g_c,\;T(q,\tilde D)-S_c,\;\tau_{f,c},\;\tau_{r,c}\bigr)\Bigr]_+ .
 \end{equation}
-With the cuts off ($\tau\to+\infty$) Eq.~\eqref{eq:W_schedule} integrates $P_i$ of Eq.~\eqref{eq:P_i} exactly. Under \texttt{win\_from\_peak} the $T-S_c$ term implements the detection ramp; with it off, the detection window instead keeps the per-channel hard rectangle $D_i(T_{{\rm req},c})$ (matching the legacy exact-mode treatment, where the window is a hard cap and only the cuts ride the phase ramp). The full-integral rate replaces $V_w$ of Eq.~\eqref{eq:V_w} by the channel sum of the same closed-form pieces: each term of Eq.~\eqref{eq:W_schedule} is piecewise $\{$const $g_c$ $|$ ramp in $T$ $|$ ramp/const in $\tau\}$ with all breakpoint distances given by the existing single-phase inversions ($T=t_{p,\rm eff}[(\tilde D_{\max}/\tilde D)^k-1]$ and Eq.~\eqref{eq:t_lim}), and the same antiderivative family $G(\tilde D)$ with shifted constants. Cost: a Python-level loop over $\le3$ channels inside the existing $q$-chunk loop (temporaries freed between channels), i.e.\ $\approx3\times$ the current rise-on exact-mode cost on discrete-band optical cells only. The numerical medians and the $dR/dq$, $dR/dD$ views inherit the channel sum through the same two entry points ($V_w$-analogue and pointwise $W$).
+With the cuts off ($\tau\to+\infty$) Eq.~\eqref{eq:W_schedule} integrates $P_i$ of Eq.~\eqref{eq:P_i} exactly. Under \texttt{win\_from\_peak} the $T-S_c$ term implements the detection ramp with the two-phase crossing time of Eq.~\eqref{eq:t_plus_two_phase}; with it off, the detection window instead keeps the per-channel hard rectangle $D_i(T_{{\rm req},c})$ (matching the legacy exact-mode treatment, where the window is a hard cap and only the cuts ride the phase ramp). The rise deadline $t_{\rm lim}$ keeps the \emph{single-phase} inversion of Eq.~\eqref{eq:t_lim}, exactly like the legacy exact mode at $N_v=1$ --- an approximation both paths share by construction.
+
+The full-integral rate replaces $V_w$ of Eq.~\eqref{eq:V_w} by the channel sum of the same closed-form pieces: each term of Eq.~\eqref{eq:W_schedule} is piecewise $\{$const $g_c$ $|$ ramp in $T$ $|$ ramp/const in $\tau\}$, with the detection ramp split at the jet-break distance $\tilde D_b$ of Eq.~\eqref{eq:t_plus_two_phase} into two segments of the same antiderivative family $G(\tilde D)$ (pre-break with $k$, post-break with $k_{\rm III}$ and $t_j$ as the anchor).  One corner survives outside closed form: with \emph{both} ramps active, below $\tilde D_b$ the detection ramp carries $k_{\rm III}$ while the rise ramp carries $k$, and mixed exponents have no closed-form crossing --- that low-volume-weight segment is integrated by a composite Gauss--Legendre rule in $\log v$ ($v=\tilde D^3$; the smooth pieces are power laws, i.e.\ exponentials in $\log v$), split at the ramps' closed-form clip corners ($\tau=m_0$ and $\tau=0$ distances) so each piece is smooth up to the single crossing kink.  This is in-style: the exact mode already integrates $q$ numerically.  Cost: a Python-level loop over $\le3$ channels inside the existing $q$-chunk loop, on discrete-band optical cells only. The numerical medians and the $dR/dq$, $dR/dD$ views inherit the channel sum through the same two entry points ($V_w$-analogue and pointwise $W$); the medians' distance-level grid is additionally capped by the largest per-channel window so its resolution follows the detected population, not the flux horizon.
 
 \subsection{Feasibility constraints}
 \label{sec:sched_feasibility}
@@ -863,22 +904,24 @@ t_{\rm exp}>0,\qquad
 \subsection{Assumptions and approximations}
 \begin{enumerate}
 \item Fields are staggered uniformly across the $n$ nights of the period; the per-night and per-period budget accountings then coincide (Sec.~\ref{sec:sched_budget}).
-\item Visits are equally spaced at $\Delta t_v$, all inside a top-hat night window, all at equal depth $F_{\rm lim}(t_{\rm exp})$; weather, moon and airmass structure are absorbed into $f_{\rm eff}$.
-\item Every visit inside the above-threshold window counts as a detection (as in the legacy criterion); band structure ($g$ vs $r$) is not modelled --- $i$ counts epochs of any band.
-\item Single power-law phase for the $t_+$ and $t_{\rm lim}$ inversions ($k=2/|\alpha_\Phi|$, phase-selected), exactly as in the legacy exact mode.
-\item The dominant mode keeps the per-channel \emph{endpoint} conventions (worst/zero wait); only the exact mode integrates the interior of the phase ramp. For ZTF-public-like schedules ($\rho=1$, $N_v=2$) the endpoints do not straddle the intra-night pair tightly, so exact mode is the reference there.
+\item Visits are equally spaced at $\Delta t_v$, all inside a top-hat night window, all at equal depth $F_{\rm lim}(t_{\rm exp})$.
+\item Every visit inside the above-threshold window counts as a detection, so ``$\ge i$ visits inside the window'' is the criterion --- which is exactly a real pipeline's ``any $i$ epochs'' requirement (e.g.\ ZTF's 2-epoch alert rule), not a stricter consecutiveness demand. Band structure ($g$ vs $r$) is not modelled --- $i$ counts epochs of any band.
+\item The detection window uses the two-phase crossing time of Eq.~\eqref{eq:t_plus_two_phase}; the rise deadline $t_{\rm lim}$ remains single-phase ($k=2/|\alpha_\Phi|$, phase-selected), exactly as in the legacy exact mode.
+\item The dominant mode averages each channel's rectangle over its gap (Eq.~\eqref{eq:R_mixture}) --- the same wait integration the exact mode performs through the phase ramp --- but its identification cuts remain best-case hard boundaries, so it stays optimistic when the cuts bite (e.g.\ $\times1.9$ at the ZTF public preset with $s_{\rm fade}{=}0.3$, $s_{\rm rise}{=}0.5$). Exact mode is the reference.
 \item In optical mode only integer-day cadences exist (Sec.~\ref{sec:optical_constraints}); intra-night sampling lives entirely in $(N_v,\Delta t_v)$, e.g.\ ZTF high-cadence is $(t_{\rm cad}{=}1\,\mathrm d,\ N_v{=}6)$, where the honest overnight rise gap applies. The old gap-band physics ($i$ detections not fitting one night) is expressible as $n{=}1$, $N_v<i$: $P_i$ accumulates detections across consecutive nights.
 \end{enumerate}
 
-\paragraph{Deferred refinements.} Optimiser search over $(N_v,\Delta t_v)$; ramp-averaged dominant mode (bracketed by the two conventions; exact mode has the ramp); closed-form mixture medians; per-band epochs.
+\paragraph{Real-world effects absorbed rather than modelled (sizes).} The top-hat, equal-depth night hides several known effects that are deliberately left inside the two efficiency factors rather than modelled: (i)~\emph{band alternation} --- at the afterglow's spectral slope $\beta=-(p-1)/2\approx-0.6$ a $g$/$r$ pair differs by $\approx0.19$\,mag in afterglow colour, largely offset by the deeper $g$ limit; net $\lesssim0.2$\,mag per-visit depth asymmetry $\Rightarrow\lesssim25\%$ in rate ($R\propto F_{\rm lim}^{-3/2}$), partially cancelling between the bands. (ii)~\emph{Airmass/moon depth variation} across the night is a $\sim$10--20\% convexity correction on the equal-depth assumption. (iii)~\emph{Night-correlated weather}: a flat $\varepsilon_{\rm cov}$ is structurally correct for the intra-night channels (one clear night = one usable field-night; $\approx96\%$ of the phase weight at the public preset), and mildly optimistic only for cross-night detections --- the $A$-channels touch $\mu+1=\lceil i/N_v\rceil$ visit-nights and channel $B$ one more, so those detections need $\sim f_w^{\mu+1}$ / $f_w^{\mu+2}$ clear nights rather than one factor. All three are far below the current calibration frontier (the single-luminosity residual of Sec.~\ref{sec:sched_comparison}); revisit only if $i>N_v$ strategies are ever quoted.
 
-\paragraph{Implementation reference.} \texttt{grb\_detect/schedule.py}: \texttt{NightSchedule($N_v$, dt\_v\_s, t\_night\_s)} (frozen), \texttt{spans()} (Eq.~\eqref{eq:spans}: $S_A$, $S_B$, $G$, multiplicities), \texttt{P\_detect()} (Eq.~\eqref{eq:P_i}), \texttt{joint\_weight()} (Eq.~\eqref{eq:W_schedule}), \texttt{feasible()} (Sec.~\ref{sec:sched_feasibility}). \texttt{DetectionRateModel(schedule=...)}; \texttt{make\_rate\_model(f\_eff, N\_v, dt\_v\_s, t\_night\_s, schedule\_on)}; a single model instance replaces \texttt{model\_day}/\texttt{model\_night} (budget Eq.~\eqref{eq:budget_unified} internal, $f_{\rm night}$ factor internal). Bridge parameter keys: \texttt{f\_eff}, \texttt{N\_v}, \texttt{dt\_v\_h} (legacy \texttt{f\_live} accepted as $f_{\rm eff}f_{\rm night}$). Tests: \texttt{tests/test\_schedule\_pi.py} (Eq.~\eqref{eq:P_i} vs brute force), \texttt{tests/test\_schedule\_model.py} ($N_v{=}1$ parity, bracket ordering, budget unification, cut baselines), \texttt{tests/test\_schedule\_parity.py} (pre-change payload snapshots).
+\paragraph{Deferred refinements.} Optimiser search over $(N_v,\Delta t_v)$; closed-form mixture medians; per-band epochs.
+
+\paragraph{Implementation reference.} \texttt{grb\_detect/schedule.py}: \texttt{NightSchedule($N_v$, dt\_v\_s, t\_night\_s)} (frozen), \texttt{spans()} (Eq.~\eqref{eq:spans}: $S_A$, $S_B$, $G$, multiplicities; a sub-period visit run, $G<0$, poisons the cells with NaN so direct API misuse reads invalid rather than $P_i>1$), \texttt{P\_detect()} (Eq.~\eqref{eq:P_i}), \texttt{joint\_weight()} (Eq.~\eqref{eq:W_schedule}), \texttt{T\_certain()}/\texttt{T\_first\_pass()} (the $P_i$ support endpoints), \texttt{feasible()} (Sec.~\ref{sec:sched_feasibility}). \texttt{DetectionRateModel(schedule=...)} with \texttt{\_t\_plus\_sched()} (Eq.~\eqref{eq:t_plus_two_phase}) and the 5-point gap-averaged mixture (Eq.~\eqref{eq:R_mixture}); \texttt{make\_rate\_model(f\_live, N\_v, dt\_v\_s, t\_night\_s, schedule\_on, ...)} --- note the engine takes the wall-clock \texttt{f\_live}; the $f_{\rm eff}\,f_{\rm night}$ conversion lives in the bridge. A single model instance replaces \texttt{model\_day}/\texttt{model\_night} (budget Eq.~\eqref{eq:budget_unified} internal, $f_{\rm night}$ factor internal). Bridge parameter keys: \texttt{f\_eff}, \texttt{N\_v}, \texttt{dt\_v\_h} (a legacy \texttt{f\_live}-only caller is accepted and used directly as the wall-clock fraction). Tests: \texttt{tests/test\_schedule\_pi.py} (Eq.~\eqref{eq:P_i} vs brute force), \texttt{tests/test\_schedule\_model.py} ($N_v{=}1$ parity, the gap-average identity and its bracket, two-phase consistency, budget unification, cut baselines), \texttt{tests/test\_schedule\_parity.py} (full-payload regression snapshots).
 
 % -------------------------------------------------------
 \section{Schedule Model vs.\ Pre-Schedule Model vs.\ Observations}
 \label{sec:sched_comparison}
 
-This section compares the night-schedule model of Sec.~\ref{sec:schedule} against both the pre-schedule (one-timescale) model and the ZTF observations, at the two real observing modes.  Numbers are from \texttt{analysis/ztf\_validation.py} (run of 2026-08-19, saved in \texttt{analysis/validation\_output.txt}); the observational targets and the distance-yardstick decision (comoving $D_C$ as the primary measure for a rate-calibrated Euclidean model) are documented in \texttt{analysis/model\_gap\_report.md}.
+This section compares the night-schedule model of Sec.~\ref{sec:schedule} against both the pre-schedule (one-timescale) model and the ZTF observations, at the two real observing modes.  Numbers are from \texttt{analysis/ztf\_validation.py} (run of 2026-08-24, with the two-phase window of Eq.~\eqref{eq:t_plus_two_phase} --- a $1.4\%$ (public) / $0.1\%$ (high-cadence) shift at these presets; saved in \texttt{analysis/validation\_output.txt}); the observational targets and the distance-yardstick decision (comoving $D_C$ as the primary measure for a rate-calibrated Euclidean model) are documented in \texttt{analysis/model\_gap\_report.md}.
 
 \subsection{Setup}
 
@@ -907,11 +950,11 @@ B (high-cad) & $i{=}6$ (conflated), $\Delta t{=}t_{\rm night}/6$ cont. & \textbf
  & \multicolumn{3}{c}{Mode A (public)} & \multicolumn{3}{c}{Mode B (high-cadence)} \\
  & pre-sched & schedule & observed & pre-sched & schedule & observed \\
 \midrule
-rate $\times\,\varepsilon_{\rm cov}$ [yr$^{-1}$] & 4.7 & 14.5 & 2.0 & 5.0 & 13.3 & 2.5 \\
-$q_{\rm med}$ & 1.17 & 1.02 & $\lesssim 1.5$ & 1.14 & 1.05 & $\lesssim 1.5$ \\
-on-axis-consistent ($q<1.5$) & 78\% & 88\% & $\ge 60\%$ & 79\% & 89\% & $\ge 60\%$ \\
-$D_{\rm med}$ [Gpc, $D_C$] & 1.00 & 1.90 & 3.67 & 1.82 & 2.92 & 3.88 \\
-$D_{90}$ [Gpc] & 1.41 & 3.91 & --- & 2.67 & 4.25 & --- \\
+rate $\times\,\varepsilon_{\rm cov}$ [yr$^{-1}$] & 4.7 & 14.4 & 2.0 & 5.0 & 13.3 & 2.5 \\
+$q_{\rm med}$ & 1.17 & 1.02 & $\lesssim 1.5$ & 1.13 & 1.05 & $\lesssim 1.5$ \\
+on-axis-consistent ($q<1.5$) & 78\% & 88\% & $\ge 60\%$ & 79\% & 90\% & $\ge 60\%$ \\
+$D_{\rm med}$ [Gpc, $D_C$] & 1.00 & 1.91 & 3.67 & 1.82 & 2.92 & 3.88 \\
+$D_{90}$ [Gpc] & 1.41 & 3.92 & --- & 2.67 & 4.25 & --- \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -924,7 +967,7 @@ $D_{90}$ [Gpc] & 1.41 & 3.91 & --- & 2.67 & 4.25 & --- \\
 
 \paragraph{(iii) The window-convention bracket collapses.}  The pre-schedule model bracketed the detection criterion between $T_{\rm req}=i\,t_{\rm cad}$ and $(i{-}1)\,t_{\rm cad}$ (a factor ~[3, 13] in Mode A's rate across the toggles).  In exact mode the schedule integrates the phase ramp $P_i(T)$ exactly, so the two conventions now coincide by construction and the associated modeling uncertainty is resolved, not bracketed.
 
-\paragraph{(iv) Sensitivities at the final configuration (Mode A).}  The schedule knobs are weak once the ramp is exact: $\Delta t_v\in[0.5, 5]$\,h changes the rate by $<5\%$; $N_v{=}2\to 1$ at the same budget is $\times 0.68$.  The restored overnight rise gap gives the identification cuts real teeth ($s_{\rm rise}=1.0$: $\times 0.38$ --- the pre-schedule sub-day encoding had $\eta\to 1$); $\varepsilon_B\pm 0.5$\,dex spans $\times 0.30$--$2.8$.  The Ho et al.\ \S4.1 strict intranight benchmark is unchanged ($13.4$/yr vs.\ their MC $0.52$/yr): its overshoot was never a cadence-encoding problem and carries the same luminosity-function signature.
+\paragraph{(iv) Sensitivities at the final configuration (Mode A).}  The schedule knobs are weak once the ramp is exact: $\Delta t_v\in[0.5, 5]$\,h changes the rate by $<5\%$; $N_v{=}2\to 1$ at the same budget is $\times 0.68$.  The restored overnight rise gap gives the identification cuts real teeth ($s_{\rm rise}=1.0$: $\times 0.37$ --- the pre-schedule sub-day encoding had $\eta\to 1$); $i=3$ is $\times0.24$ (the two-phase window bites once the required span crosses $t_j$); $\varepsilon_B\pm 0.5$\,dex spans $\times 0.30$--$2.8$.  The Ho et al.\ \S4.1 strict intranight benchmark is unchanged ($13.4$/yr vs.\ their MC $0.52$/yr): its overshoot was never a cadence-encoding problem and carries the same luminosity-function signature.
 
 \paragraph{Bottom line.}  The schedule model is \emph{better} on every observable it was built to fix — distances, viewing angles, and the cross-mode consistency ($f_{\rm eff}\approx 0.40$ for both modes, vs.\ the old $\times 2.1$ split in $f_{\rm live}$) — and \emph{worse} on the raw rate normalization, in a way that is now cleanly attributable: the residual pattern (rates $\times 5$--$7$ high at horizons still $\times 1.3$--$1.9$ short) is the quantified signature of the single-luminosity population, with an identified, deferred fix.  No parameter recalibration is applied without approval.
 

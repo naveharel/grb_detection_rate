@@ -76,6 +76,17 @@ class NightSchedule:
         G = t_cad - (N_v - 1) * dt_v
         S_A = mu * t_cad + rho * dt_v
         S_B = (mu + 1) * t_cad - (N_v - rho) * dt_v
+        # A visit run longer than the period (G < 0) is geometrically
+        # impossible; poison those cells with NaN so every downstream quantity
+        # (P_i, joint weights, mixture rates) reads invalid instead of
+        # silently overflowing (P_i > 1, negative channel weights).  The UI
+        # cannot reach this (integer-day cadences + the fits-night mask keep
+        # G >= 0); direct API calls with sub-period t_cad are the target.
+        if np.any(G < 0.0):
+            bad = G < 0.0
+            G = np.where(bad, np.nan, G)
+            S_A = np.where(bad, np.nan, S_A)
+            S_B = np.where(bad, np.nan, S_B)
         return S_A, S_B, G, mu, rho
 
     def channels(self, i_det: int, t_cad_s: np.ndarray):
@@ -150,9 +161,18 @@ class NightSchedule:
         return np.minimum(S_A, S_B) if rho > 0 else S_A
 
     def T_certain(self, i_det: int, t_cad_s: np.ndarray) -> np.ndarray:
-        """Shortest window with P_i = 1: T_100 = S_A + max(G, dt_v)."""
-        S_A, _S_B, G, _mu, _rho = self.spans(i_det, t_cad_s)
-        return S_A + np.maximum(G, float(self.dt_v_s))
+        """Shortest window with P_i = 1: T_100 = max_c (S_c + g_c), nonempty c.
+
+        A_G gives S_A + G and channel B's S_B + dt_v = S_A + G identically, so
+        T_100 = S_A + max(G, dt_v) in general — but S_A + G when the A_dlt
+        channel is empty (rho = N_v − 1, where the dt_v term has no starting
+        visit; this includes every N_v = 1 case, giving i·t_cad regardless of
+        the inert dt_v).
+        """
+        S_A, _S_B, G, _mu, rho = self.spans(i_det, t_cad_s)
+        if rho < int(self.N_v) - 1:
+            return S_A + np.maximum(G, float(self.dt_v_s))
+        return S_A + G
 
     # ---------- Feasibility ----------
     def feasible(
