@@ -64,7 +64,7 @@ ZTF_PUBLIC_DT_V_S: float = 2.0 * 3600.0       # applied via the ztf_public prese
 ZTF_HC_OMEGA_SRV_DEG2: float = 2500.0
 ZTF_HC_VISITS_PER_NIGHT: int = 6              # applied via the ztf_hc preset
 ZTF_HC_T_CAD_S: float = 1.0 * DAY_S
-ZTF_HC_DT_V_S: float = 1.5 * 3600.0
+ZTF_HC_DT_V_S: float = 1.0 * 3600.0
 
 # Grid resolutions. Regime-colour mode uses the denser grid so the discrete
 # boundaries between regimes stay crisp.

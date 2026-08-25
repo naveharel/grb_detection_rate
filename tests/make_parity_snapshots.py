@@ -83,7 +83,7 @@ CONFIGS: dict[str, dict] = {
     "preset_ztf_public": {"optical_survey": True, "f_eff": 0.40,
                           "N_v": 2, "dt_v_h": 2.0, "t_overhead_s": 15.0},
     "preset_ztf_hc":     {"optical_survey": True, "f_eff": 0.40,
-                          "N_v": 6, "dt_v_h": 1.5, "t_overhead_s": 15.0},
+                          "N_v": 6, "dt_v_h": 1.0, "t_overhead_s": 15.0},
     "preset_rubin":      {"optical_survey": True, "f_eff": 0.7, "A_log": -7.0,
                           "N_v": 2, "dt_v_h": 0.5,
                           "omega_exp_deg2": 9.6, "t_overhead_s": 30.0},

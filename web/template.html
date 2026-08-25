@@ -355,7 +355,6 @@
     </div>
     <p class="toggle-hint">Applies the s<sub>fade</sub> cut as a uniform random observation-start survival weight. Off: the best-case hard boundary, which raises the rate. No effect when s<sub>fade</sub> = 0.</p>
   </div>
-  <div class="param-group-label">Other options</div>
   <div class="param-switch-row">
     <label class="toggle-switch" for="toh-approx-switch">
       <input type="checkbox" id="toh-approx-switch">
@@ -365,13 +364,13 @@
   </div>
   <p class="toggle-hint">Drops t<sub>OH</sub> from the exposure formula to enable closed-form optimal strategies, while still enforcing t<sub>exp</sub> &gt; t<sub>OH</sub> as the validity boundary.</p>
   <div class="param-switch-row">
-    <label class="toggle-switch" for="win-iminus1-switch">
-      <input type="checkbox" id="win-iminus1-switch" checked>
+    <label class="toggle-switch" for="win-i-switch">
+      <input type="checkbox" id="win-i-switch">
       <span class="toggle-track"><span class="toggle-thumb"></span></span>
     </label>
-    <span class="switch-label" onclick="document.getElementById('win-iminus1-switch').click()">Window spans (i−1)·t<sub>cad</sub></span>
+    <span class="switch-label" onclick="document.getElementById('win-i-switch').click()">Detection window spans i·t<sub>cad</sub></span>
   </div>
-  <p class="toggle-hint">Counts the required detectability duration as the i−1 gaps <em>between</em> the i detections (default) instead of adding one extra waiting gap (i·t<sub>cad</sub>, the conservative worst-case-wait convention — switch off for it). Enters wherever a hard window is used: q<sub>i</sub>, D<sub>i</sub> at N<sub>v</sub> = 1 and in non-optical mode, and the per-channel exact-mode rectangles at N<sub>v</sub> ≥ 2 (span S<sub>c</sub> vs S<sub>c</sub> + g<sub>c</sub>). No effect where the waiting time is integrated instead of bracketed: the closed-form gap-averaged mixture (N<sub>v</sub> ≥ 2) and Exact rate mode with “Include t<sub>−</sub> ≈ t<sub>on</sub>” (the phase ramp resolves the bracket).</p>
+  <p class="toggle-hint">Adds one extra waiting gap: counts the required detectability duration as i·t<sub>cad</sub> instead of the i−1 gaps between the i detections (default, off). Enters wherever a hard window is used: q<sub>i</sub>, D<sub>i</sub> at N<sub>v</sub> = 1 and in non-optical mode, and the per-channel exact-mode rectangles at N<sub>v</sub> ≥ 2 (span S<sub>c</sub> + g<sub>c</sub> instead of S<sub>c</sub>). No effect where the waiting time is integrated instead of bracketed: the closed-form gap-averaged mixture (N<sub>v</sub> ≥ 2) and Exact rate mode with “Include t<sub>−</sub> ≈ t<sub>on</sub>” (the phase ramp resolves the bracket).</p>
 </div>
 </details>
 

@@ -55,7 +55,7 @@ ZTF_PUBLIC = SurveyPreset(
 
 ZTF_HC = SurveyPreset(
     key="ztf_hc", label="ZTF high-cadence", i_det=2, f_eff=0.40, n_v=6,
-    dt_v_h=1.5, A_log=-4.68, omega_exp_deg2=47.0, t_overhead_s=15.0,
+    dt_v_h=1.0, A_log=-4.68, omega_exp_deg2=47.0, t_overhead_s=15.0,
     omega_srv_deg2=2500.0, optical=True,
 )
 

@@ -58,7 +58,7 @@ const PLASMA_SCALE = [
 // the match keys include it, so dragging t_night grays the ZTF markers.
 const PRESETS = {
   ztf_public: {i:2, f_eff:0.40, nv:2, dtv:2,    A_log:-4.68, omega_exp:47,  t_oh:15, tnight:10, optical:true},
-  ztf_hc:     {i:2, f_eff:0.40, nv:6, dtv:1.5,  A_log:-4.68, omega_exp:47,  t_oh:15, tnight:10, optical:true},
+  ztf_hc:     {i:2, f_eff:0.40, nv:6, dtv:1.0,  A_log:-4.68, omega_exp:47,  t_oh:15, tnight:10, optical:true},
   rubin:      {i:2, f_eff:0.7,  nv:2, dtv:0.5,  A_log:-7.0,  omega_exp:9.6, t_oh:30, tnight:10, optical:true},
 };
 // Map preset keys to DOM slider/switch IDs.
@@ -343,7 +343,7 @@ _syncModeBlocks(document.getElementById('optical-switch').checked);
 
 // Other toggles
 ['toh-approx-switch','regime-color-switch',
- 'win-iminus1-switch','win-tp-switch','rise-rs-switch','fade-rs-switch'].forEach(id => {
+ 'win-i-switch','win-tp-switch','rise-rs-switch','fade-rs-switch'].forEach(id => {
   document.getElementById(id).addEventListener('change', triggerUpdate);
 });
 
@@ -577,7 +577,7 @@ function readParams() {
     rise_random_start: b('rise-rs-switch'),
     fade_random_start: b('fade-rs-switch'),
     toh_approx:      b('toh-approx-switch'),
-    win_iminus1:     b('win-iminus1-switch'),
+    win_iminus1:     !b('win-i-switch'),
     win_tp:          exactOn && b('win-tp-switch'),
     nslice_tfix_log: v('nslice-tfix-slider'),
     tslice_nfix_log: v('tslice-nfix-slider'),
