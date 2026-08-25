@@ -37,10 +37,6 @@ figures/output/*
 # Physics reference documents (large PDFs, copyrighted)
 sources/
 
-# Local side-by-side comparison copy of the pre-schedule app (exported from
-# main via: git show main:grb_detection_rate.html > grb_detection_rate_main.html)
-grb_detection_rate_main.html
-
 # Compiled reference PDF (regenerated from the tracked .tex)
 docs/implementation_reference.pdf
 
