@@ -706,7 +706,7 @@ def test_B15_optimizer_consistency_under_filter(deep_model):
     q_min = 1.5
     D_min_cm = 2.0 * GPC_TO_CM
     N_opt, t_cad_opt_s, R_opt = maximize_log_surface_iterative(
-        deep_model, None, i_det=1,
+        deep_model, i_det=1,
         x_min=0.0, x_max=4.5, y_min=0.0, y_max=8.0,
         optical_survey=False,
         t_night_s=10.0 * 3600.0,

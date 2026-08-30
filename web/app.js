@@ -43,7 +43,7 @@ const PLASMA_SCALE = [
 //              gives t_exp ≈ 30 s at (N = 53, t_cad = t_night/6).
 const PRESETS = {
   ztf_public: {i:2, f_live:0.08, A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
-  ztf_hc:     {i:6, f_live:0.17, A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
+  ztf_hc:     {i:2, f_live:0.17, A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
   rubin:      {i:2, f_live:0.7,  A_log:-7.0,  omega_exp:9.6, t_oh:30, optical:true},
 };
 // Map preset keys to DOM slider/switch IDs.

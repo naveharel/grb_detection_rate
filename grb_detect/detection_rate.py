@@ -35,7 +35,7 @@ from .afterglow_ism import t_j_s as t_j_s_fn
 from .constants import DAY_S
 from .params import AfterglowPhysicalParams, MicrophysicsParams, SurveyInstrumentParams, SurveyStrategy
 from .pls import PLSG, PLSModel
-from .survey import N_exp_max, exposure_time_s, is_strategy_physical, limiting_flux_Jy, sky_fraction
+from .survey import N_exp_max, is_strategy_physical, limiting_flux_Jy, sky_fraction
 
 # Tolerance used to make boundary cases robust (e.g. N_exp = N_exp_max exactly)
 _REGION_BOUNDARY_EPS: float = 1e-12
@@ -103,6 +103,8 @@ class DetectionRateModel:
         *,
         win_i_minus_one: bool = False,
         win_from_peak: bool = False,
+        N_v: int = 1,
+        dt_v_s: float | None = None,
     ):
         self.phys = phys
         self.instrument = instrument
@@ -111,7 +113,58 @@ class DetectionRateModel:
         self.win_i_minus_one = bool(win_i_minus_one)
         self.win_from_peak = bool(win_from_peak)
 
+        # Night-schedule extension (labeled approximation — see
+        # docs re: dtv-window branch): N_v is the number of visits per active
+        # occasion (splits the t_exp_s budget); dt_v_s is the intra-visit
+        # spacing used ONLY for the detection-confirmation window (T_req and
+        # everything derived from it), never for the exposure budget. Both
+        # default to a no-op (N_v=1, dt_v_s=None) so every existing caller
+        # (the general surface, the optimizer) is bit-identical to before.
+        if int(N_v) < 1:
+            raise ValueError("N_v must be >= 1")
+        self.N_v = int(N_v)
+        self.dt_v_s = None if dt_v_s is None else float(dt_v_s)
+
         self._derived = self._compute_derived_scales()
+
+    def _win_s(self, t_cad_s: np.ndarray) -> np.ndarray:
+        """Effective inter-visit window: `dt_v_s` if set, else `t_cad_s`.
+
+        Used everywhere `t_cad_s` plays its "gap between required/measured
+        detections" role (T_req, the fading/rising filters); the exposure
+        budget (`t_exp_s`, `F_lim_Jy`, `f_Omega`, `q_Euc`) always keeps the
+        real `t_cad_s`.
+        """
+        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        if self.dt_v_s is None:
+            return t_cad_arr
+        return np.full_like(t_cad_arr, self.dt_v_s)
+
+    def _sync_penalty_log10(self, t_cad_s: np.ndarray) -> np.ndarray | float:
+        """log10 correction for the (N_v, dt_v_s) intra-night schedule.
+
+        The dominant-term rate assumes the first detection lands exactly at
+        the burst's peak (best case) and then only asks whether the source
+        survives `T_req` = i_eff * dt_v_s more. That assumption is free of
+        charge when `dt_v_s` is the true, continuously-recurring revisit
+        period (dt_v_s is None: no correction needed — a visit really does
+        recur every t_cad, so "caught once -> caught again t_cad later" is a
+        certainty). It is NOT free of charge when dt_v_s is a short
+        intra-night spacing that only recurs during an N_v-visit cluster
+        every t_cad: the assumed-peak epoch must also happen to fall inside
+        that cluster, which only happens a fraction of the time. This
+        multiplies the rate by that fraction, min(1, N_v*dt_v_s/t_cad) — a
+        crude, order-of-magnitude stand-in for the exact P_i(T) treatment a
+        real two-timescale schedule model would need (see dtv-window branch
+        notes); it is not applied to the medians (a conditional property of
+        the confirmed population, unaffected by an overall rate rescaling).
+        """
+        if self.dt_v_s is None:
+            return 0.0
+        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            factor = np.minimum(1.0, (self.N_v * self.dt_v_s) / t_cad_arr)
+        return _safe_log10(np.asarray(factor, dtype=float))
 
     # ---------- Derived scales ----------
     def _compute_derived_scales(self) -> DerivedAfterglowScales:
@@ -156,9 +209,13 @@ class DetectionRateModel:
 
     # ---------- Core building blocks (vectorized) ----------
     def t_exp_s(self, N_exp: np.ndarray, t_cad_s: np.ndarray) -> np.ndarray:
-        """Exposure time per pointing (vectorized). Returns NaN where t_exp ≤ 0."""
+        """Exposure time per pointing (vectorized). Returns NaN where t_exp ≤ 0.
 
-        t_exp = self.instrument.f_live * t_cad_s / N_exp - self.instrument.t_overhead_s
+        Divides the per-cadence time budget across `N_v` visits per occasion
+        (default 1, a no-op) as well as the `N_exp` tiled fields — see `_win_s`.
+        """
+
+        t_exp = self.instrument.f_live * t_cad_s / (N_exp * self.N_v) - self.instrument.t_overhead_s
         return np.where(t_exp > 0, t_exp, np.nan)
 
     def F_lim_Jy(self, t_exp_s: np.ndarray) -> np.ndarray:
@@ -222,7 +279,7 @@ class DetectionRateModel:
         if i_det < 1:
             raise ValueError("i_det must be >= 1")
         i_eff = i_det - 1 if self.win_i_minus_one else i_det
-        return float(i_eff) * np.asarray(t_cad_s, dtype=float)
+        return float(i_eff) * self._win_s(t_cad_s)
 
     def q_i(self, i_det: int, t_cad_s: np.ndarray) -> np.ndarray:
         """q_i(t_cad): angle for which t_p(q_i) = T_req (= i * t_cad).
@@ -465,7 +522,7 @@ class DetectionRateModel:
             (s_fade ≤ 0, or i_det < 2 in discrete mode where the slope is
             undefined).
         """
-        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        t_cad_arr = self._win_s(t_cad_s)
 
         # Bypass conditions.
         s_fade_f = float(s_fade)
@@ -580,7 +637,7 @@ class DetectionRateModel:
             Pass probability in [0, 1], broadcast of q against t_cad_s.
             Exactly 1.0 everywhere when the cut is bypassed.
         """
-        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        t_cad_arr = self._win_s(t_cad_s)
         q_arr = np.asarray(q, dtype=float)
 
         s_fade_f = float(s_fade)
@@ -644,7 +701,7 @@ class DetectionRateModel:
         10^{−E/2} so it underflows gracefully to 0.0 where η overflows to +∞.
         Bypass (s_rise ≤ 0) returns (ones, ones).
         """
-        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        t_cad_arr = self._win_s(t_cad_s)
         s_rise_f = float(s_rise)
         if s_rise_f <= 0.0:
             ones = np.ones(t_cad_arr.shape, dtype=float)
@@ -673,7 +730,7 @@ class DetectionRateModel:
         η^{−1/2}.  Phase split at q_j (on-axis lumped with Phase II).
         """
         q_arr = np.asarray(q, dtype=float)
-        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        t_cad_arr = self._win_s(t_cad_s)
         p = self.phys.p
         q_j = float(self.derived.q_j)
         is_II = q_arr < q_j
@@ -730,7 +787,7 @@ class DetectionRateModel:
                 fade_random_start=fade_random_start,
             )
 
-        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        t_cad_arr = self._win_s(t_cad_s)
         t_p_eff, t_fs_sel, k_sel, ise = self._rise_fade_windows(
             q, i_det, t_cad_arr, s_fade, s_rise, s_mode
         )
@@ -801,7 +858,7 @@ class DetectionRateModel:
             )
             return np.maximum(D_eff ** 3 - D_min_norm ** 3, 0.0) * P_fade
 
-        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        t_cad_arr = self._win_s(t_cad_s)
         t_p_eff, t_fs_sel, k_sel, ise = self._rise_fade_windows(
             q, i_det, t_cad_arr, s_fade, s_rise, s_mode
         )
@@ -1064,6 +1121,8 @@ class DetectionRateModel:
         logR[masks["A6"]] = R6[masks["A6"]]
         logR[masks["A7"]] = R7[masks["A7"]]
 
+        logR = logR + self._sync_penalty_log10(t_cad_b)
+
         # win_from_peak + return_components: the early return above was
         # skipped so the caller still gets the rectangle components, but the
         # rate itself comes from the q-integral (see Notes).
@@ -1265,7 +1324,7 @@ class DetectionRateModel:
 
         R = fO * (theta_j ** 2) * R_int * I
         R = np.where(np.isfinite(t_exp), R, np.nan)
-        return _safe_log10(R)
+        return _safe_log10(R) + self._sync_penalty_log10(t_cad_s)
 
     # ---------- Median q and D for detected GRBs ----------
 
@@ -1547,6 +1606,7 @@ class DetectionRateModel:
             # Rise cut active ⇒ w_joint depends on d, so the survival trick does
             # not apply.  Keep the per-level loop but hoist every d-independent
             # quantity out of it (only t_lim and the final clip depend on d).
+            t_win_b = self._win_s(t_cad_b)
             t_p_eff, t_fs_sel, k_sel, ise = self._rise_fade_windows(
                 q_g, i_det, t_cad_b, s_fade, s_rise, s_mode
             )
@@ -1561,7 +1621,7 @@ class DetectionRateModel:
                     if not rise_random_start:
                         t_lim = np.where(t_lim >= t_p_eff, np.inf, -np.inf)
                     w_joint = np.clip(
-                        (np.minimum(t_fs_sel, t_lim) - t_p_eff) / t_cad_b, 0.0, 1.0
+                        (np.minimum(t_fs_sel, t_lim) - t_p_eff) / t_win_b, 0.0, 1.0
                     )
                 above_and_keep = (D_eff_norm >= d) & q_keep_mask              # (N_q, *shape)
                 integrand_q    = np.where(above_and_keep, q_g * w_joint, 0.0) # (N_q, *shape)
@@ -1874,7 +1934,10 @@ class DetectionRateModel:
             t_cad_opt = float(t_dec / i_det)
 
         strat_opt = SurveyStrategy(N_exp=N_opt, t_cad_s=t_cad_opt)
-        t_exp_opt = exposure_time_s(strat_opt, self.instrument)
+        # self.t_exp_s (not the module-level exposure_time_s) so this stays
+        # correct if ever called on an N_v != 1 instance (== exposure_time_s
+        # at the default N_v = 1).
+        t_exp_opt = float(self.t_exp_s(np.array([N_opt]), np.array([t_cad_opt]))[0])
 
         logR_opt = float(self.rate_log10(i_det, np.array([N_opt]), np.array([t_cad_opt]))[0])
         R_opt = float(10.0**logR_opt)

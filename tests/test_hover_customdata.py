@@ -5,15 +5,21 @@ D_med). Plotly renders the raw ``%{customdata[i]}`` token literally when a
 referenced cell is null, so any cell that is *drawn* (finite plotted rate) but
 has NaN/None extras shows template garbage in the app.
 
-Root cause of the historical bug: after model_night gained
-``instrument.f_live = f_live / f_night``, ``compute_surface`` and
-``_eval_point`` kept computing the extras with model_day on sub-day optical
-cells — where model_day's ``t_exp = f_live * t_cad / N_exp - t_OH`` can be
-<= 0 while model_night's rate is finite, yielding NaN medians on drawn cells.
+Historical bug (pre dtv-window): with the old dual model_day/model_night
+architecture, after model_night gained ``instrument.f_live = f_live /
+f_night``, ``compute_surface`` and ``_eval_point`` could compute the extras
+with the wrong model on sub-day optical cells, yielding NaN medians on drawn
+cells. Optical mode is now discrete-day-only and a single model serves the
+whole surface, which makes that specific mismatch structurally impossible —
+but the same class of bug can reappear wherever a *different* model is used
+for a marker's rate vs its extras, which is exactly the situation for the
+ZTF public/HC markers (each evaluated on its own aux model carrying its own
+N_v/dt_v_s schedule; see `compute_all`).
 
-These tests pin the invariant at three depths (engine grid, single-point
-evaluator, full JSON payload) so any future change that reintroduces a
-drawn-cell / NaN-extras mismatch fails here.
+These tests pin the invariant (finite rate ⇒ finite extras, from the same
+model) at three depths (engine grid, single-point evaluator, full JSON
+payload) so any future change that reintroduces a drawn-cell / NaN-extras
+mismatch fails here.
 
 Run with::
 
@@ -30,6 +36,7 @@ import pytest
 import standalone_bridge as sb
 from grb_detect.constants import DAY_S
 from grb_detect.core import compute_surface
+from grb_detect.detection_rate import DetectionRateModel
 from grb_detect.params import GPC_TO_CM
 
 
@@ -92,10 +99,10 @@ def state() -> dict:
 def test_surface_drawn_cells_have_finite_extras(state, q_min, D_min_cm):
     """Every cell with a finite plotted rate must have finite t_exp / q_med /
     D_med — the exact property whose violation renders literal hover
-    templates. Covers both cadence branches (model_night sub-day vs model_day
-    multi-day) in optical-survey mode with t_OH > 0."""
+    templates. Optical-survey mode (discrete day-multiple cadences only),
+    single model, t_OH > 0."""
     X, Y_s, Z_plot, Z_raw, rid, t_exp_g, q_med_g, D_med_Gpc_g = compute_surface(
-        state["model_day"], state["model_night"], state["i_det"],
+        state["model"], state["i_det"],
         optical_survey=True, color_regimes=False,
         t_night_s=state["t_night_s"],
         nx=60, ny=90,
@@ -103,10 +110,6 @@ def test_surface_drawn_cells_have_finite_extras(state, q_min, D_min_cm):
     )
     drawn = np.isfinite(Z_plot)
     assert drawn.any(), "no drawn cells — fixture params no longer produce a surface"
-
-    # The historical bug lived on the sub-day branch: make sure it is sampled.
-    subday_drawn = drawn & (Y_s < DAY_S)
-    assert subday_drawn.any(), "no drawn sub-day cells — invariant not exercised"
 
     for name, arr in [("t_exp", t_exp_g), ("q_med", q_med_g), ("D_med_Gpc", D_med_Gpc_g)]:
         bad = drawn & ~np.isfinite(arr)
@@ -118,31 +121,29 @@ def test_surface_drawn_cells_have_finite_extras(state, q_min, D_min_cm):
 
 
 # --------------------------------------------------------------------------- #
-# 2. Point evaluator: screenshot repro (sub-day optical, t_OH > 0)            #
+# 2. Point evaluator: a ZTF marker's aux model (its own N_v/dt_v_s)           #
 # --------------------------------------------------------------------------- #
 
 
-def test_eval_point_subday_extras_match_night_model(state):
-    """Repro of the reported point (N_exp ~ 10, t_cad = 0.174 h): finite rate
-    must come with finite extras, and t_exp must follow the *night* formula
-    (f_live/f_night) * t_cad / N_exp - t_OH."""
-    N_exp, t_cad_s = 10.0, 0.174 * 3600.0
-
-    # Precondition that made the old code fail: model_day's t_exp is invalid
-    # (t_exp_s returns NaN where f_live*t_cad/N_exp - t_OH <= 0) while the
-    # sub-day rate (model_night) is finite.
-    t_exp_day = float(state["model_day"].t_exp_s(np.array([N_exp]), np.array([t_cad_s]))[0])
-    assert not math.isfinite(t_exp_day), (
-        "fixture no longer reproduces the failure precondition "
-        f"(model_day t_exp = {t_exp_day:.3g} s is valid) — adjust t_overhead_s/f_live"
+def test_eval_point_aux_model_extras_match_own_t_exp(state):
+    """A marker evaluated on its own aux model (N_v, dt_v_s baked in at
+    construction — see compute_all's model_ztf_public/model_ztf_hc) must get
+    its rate, t_exp and medians from that SAME aux model — the modern
+    incarnation of the hover-consistency invariant, now guarding the
+    aux-model divergence point instead of the retired model_day/model_night
+    one."""
+    model = state["model"]
+    N_v, dt_v_s = 6, 1.0 * 3600.0  # ZTF HC-style schedule
+    aux = DetectionRateModel(
+        phys=model.phys, instrument=model.instrument, micro=model.micro,
+        pls=model.pls, win_i_minus_one=model.win_i_minus_one,
+        win_from_peak=model.win_from_peak, N_v=N_v, dt_v_s=dt_v_s,
     )
+    N_exp, t_cad_s = 50.0, float(DAY_S)  # nightly revisit, HC-style
 
     R, t_exp, q_med, D_med_Gpc = sb._eval_point(
-        N_exp, t_cad_s, state["i_det"],
-        state["model_day"], state["model_night"],
-        state["f_live"], state["f_live_night"], state["f_night"],
-        optical_on=True, approx_on=False,
-        t_overhead_s=state["t_overhead_s"],
+        N_exp, t_cad_s, state["i_det"], aux,
+        approx_on=False, t_overhead_s=state["t_overhead_s"],
         full_integral=False,
     )
     assert math.isfinite(R) and R > 0, f"rate not finite at repro point (R={R})"
@@ -150,9 +151,14 @@ def test_eval_point_subday_extras_match_night_model(state):
     assert math.isfinite(q_med), "q_med is NaN on a point with finite rate"
     assert math.isfinite(D_med_Gpc), "D_med is NaN on a point with finite rate"
 
-    expected_t_exp = state["f_live_night"] * t_cad_s / N_exp - state["t_overhead_s"]
+    expected_t_exp = float(aux.t_exp_s(np.array([N_exp]), np.array([t_cad_s]))[0])
     assert t_exp == pytest.approx(expected_t_exp, rel=1e-9), (
-        "sub-day t_exp does not follow the night-model formula"
+        "t_exp does not follow the aux model's own (N_v-aware) budget formula"
+    )
+    # N_v must actually be affecting the budget (not silently ignored).
+    t_exp_no_schedule = float(model.t_exp_s(np.array([N_exp]), np.array([t_cad_s]))[0])
+    assert t_exp != pytest.approx(t_exp_no_schedule, rel=1e-6), (
+        "aux model's N_v is not affecting t_exp — schedule not applied"
     )
 
 

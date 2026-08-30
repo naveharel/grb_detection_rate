@@ -15,16 +15,15 @@ import time
 import numpy as np
 
 from grb_detect.constants import DAY_S, DEG2_TO_SR
-from grb_detect.params import GPC_TO_CM, SurveyDesignParams, SurveyStrategy
+from grb_detect.detection_rate import DetectionRateModel
+from grb_detect.params import GPC_TO_CM, SurveyDesignParams
 from grb_detect.core import (
     ZMIN_DISPLAY_LOG10,
     _rate,
     compute_surface,
     make_rate_model,
     maximize_log_surface_iterative,
-    optical_survey_tcad_seconds,
 )
-from grb_detect.survey import exposure_time_s
 
 # ── Optional wall-clock profiling (opt-in via GRB_PROFILE=1) ─────────────────
 # Zero overhead when the env var is unset: the context manager yields
@@ -50,13 +49,21 @@ def _prof_add(label: str, t0: float) -> float:
 ZTF_OMEGA_EXP_DEG2: float = 47.0
 
 # The two real ZTF observing modes used as reference points on the surface
-# (Ho et al. 2022; Andreoni et al. 2021):
-#   public all-sky  — ~15,000 deg² every 2 nights (g+r),
-#   high-cadence    — ~2,500 deg² partnership/ZUDS, 6 visits per night.
+# (Ho et al. 2022; Andreoni et al. 2021), each evaluated on its own aux model
+# carrying its own intra-night schedule (N_v visits at spacing dt_v_s — see
+# DetectionRateModel.__init__ and the model_ztf_public/model_ztf_hc
+# construction in compute_all). t_cad keeps its real meaning (field-revisit
+# period):
+#   public all-sky  — ~15,000 deg² every 2 nights (g+r), 2 visits/night 2h apart,
+#   high-cadence    — ~2,500 deg² partnership/ZUDS, nightly, 6 visits/night 1h apart.
 ZTF_PUBLIC_OMEGA_SRV_DEG2: float = 15000.0
-ZTF_PUBLIC_T_CAD_S: float = 2.0 * DAY_S
+ZTF_PUBLIC_T_CAD_S: float = 2.0 * DAY_S       # 2-night revisit period
+ZTF_PUBLIC_N_V: int = 2
+ZTF_PUBLIC_DT_V_S: float = 2.0 * 3600.0
 ZTF_HC_OMEGA_SRV_DEG2: float = 2500.0
 ZTF_HC_VISITS_PER_NIGHT: int = 6
+ZTF_HC_T_CAD_S: float = 1.0 * DAY_S           # nightly revisit period
+ZTF_HC_DT_V_S: float = 1.0 * 3600.0
 
 # Grid resolutions. Regime-colour mode uses the denser grid so the discrete
 # boundaries between regimes stay crisp.
@@ -113,6 +120,14 @@ def _masks_1d(masks: dict, n: int) -> np.ndarray:
 
 # ── 1-D rate sweep ──────────────────────────────────────────────────────────
 
+def _toh_invalid_mask(model, N_arr, t_arr, t_overhead_s: float) -> np.ndarray:
+    """t_OH-approximation validity: invalid where the model's own (N_v-aware)
+    exposure-time budget does not exceed the real overhead. NaN t_exp
+    (t_exp <= 0, or an otherwise-invalid strategy) is invalid too."""
+    with np.errstate(invalid="ignore"):
+        return ~(np.asarray(model.t_exp_s(N_arr, t_arr)) > float(t_overhead_s))
+
+
 def _compute_rate(
     model,
     i_det: int,
@@ -120,13 +135,7 @@ def _compute_rate(
     t_arr: np.ndarray,
     *,
     full_integral: bool,
-    optical_on: bool,
-    model_night,
-    t_cad_scalar: float,
-    f_night_val: float,
     approx_on: bool,
-    f_live: float,
-    f_live_night: float,
     t_overhead_s: float,
     color_on: bool,
     q_min: float = 0.0,
@@ -156,17 +165,6 @@ def _compute_rate(
         )
     R = np.where(np.isfinite(Z), 10.0 ** Z, np.nan)
 
-    # Optical sub-day branch: rate is reduced by the night-accessibility fraction.
-    # The same predicate decides which f_live the validity boundary uses, since
-    # model_night was constructed with f_live_eff = f_live / f_night.
-    is_subday_optical = optical_on and model_night is not None and t_cad_scalar < DAY_S
-    if is_subday_optical:
-        R = R * f_night_val
-    f_live_validity = float(f_live_night) if is_subday_optical else float(f_live)
-
-    if approx_on and float(t_overhead_s) > 0:
-        R = np.where(f_live_validity * t_arr / N_arr <= float(t_overhead_s), np.nan, R)
-
     rid = np.full(len(N_arr), np.nan)
     if color_on:
         masks = model.region_masks(i_det, N_arr, t_arr, include_unphysical=False)
@@ -183,10 +181,12 @@ def _compute_rate(
     D_med_Gpc = D_med_cm / GPC_TO_CM
 
     if approx_on and float(t_overhead_s) > 0:
-        _inv = f_live_validity * t_arr / N_arr <= float(t_overhead_s)
+        _inv = _toh_invalid_mask(model, N_arr, t_arr, t_overhead_s)
+        R         = np.where(_inv, np.nan, R)
         t_exp     = np.where(_inv, np.nan, t_exp)
         q_med     = np.where(_inv, np.nan, q_med)
         D_med_Gpc = np.where(_inv, np.nan, D_med_Gpc)
+        rid       = np.where(_inv, np.nan, rid)
 
     return R, t_exp, q_med, D_med_Gpc, rid
 
@@ -197,12 +197,7 @@ def _eval_point(
     N_exp: float,
     t_cad_s: float,
     i_det: int,
-    model_day,
-    model_night,
-    f_live: float,
-    f_live_night: float,
-    f_night: float,
-    optical_on: bool,
+    model,
     approx_on: bool,
     t_overhead_s: float,
     full_integral: bool = False,
@@ -214,16 +209,16 @@ def _eval_point(
     rise_random_start: bool = True,
     fade_random_start: bool = True,
 ) -> tuple[float, float, float, float]:
-    """Evaluate (R_det, t_exp_s, q_med, D_med_Gpc) at a single point."""
+    """Evaluate (R_det, t_exp_s, q_med, D_med_Gpc) at a single point.
+
+    Rate, t_exp and medians all come from the one supplied model — the
+    caller picks the model (the sidebar model for the optimum, a
+    schedule-specific aux model for a ZTF marker; see `_build_models`/the
+    ZTF marker construction in `compute_all`).
+    """
     _nan4 = (math.nan, math.nan, math.nan, math.nan)
     if not (math.isfinite(N_exp) and math.isfinite(t_cad_s) and N_exp > 0 and t_cad_s > 0):
         return _nan4
-
-    # Model dispatch — mirrors compute_surface logic
-    if optical_on and model_night is not None and t_cad_s < DAY_S:
-        model = model_night
-    else:
-        model = model_day
 
     # Rate (filter applied inside the rate method, matching compute_surface)
     N_arr = np.array([N_exp])
@@ -243,37 +238,20 @@ def _eval_point(
             rise_random_start=rise_random_start,
             fade_random_start=fade_random_start)[0])
     R = 10.0 ** log10R if math.isfinite(log10R) else math.nan
-    # Sub-day optical: only the nighttime fraction of detections are accessible
-    if optical_on and model_night is not None and t_cad_s < DAY_S:
-        R = R * f_night
 
     if not math.isfinite(R) or R <= 0:
         return _nan4
 
-    # t_exp
-    try:
-        t_exp = float(exposure_time_s(
-            SurveyStrategy(N_exp=N_exp, t_cad_s=t_cad_s), model.instrument,
-        ))
-        if not math.isfinite(t_exp) or t_exp <= 0:
-            t_exp = math.nan
-    except Exception:
+    # t_exp — the model's own (N_v-aware) budget formula.
+    t_exp = float(model.t_exp_s(N_arr, t_arr)[0])
+    if not math.isfinite(t_exp) or t_exp <= 0:
         t_exp = math.nan
 
     # Approx validity check — same criterion as the surface post-hoc mask.
-    # Sub-day optical uses the rescaled f_live (= f_live / f_night).
-    f_live_validity = (
-        f_live_night
-        if (optical_on and model_night is not None and t_cad_s < DAY_S)
-        else f_live
-    )
     if approx_on and t_overhead_s > 0:
-        if f_live_validity * t_cad_s / N_exp <= t_overhead_s:
+        if bool(_toh_invalid_mask(model, N_arr, t_arr, t_overhead_s)[0]):
             return _nan4
 
-    # Medians — same model dispatch as the rate (and compute_surface): on the
-    # sub-day optical branch model_night carries f_live = f_live / f_night, so
-    # only it describes the detected population behind the reported rate.
     try:
         qm, dm = model.compute_medians(
             i_det, N_arr, t_arr, full_integral=full_integral,
@@ -294,7 +272,7 @@ def _eval_point(
 
 def _build_day_line_arrays(
     *,
-    model_day,
+    model,
     i_det: int,
     N_cols: np.ndarray,
     t_cad_max_s: float,
@@ -352,7 +330,7 @@ def _build_day_line_arrays(
     for i, n in enumerate(n_vals):
         t_s = float(n) * float(DAY_S)
         log10R = _rate(
-            model_day, int(i_det), N_line, np.full_like(N_line, t_s),
+            model, int(i_det), N_line, np.full_like(N_line, t_s),
             full_integral, q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
             rise_random_start=rise_random_start,
@@ -365,8 +343,8 @@ def _build_day_line_arrays(
         R_row = np.where(good, 10.0 ** log10R, np.nan)
 
         t_arr = np.full_like(N_cols, t_s)
-        t_exp_arr = model_day.t_exp_s(N_cols, t_arr)
-        q_med_arr, D_med_cm_arr = model_day.compute_medians(
+        t_exp_arr = model.t_exp_s(N_cols, t_arr)
+        q_med_arr, D_med_cm_arr = model.compute_medians(
             int(i_det), N_cols, t_arr, full_integral=full_integral,
             q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
@@ -376,7 +354,7 @@ def _build_day_line_arrays(
         D_med_Gpc_arr = D_med_cm_arr / GPC_TO_CM
 
         # Regime IDs (always computed; JS can decide whether to colour by them).
-        masks = model_day.region_masks(int(i_det), N_line, np.full_like(N_line, t_s),
+        masks = model.region_masks(int(i_det), N_line, np.full_like(N_line, t_s),
                                        include_unphysical=False)
         rid_row = np.full(n_N, np.nan, dtype=float)
         for k, key in enumerate(["A1", "A2", "A3", "A4", "A5", "A6", "A7"], start=1):
@@ -422,7 +400,7 @@ def _apply_F_dec_override(model, F_dec_Jy: float):
 # ── Shared model builder (used by compute_all, compute_nslice, compute_tslice)
 
 def _build_models(params) -> dict:
-    """Parse params and instantiate model_day / model_night plus derived scalars.
+    """Parse params and instantiate the (single) rate model plus derived scalars.
 
     Returns a state dict with every value the main and slice entry points need
     (so no block of setup code is duplicated across the three entry points).
@@ -469,24 +447,18 @@ def _build_models(params) -> dict:
     t_oh_model = 0.0 if toh_approx else t_overhead_s
     design = SurveyDesignParams(omega_survey_max_sr=omega_srv * DEG2_TO_SR)
 
+    # Night length is still reported (t_night_h slider) but no longer feeds a
+    # separate sub-day model: optical cadences are integer day multiples only
+    # (see grb_detect/core.py's optical_survey_tcad_seconds), so a single
+    # model serves every cell — any intra-night structure is described by the
+    # model's own N_v/dt_v_s (see the dtv-window marker construction below),
+    # decoupled from t_cad.
     f_night = t_night_s / DAY_S
-    # Continuous (sub-night) optical branch: within-night live fraction is
-    # f_live · 86400 / t_night = f_live / f_night. The UI keeps f_night ≥ f_live
-    # via a dynamic t_night floor, but we still guard against a zero denominator.
-    f_live_night = f_live / max(f_night, 1e-12)
 
-    model_day = make_rate_model(
+    model = make_rate_model(
         A_log=A_log, f_live=f_live, t_overhead_s=t_oh_model,
         omega_exp_deg2=omega_exp, design=design,
         win_i_minus_one=win_iminus1, win_from_peak=win_tp, **physics_kw,
-    )
-    model_night = (
-        make_rate_model(
-            A_log=A_log, f_live=f_live_night, t_overhead_s=t_oh_model,
-            omega_exp_deg2=omega_exp, design=design,
-            win_i_minus_one=win_iminus1, win_from_peak=win_tp, **physics_kw,
-        )
-        if optical_on else None
     )
 
     # TEMP-FDEC-OVERRIDE — begin
@@ -495,18 +467,15 @@ def _build_models(params) -> dict:
     if _fdec_ov is not None:
         _fdec_ov = float(_fdec_ov)
         if math.isfinite(_fdec_ov) and _fdec_ov > 0.0:
-            model_day = _apply_F_dec_override(model_day, _fdec_ov)
-            if model_night is not None:
-                model_night = _apply_F_dec_override(model_night, _fdec_ov)
+            model = _apply_F_dec_override(model, _fdec_ov)
             fdec_override_applied = True
     # TEMP-FDEC-OVERRIDE — end
 
-    N_exp_max = model_day.instrument.omega_survey_max_sr / model_day.instrument.omega_exp_sr
+    N_exp_max = model.instrument.omega_survey_max_sr / model.instrument.omega_exp_sr
 
     return {
         "i_det":        i_det,
         "f_live":       f_live,
-        "f_live_night": f_live_night,
         "t_overhead_s": t_overhead_s,
         "optical_on":   optical_on,
         "color_on":     color_on,
@@ -526,8 +495,7 @@ def _build_models(params) -> dict:
         "design":       design,
         "A_log":        A_log,
         "omega_exp":    omega_exp,
-        "model_day":    model_day,
-        "model_night":  model_night,
+        "model":        model,
         "fdec_override_applied": fdec_override_applied,  # TEMP-FDEC-OVERRIDE
     }
 
@@ -536,11 +504,7 @@ def _cr_kwargs_from_state(state: dict) -> dict:
     """_compute_rate kwargs shared by every slice sweep."""
     return dict(
         full_integral=state["full_on"],
-        optical_on=state["optical_on"],
-        model_night=state["model_night"],
         approx_on=state["toh_approx"],
-        f_live=float(state["f_live"]),
-        f_live_night=float(state["f_live_night"]),
         t_overhead_s=float(state["t_overhead_s"]),
         color_on=state["color_on"],
         q_min=state["q_min"],
@@ -557,21 +521,12 @@ def _compute_nslice_sweep(state: dict, t_cad_fix_s: float) -> dict:
     """N-slice 1-D sweep at user-chosen t_cad. Returns flat payload for JS."""
     i_det        = state["i_det"]
     N_exp_max    = state["N_exp_max"]
-    model_day    = state["model_day"]
-    model_night  = state["model_night"]
-    optical_on   = state["optical_on"]
+    model        = state["model"]
 
     N_sweep = np.logspace(0.0, math.log10(N_exp_max), 800)
     t_fixed = np.full_like(N_sweep, float(t_cad_fix_s))
-    # Optical sub-day cadences use the night model; everything else uses day.
-    if optical_on and model_night is not None and t_cad_fix_s < DAY_S:
-        model_nslice = model_night
-    else:
-        model_nslice = model_day
     R_n, t_exp_n, q_med_n, D_med_Gpc_n, rid_n = _compute_rate(
-        model_nslice, i_det, N_sweep, t_fixed,
-        t_cad_scalar=float(t_cad_fix_s),
-        f_night_val=state["f_night"], **_cr_kwargs_from_state(state),
+        model, i_det, N_sweep, t_fixed, **_cr_kwargs_from_state(state),
     )
     return {
         "N_sweep_flat":           _array_to_list(N_sweep),
@@ -588,11 +543,8 @@ def _compute_nslice_sweep(state: dict, t_cad_fix_s: float) -> dict:
 def _compute_tslice_sweep(state: dict, N_fix: float) -> dict:
     """t-slice 1-D sweep(s) at user-chosen N_exp. Returns flat payload for JS."""
     i_det       = state["i_det"]
-    model_day   = state["model_day"]
-    model_night = state["model_night"]
+    model       = state["model"]
     optical_on  = state["optical_on"]
-    t_night_s   = state["t_night_s"]
-    f_night     = state["f_night"]
     cr_kwargs   = _cr_kwargs_from_state(state)
 
     t_cont_h_flat: list          = []
@@ -610,35 +562,15 @@ def _compute_tslice_sweep(state: dict, N_fix: float) -> dict:
 
     N_fix = float(N_fix)
 
-    if optical_on and model_night is not None:
-        # Continuous region (sub-night; force f_night scaling via t_cad_scalar=0.0)
-        t_cont_max_s = t_night_s / float(i_det)
-        t_cont = np.logspace(
-            math.log10(max(10.0, 1.0)),
-            math.log10(max(11.0, t_cont_max_s * 0.999)),
-            600,
-        )
-        N_cont = np.full_like(t_cont, N_fix)
-        R_c, t_exp_c, q_med_c, D_med_Gpc_c, rid_c = _compute_rate(
-            model_night, i_det, N_cont, t_cont,
-            t_cad_scalar=0.0,
-            f_night_val=f_night, **cr_kwargs,
-        )
-        t_cont_h_flat         = _array_to_list(t_cont / 3600.0)
-        t_cont_R_flat         = _array_to_list(R_c)
-        t_cont_t_exp_flat     = _array_to_list(t_exp_c)
-        t_cont_q_med_flat     = _array_to_list(q_med_c)
-        t_cont_D_med_Gpc_flat = _array_to_list(D_med_Gpc_c)
-        t_cont_regime_flat    = _array_to_list(rid_c)
-
-        # Discrete region (integer days; no f_night scaling via t_cad_scalar=DAY_S)
+    if optical_on:
+        # Optical mode: only the discrete integer-day cadences exist (the
+        # historical sub-night continuous region is now the model's own
+        # N_v/dt_v_s, decoupled from t_cad) — t_cont_* stays empty.
         n_max_days = min(500, int(np.floor(1e8 / DAY_S)))
         t_disc = np.arange(1, n_max_days + 1, dtype=float) * DAY_S
         N_disc = np.full_like(t_disc, N_fix)
         R_d, t_exp_d, q_med_d, D_med_Gpc_d, rid_d = _compute_rate(
-            model_day, i_det, N_disc, t_disc,
-            t_cad_scalar=float(DAY_S),
-            f_night_val=f_night, **cr_kwargs,
+            model, i_det, N_disc, t_disc, **cr_kwargs,
         )
         t_disc_h_flat         = _array_to_list(t_disc / 3600.0)
         t_disc_R_flat         = _array_to_list(R_d)
@@ -647,13 +579,11 @@ def _compute_tslice_sweep(state: dict, N_fix: float) -> dict:
         t_disc_D_med_Gpc_flat = _array_to_list(D_med_Gpc_d)
         t_disc_regime_flat    = _array_to_list(rid_d)
     else:
-        # Non-optical: single logspace sweep, 1500 points, no f_night scaling.
+        # Non-optical: single logspace sweep, 1500 points.
         t_sweep = np.logspace(0.0, 8.0, 1500)
         N_fixed = np.full_like(t_sweep, N_fix)
         R_s, t_exp_s, q_med_s, D_med_Gpc_s, rid_s = _compute_rate(
-            model_day, i_det, N_fixed, t_sweep,
-            t_cad_scalar=float(DAY_S),
-            f_night_val=f_night, **cr_kwargs,
+            model, i_det, N_fixed, t_sweep, **cr_kwargs,
         )
         t_cont_h_flat         = _array_to_list(t_sweep / 3600.0)
         t_cont_R_flat         = _array_to_list(R_s)
@@ -687,18 +617,12 @@ def _compute_qdview_sweep(
 
     Returns flat lists for the q-curve and D-curve, each providing both the
     cumulative and the differential representation (the JS toggle only re-renders;
-    no recompute). Mirrors `_compute_nslice_sweep`'s model dispatch, f_night
-    scaling and t_OH validity treatment.
+    no recompute). Mirrors `_compute_nslice_sweep`'s t_OH validity treatment.
     """
     i_det        = state["i_det"]
-    model_day    = state["model_day"]
-    model_night  = state["model_night"]
-    optical_on   = state["optical_on"]
+    model        = state["model"]
     full_on      = state["full_on"]
     approx_on    = state["toh_approx"]
-    f_live_val   = float(state["f_live"])
-    f_live_night = float(state["f_live_night"])
-    f_night      = float(state["f_night"])
     t_overhead_s = float(state["t_overhead_s"])
     q_min        = float(state["q_min"])
     D_min_cm     = float(state["D_min_cm"])
@@ -711,12 +635,6 @@ def _compute_qdview_sweep(
     N_exp_fix   = float(N_exp_fix)
     t_cad_fix_s = float(t_cad_fix_s)
 
-    is_subday_optical = (
-        optical_on and model_night is not None and t_cad_fix_s < DAY_S
-    )
-    model = model_night if is_subday_optical else model_day
-    f_night_mul     = f_night if is_subday_optical else 1.0
-    f_live_validity = f_live_night if is_subday_optical else f_live_val
     # win_from_peak has no closed dominant-term curves (q-dependent D_eff) —
     # the R(q)/R(D) views fall back to the full-integral branch for it.
     use_full = full_on or bool(getattr(model, "win_from_peak", False))
@@ -771,7 +689,9 @@ def _compute_qdview_sweep(
 
     # t_OH approximation validity — same predicate as in _compute_rate.
     if approx_on and t_overhead_s > 0:
-        if f_live_validity * t_cad_fix_s / N_exp_fix <= t_overhead_s:
+        if bool(_toh_invalid_mask(
+            model, np.array([N_exp_fix]), np.array([t_cad_fix_s]), t_overhead_s
+        )[0]):
             return _empty_payload()
 
     # rate_log10 with return_components gives us the active regime + the scalars
@@ -914,13 +834,6 @@ def _compute_qdview_sweep(
         )
         RD_diff = RD_diff_per_cm * GPC_TO_CM
 
-    # f_night scaling — applies uniformly to cumulative and differential.
-    if is_subday_optical:
-        Rq_cum  = Rq_cum  * f_night_mul
-        Rq_diff = Rq_diff * f_night_mul
-        RD_cum  = RD_cum  * f_night_mul
-        RD_diff = RD_diff * f_night_mul
-
     total_rate_q = float(Rq_cum[0]) if np.isfinite(Rq_cum[0]) else float("nan")
     total_rate_D = float(RD_cum[0]) if np.isfinite(RD_cum[0]) else float("nan")
 
@@ -1008,7 +921,6 @@ def compute_all(params) -> dict:
         _prof_t0 = _prof_add("build_models", _prof_t0)
         i_det        = state["i_det"]
         f_live       = state["f_live"]
-        f_live_night = state["f_live_night"]
         t_overhead_s = state["t_overhead_s"]
         optical_on   = state["optical_on"]
         color_on     = state["color_on"]
@@ -1022,10 +934,8 @@ def compute_all(params) -> dict:
         fade_random_start = state["fade_random_start"]
         toh_approx   = state["toh_approx"]
         t_night_s    = state["t_night_s"]
-        f_night      = state["f_night"]
         N_exp_max    = state["N_exp_max"]
-        model_day    = state["model_day"]
-        model_night  = state["model_night"]
+        model        = state["model"]
 
         # Grid resolution: regime-colouring needs the higher density to keep
         # discrete boundaries clean.
@@ -1034,7 +944,7 @@ def compute_all(params) -> dict:
 
         # ── Surface ──────────────────────────────────────────────────────────
         X, Y_s, Z_plot, Z_raw, regime_id, t_exp_g, q_med_g, D_med_Gpc_g = compute_surface(
-            model_day, model_night, i_det,
+            model, i_det,
             optical_survey=optical_on, color_regimes=color_on,
             t_night_s=t_night_s, nx=nx, ny=ny,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
@@ -1044,14 +954,7 @@ def compute_all(params) -> dict:
         )
 
         if toh_approx and t_overhead_s > 0:
-            # Sub-day optical points use f_live_night in the validity boundary,
-            # matching the rescaled t_exp formula t_exp = (f_live/f_night)·t_cad/N_exp.
-            if optical_on and model_night is not None:
-                f_eff = np.where(Y_s < DAY_S, f_live_night, f_live)
-            else:
-                f_eff = f_live
-            budget = f_eff * Y_s / X
-            invalid = budget <= t_overhead_s
+            invalid = _toh_invalid_mask(model, X, Y_s, t_overhead_s)
             Z_plot = np.where(invalid, np.nan, Z_plot)
             Z_raw = np.where(invalid, np.nan, Z_raw)
             if regime_id is not None:
@@ -1065,22 +968,17 @@ def compute_all(params) -> dict:
         _prof_t0 = _prof_add("surface", _prof_t0)
 
         # ── Optimizer ────────────────────────────────────────────────────────
-        # Validity constraint for the approx-mode optimizer:
-        # f_live_eff · t_cad / N_exp must exceed t_OH for the strategy to be feasible.
-        # In optical mode the sub-day branch uses f_live_eff = f_live / f_night.
+        # Validity constraint for the approx-mode optimizer: the model's own
+        # (N_v-aware) exposure-time budget must exceed t_OH for the strategy
+        # to be feasible.
         opt_validity_fn = None
         if toh_approx and t_overhead_s > 0:
-            _f_day, _f_night_eff, _toh0 = float(f_live), float(f_live_night), float(t_overhead_s)
-            _optical = bool(optical_on and model_night is not None)
+            _toh0 = float(t_overhead_s)
             def opt_validity_fn(N_arr: np.ndarray, t_arr: np.ndarray) -> np.ndarray:
-                if _optical:
-                    f_eff = np.where(t_arr < DAY_S, _f_night_eff, _f_day)
-                else:
-                    f_eff = _f_day
-                return f_eff * t_arr / N_arr > _toh0
+                return ~_toh_invalid_mask(model, N_arr, t_arr, _toh0)
 
         N_opt, t_cad_opt_s, log10R_opt = maximize_log_surface_iterative(
-            model_day, model_night, i_det,
+            model, i_det,
             x_min=0.0, x_max=math.log10(N_exp_max),
             y_min=0.0, y_max=8.0,
             optical_survey=optical_on, t_night_s=t_night_s,
@@ -1092,8 +990,7 @@ def compute_all(params) -> dict:
             **_OPT_GRID,
         )
         R_opt, t_exp_opt_s, q_med_opt, D_med_Gpc_opt = _eval_point(
-            N_opt, t_cad_opt_s, i_det, model_day, model_night,
-            f_live, f_live_night, f_night, optical_on, toh_approx, t_overhead_s,
+            N_opt, t_cad_opt_s, i_det, model, toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
             rise_random_start=rise_random_start,
@@ -1101,38 +998,71 @@ def compute_all(params) -> dict:
         )
 
         # ── ZTF reference points (the two real observing modes) ─────────────
-        # Mode A — public all-sky: ~15,000 deg² every 2 nights.
+        # Each mode is evaluated on its own aux model, carrying the same
+        # physics/instrument/window settings as the sidebar model but with
+        # its own (N_v, dt_v_s) intra-night schedule baked in at construction
+        # — see DetectionRateModel.__init__. t_cad keeps its real meaning
+        # (field-revisit period): both modes now revisit nightly/every-other-
+        # night at day-multiple cadences, so no separate "only every N nights"
+        # correction is needed here — t_exp_s already divides the sky-tiling
+        # budget over that period. i_det stays the shared/global value (not
+        # baked into the aux models) — confirmation-count is a real physical
+        # choice, decoupled from each mode's own visit schedule.
+        #
+        # The rate ITSELF does get one more correction, applied inside the
+        # engine (DetectionRateModel._sync_penalty_log10, gated on
+        # dt_v_s is not None): the dominant-term math assumes the first
+        # detection lands for free at the burst's peak, which is only a fair
+        # assumption when the confirming revisit truly recurs every dt_v_s
+        # forever (main's use of the real t_cad). Substituting the short
+        # intra-night dt_v_s here would otherwise silently overcount — that
+        # confirmation opportunity only exists during the N_v-visit window,
+        # not continuously — so the engine multiplies the rate by
+        # min(1, N_v*dt_v_s/t_cad), a crude order-of-magnitude stand-in for
+        # the probability the (assumed-optimal) peak epoch actually falls
+        # inside that window.
+        def _ztf_aux_model(N_v: int, dt_v_s: float) -> DetectionRateModel:
+            return DetectionRateModel(
+                phys=model.phys, instrument=model.instrument, micro=model.micro,
+                pls=model.pls, win_i_minus_one=model.win_i_minus_one,
+                win_from_peak=model.win_from_peak, N_v=N_v, dt_v_s=dt_v_s,
+            )
+
+        def _ztf_schedule_fits_night(dt_v_s: float) -> bool:
+            i_eff = (i_det - 1) if model.win_i_minus_one else i_det
+            return i_eff * dt_v_s <= t_night_s
+
+        # Mode A — public all-sky: ~15,000 deg² every 2 nights, 2 visits/night
+        # 2h apart.
         N_ztf = min(ZTF_PUBLIC_OMEGA_SRV_DEG2 / ZTF_OMEGA_EXP_DEG2, N_exp_max)
         t_cad_ztf_s = ZTF_PUBLIC_T_CAD_S
+        model_ztf_public = _ztf_aux_model(ZTF_PUBLIC_N_V, ZTF_PUBLIC_DT_V_S)
         R_ztf, t_exp_ztf_s, q_med_ztf, D_med_Gpc_ztf = _eval_point(
-            N_ztf, t_cad_ztf_s, i_det, model_day, model_night,
-            f_live, f_live_night, f_night, optical_on, toh_approx, t_overhead_s,
+            N_ztf, t_cad_ztf_s, i_det, model_ztf_public, toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
             rise_random_start=rise_random_start,
             fade_random_start=fade_random_start,
         )
+        if optical_on and not _ztf_schedule_fits_night(ZTF_PUBLIC_DT_V_S):
+            R_ztf = math.nan
 
-        # Mode B — high-cadence partnership/ZUDS: ~2,500 deg², 6 visits/night.
-        # t_cad sits just inside the sub-night continuous region so the point
-        # stays valid in optical-survey mode (i·t_cad < t_night needs i ≤ 6).
+        # Mode B — high-cadence partnership/ZUDS: ~2,500 deg², nightly,
+        # 6 visits/night 1h apart.
         N_ztf_hc = min(ZTF_HC_OMEGA_SRV_DEG2 / ZTF_OMEGA_EXP_DEG2, N_exp_max)
-        t_cad_ztf_hc_s = 0.98 * t_night_s / float(ZTF_HC_VISITS_PER_NIGHT)
+        t_cad_ztf_hc_s = ZTF_HC_T_CAD_S
+        model_ztf_hc = _ztf_aux_model(ZTF_HC_VISITS_PER_NIGHT, ZTF_HC_DT_V_S)
         R_ztf_hc, t_exp_ztf_hc_s, q_med_ztf_hc, D_med_Gpc_ztf_hc = _eval_point(
-            N_ztf_hc, t_cad_ztf_hc_s, i_det, model_day, model_night,
-            f_live, f_live_night, f_night, optical_on, toh_approx, t_overhead_s,
+            N_ztf_hc, t_cad_ztf_hc_s, i_det, model_ztf_hc, toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
             rise_random_start=rise_random_start,
             fade_random_start=fade_random_start,
         )
-        if optical_on:
-            _, _hc_valid = optical_survey_tcad_seconds(
-                np.array([t_cad_ztf_hc_s]), i_det=i_det, t_night_s=t_night_s,
-            )
-            if not bool(_hc_valid[0]):
-                # Infeasible schedule (can't fit i visits in one night) — hide.
-                R_ztf_hc = math.nan
+        if optical_on and not _ztf_schedule_fits_night(ZTF_HC_DT_V_S):
+            # Infeasible schedule (can't fit the intra-night visits in one
+            # configured night) — hide.
+            R_ztf_hc = math.nan
 
         _prof_t0 = _prof_add("optimizer+points", _prof_t0)
 
@@ -1168,15 +1098,19 @@ def compute_all(params) -> dict:
         f_b      = theta_j ** 2 / 2.0
         R_toward_day = R_int_yr * f_b / 365.25
 
-        t_dec_s_val  = float(model_day.derived.t_dec_s)
-        F_nu_tdec_Jy = float(model_day.derived.F_dec_Jy)
+        t_dec_s_val  = float(model.derived.t_dec_s)
+        F_nu_tdec_Jy = float(model.derived.F_dec_Jy)
 
         zmax_log10 = float(np.nanmax(Z_plot)) if np.any(np.isfinite(Z_plot)) else 0.0
         R_surface_max = float(np.nanmax(R_lin)) if np.any(np.isfinite(R_lin)) else 0.0
 
         # ── Gap times (optical t-slice) ──────────────────────────────────────
+        # Sub-day cadences are invalid outright now (optical mode is discrete
+        # day-multiples only — see core.py's optical_survey_tcad_seconds), so
+        # the whole sub-day domain is shaded, not just a t_night/i_det-to-1-day
+        # band.
         if optical_on:
-            gap_lo_h = (t_night_s / 3600.0) / float(i_det)
+            gap_lo_h = 1.0 / 3600.0
             gap_hi_h = 24.0
         else:
             gap_lo_h = None
@@ -1191,7 +1125,7 @@ def compute_all(params) -> dict:
                 day_N, day_R, day_rid,
                 day_t_exp, day_q_med, day_D_med_Gpc,
             ) = _build_day_line_arrays(
-                model_day=model_day, i_det=i_det,
+                model=model, i_det=i_det,
                 N_cols=N_cols, t_cad_max_s=t_cad_max_s,
                 full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
                 s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
