@@ -1,0 +1,82 @@
+==============================================================================
+SIMPLE-MACHINERY MODE MODEL vs SCHEDULE MODEL (assessment 2026-08-29)
+conventions: new physics defaults, cuts off, win_iminus1/win_tp off
+==============================================================================
+
+### Mode public (2/night @2h, every 2 nights) — observed ≈ 2.0/yr
+  schedule: N_v=2, dt_v=2.0 h, n=2 night(s), train span 2 h of a 10 h night
+  unified budget t_exp = 30.1 s (f_eff=0.4, N_exp=319)
+
+  REFERENCE (schedule model)                     R [/yr]   q_med   D_med
+    phase-avg mixture (referee)                   96.9     1.2    2.09
+    full integral, cons. wait bracket             35.9    1.56    1.18
+    full integral, opt. wait bracket               431    1.13    3.41
+
+  CHANNEL DECOMPOSITION (dominant mode)      weight   R [/yr]   share   regime [best wait → worst]
+    A_G  (overnight gap)         0.958      95.6   98.7%   A3/flux-lim → A6/cad-lim
+    A_dlt (interior gaps)            —         —       —   (empty)
+    B    (last-gap wrap)         0.042      1.25    1.3%   A6/cad-lim → A6/cad-lim
+    physics split: fresh pair (wait ≤ dt_v) = 15.1/yr (16.2%)   gap survivors = 78/yr (83.8%)
+    with id cuts (s_fade=0.3, s_rise=0.5): total = 77.2/yr, fresh = 12.6/yr (17.1%), survivors = 61.3/yr (82.9%)
+
+  CANDIDATE SIMPLE MODELS (legacy machinery only)        t_exp   R [/yr]   /ref
+    literal: legacy(dt_v) × f_night/n = ×0.208         —         —      —   INVALID (t_exp ≤ 0)
+    intranight: legacy(dt_v) × 0.0417, cons. wait (T=i·dt_v)        30      15.1   0.16
+    intranight: legacy(dt_v) × 0.0417, opt. wait (T=(i−1)·dt_v)     30      15.1   0.16
+      → brackets the fresh-pair term 15.1/yr: [15.1, 15.1]  geo-mean 15.1
+    overnight-only: legacy(n·DAY), cons. wait (T=i·n·DAY)           30      5.33  0.055
+    overnight-only: legacy(n·DAY), opt. wait (T=(i−1)·n·DAY)        30      29.5    0.3
+      → neither endpoint reaches the gap-survivor term 78/yr: the wait average spans the flux→cadence-limited transition inside the gap, which no single rectangle represents
+
+### Mode HC (6/night @1h, nightly) — observed ≈ 2.5/yr
+  schedule: N_v=6, dt_v=1.0 h, n=1 night(s), train span 5 h of a 10 h night
+  unified budget t_exp = 30.1 s (f_eff=0.4, N_exp=53)
+
+  REFERENCE (schedule model)                     R [/yr]   q_med   D_med
+    phase-avg mixture (referee)                   35.1    1.13    2.82
+    full integral, cons. wait bracket             25.2     1.2    2.14
+    full integral, opt. wait bracket              72.2    1.13    3.41
+
+  CHANNEL DECOMPOSITION (dominant mode)      weight   R [/yr]   share   regime [best wait → worst]
+    A_G  (overnight gap)         0.792      24.5   69.8%   A3/flux-lim → A6/cad-lim
+    A_dlt (interior gaps)        0.167      10.1   28.7%   A3/flux-lim → A3/flux-lim
+    B    (last-gap wrap)         0.042     0.511    1.5%   A6/cad-lim → A6/cad-lim
+    physics split: fresh pair (wait ≤ dt_v) = 12.6/yr (36.2%)   gap survivors = 22.2/yr (63.8%)
+    with id cuts (s_fade=0.3, s_rise=0.5): total = 32.9/yr, fresh = 12.4/yr (37.9%), survivors = 20.3/yr (62.1%)
+
+  CANDIDATE SIMPLE MODELS (legacy machinery only)        t_exp   R [/yr]   /ref
+    literal: legacy(dt_v) × f_night/n = ×0.417        12      22.8   0.65   shallow (12 s vs 30 s)
+    intranight: legacy(dt_v) × 0.2083, cons. wait (T=i·dt_v)        30      12.6   0.36
+    intranight: legacy(dt_v) × 0.2083, opt. wait (T=(i−1)·dt_v)     30      12.6   0.36
+      → brackets the fresh-pair term 12.6/yr: [12.6, 12.6]  geo-mean 12.6
+    overnight-only: legacy(n·DAY), cons. wait (T=i·n·DAY)           30      4.91   0.14
+    overnight-only: legacy(n·DAY), opt. wait (T=(i−1)·n·DAY)        30      9.88   0.28
+      → neither endpoint reaches the gap-survivor term 22.2/yr: the wait average spans the flux→cadence-limited transition inside the gap, which no single rectangle represents
+
+==============================================================================
+CONTEXT: pre-schedule encodings (main branch), dominant mode, same conventions
+==============================================================================
+  A pre-schedule (i=2, N_v=1, f_eff=0.19): R = 5.09/yr  (× eps_cov 0.35 = 1.78/yr)
+  B pre-schedule (i=6, N_v=6, f_eff=0.41): R = 14.8/yr  (× eps_cov 0.35 = 5.17/yr)
+  observed: public ≈ 2/yr, HC ≈ 2.5/yr (raw model rates carry the known ×5–7 normalization excess; eps_cov = 0.35 applies to every raw rate above)
+
+==============================================================================
+VERDICT (single-dominant-term rule, user decision 2026-08-29)
+==============================================================================
+  public (2/night @2h, every 2 nights): fresh-pair share = 16% (cuts off) / 17% (id cuts on) → simple model = overnight term (hard-threshold criterion)
+  HC (6/night @1h, nightly): fresh-pair share = 36% (cuts off) / 38% (id cuts on) → simple model = overnight term (hard-threshold criterion)
+
+SANITY CHECKS
+  [PASS] public (2/night @2h, every 2 nights): unified t_exp ≈ 30 s
+  [PASS] public (2/night @2h, every 2 nights): model t_exp = unified t_exp
+  [PASS] public (2/night @2h, every 2 nights): Σ channels = mixture rate
+  [PASS] public (2/night @2h, every 2 nights): Σ channel weights = 1
+  [PASS] public (2/night @2h, every 2 nights): fresh+stale ≈ mixture (≲2% GL5 quadrature)
+  [PASS] public (2/night @2h, every 2 nights): intranight recipe brackets the fresh term
+  [PASS] HC (6/night @1h, nightly): unified t_exp ≈ 30 s
+  [PASS] HC (6/night @1h, nightly): model t_exp = unified t_exp
+  [PASS] HC (6/night @1h, nightly): Σ channels = mixture rate
+  [PASS] HC (6/night @1h, nightly): Σ channel weights = 1
+  [PASS] HC (6/night @1h, nightly): fresh+stale ≈ mixture (≲2% GL5 quadrature)
+  [PASS] HC (6/night @1h, nightly): intranight recipe brackets the fresh term
+  [PASS] N_v=1 schedule model = legacy model (parity spot check)

@@ -283,6 +283,14 @@ the first two, comoving primary):
 
 ### Observed side — Table 18 redshifts → distances
 
+**2026-08-29:** per-event photometry, discovery circumstances, and viewing-angle constraints
+for this sample were verified directly against the primary papers Table 18 cites — see
+[`../docs/observations_reference.md`](../docs/observations_reference.md), which also flags
+three corrections (HC footprint 2,500→3,000 deg², the "observed rate" targets below are
+project-derived rather than literature-quoted, and a Table 18 citation error for AT2021qbd).
+Treat that document, not Table 18 alone, as the citable source for per-event facts going
+forward.
+
 Flat ΛCDM, H₀ = 70 km/s/Mpc, Ω_m = 0.3 (the same anchor cosmology behind the
 "5.28 Gpc ≈ z = 2" identification). Of the 13 events, 11 have redshifts; GRB 190106A is
 excluded ("not part of the main sample" per the notes); AT2020sev and AT2021cwd have no z.
@@ -513,3 +521,48 @@ remains — rates ×5–7 high at horizons that are still ~×1.3–1.9 short —
 attributable to the single-luminosity population, quantified above; the σ ≈ 1.2–1.5 mag
 F_dec spread with a joint rate refit remains the one identified fix, deferred pending
 approval.
+
+## Simple-machinery mode-model check (2026-08-29, assessment only)
+
+Question: can each ZTF mode be a *single* legacy-machinery term — fix i = 2,
+evaluate the legacy model at the intra-night spacing Δt_v, weight by the
+nightly landing window, ÷ n for an every-n-nights cadence — instead of the
+schedule channel mixture?  `analysis/simple_mode_check.py`
+(→ `simple_mode_check_output.txt`) decomposes the schedule model's
+phase-averaged mixture exactly by channel and compares the candidates.
+Conventions: new defaults, cuts/window toggles off (hard-threshold criterion).
+
+1. **The intranight-domination hypothesis fails.** Fresh-pair detections
+   (burst lands ≤ Δt_v before a same-night pair) carry only **16 %** of the
+   public-mode rate and **36 %** of HC; **gap survivors** — bursts from the
+   day/off-night gap still above threshold at the next night's visits —
+   carry the rest (id cuts s_fade = 0.3, s_rise = 0.5 barely move this:
+   17 % / 38 %). At t_exp ≈ 30 s the best-wait end of the overnight channel
+   is flux-limited (A3), so long waits keep contributing by sheer phase
+   weight (A_G weight 0.96 public / 0.79 HC).
+2. **The literal recipe is structurally broken for public**: the sub-day
+   budget gives t_exp = f_eff·Δt_v/N_exp − t_OH ≈ −6 s (invalid); for HC it
+   is merely ×2.5 shallow (12 s vs 30 s). Any simple encoding must keep the
+   unified schedule budget t_exp = f_eff·f_night·t_cad/(N_exp·N_v) − t_OH.
+3. **With the corrected budget and landing weight (N_v−1)·Δt_v/(n·DAY), the
+   intranight recipe equals the fresh-pair term exactly** (both wait
+   conventions coincide — the term is flux-limited): 15.1/yr public,
+   12.6/yr HC = ×0.16 / ×0.36 of the referee mixture (96.9 / 35.1 /yr).
+4. **No single rectangle reproduces the dominant (gap-survivor) term
+   either**: legacy(n·DAY) endpoints give ×0.055–0.30 (public) and
+   ×0.14–0.28 (HC) of the referee — the wait average crosses the
+   flux→cadence-limited transition *inside* the overnight gap, which is
+   exactly what the gap average integrates.
+5. Context: the pre-schedule encodings sit at 5.1/yr (public, ×19 below the
+   schedule referee) and 14.8/yr (HC, i = 6 hack).
+
+**Bottom line:** under the current hard-threshold criterion the
+single-dominant-term simple model would represent both modes with their
+*overnight* term, and no legacy-rectangle version of that term gets closer
+than ~×0.3 of the schedule rate. The one-term-per-mode simplification is
+therefore not a faithful reduction of the schedule model at these presets;
+the minimal faithful simplification remains the gap-averaged mixture (or a
+two-term fresh + gap-average split). Caveat: shares are measured in dominant
+mode; the exact win_tp ramp (which suppresses long off-axis waits) cannot be
+decomposed per channel with the current API and could raise the fresh share.
+No model or app changes made — assessment only.
