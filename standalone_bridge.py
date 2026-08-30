@@ -15,7 +15,6 @@ import time
 import numpy as np
 
 from grb_detect.constants import DAY_S, DEG2_TO_SR
-from grb_detect.detection_rate import DetectionRateModel
 from grb_detect.params import GPC_TO_CM, SurveyDesignParams
 from grb_detect.core import (
     ZMIN_DISPLAY_LOG10,
@@ -49,21 +48,17 @@ def _prof_add(label: str, t0: float) -> float:
 ZTF_OMEGA_EXP_DEG2: float = 47.0
 
 # The two real ZTF observing modes used as reference points on the surface
-# (Ho et al. 2022; Andreoni et al. 2021), each evaluated on its own aux model
-# carrying its own intra-night schedule (N_v visits at spacing dt_v_s — see
-# DetectionRateModel.__init__ and the model_ztf_public/model_ztf_hc
-# construction in compute_all). t_cad keeps its real meaning (field-revisit
-# period):
+# (Ho et al. 2022; Andreoni et al. 2021). Only the marker COORDINATES
+# (footprint, cadence) are hardcoded here; the modes' schedules (N_v, dt_v,
+# f_live, i) live in the UI presets (web/app.js PRESETS) since both markers
+# are evaluated with the one shared/displayed model (see compute_all) —
+# loading a preset makes its marker the fully-accurate one.
 #   public all-sky  — ~15,000 deg² every 2 nights (g+r), 2 visits/night 2h apart,
 #   high-cadence    — ~2,500 deg² partnership/ZUDS, nightly, 6 visits/night 1h apart.
 ZTF_PUBLIC_OMEGA_SRV_DEG2: float = 15000.0
 ZTF_PUBLIC_T_CAD_S: float = 2.0 * DAY_S       # 2-night revisit period
-ZTF_PUBLIC_N_V: int = 2
-ZTF_PUBLIC_DT_V_S: float = 2.0 * 3600.0
 ZTF_HC_OMEGA_SRV_DEG2: float = 2500.0
-ZTF_HC_VISITS_PER_NIGHT: int = 6
 ZTF_HC_T_CAD_S: float = 1.0 * DAY_S           # nightly revisit period
-ZTF_HC_DT_V_S: float = 1.0 * 3600.0
 
 # Grid resolutions. Regime-colour mode uses the denser grid so the discrete
 # boundaries between regimes stay crisp.
@@ -430,6 +425,11 @@ def _build_models(params) -> dict:
     win_iminus1  = bool(params.get("win_iminus1", True))
     win_tp       = bool(params.get("win_tp", False))
 
+    # Night schedule (optical mode only; N_v=1 reproduces the plain
+    # single-cadence model regardless of dt_v_h — see make_rate_model).
+    N_v    = int(params.get("N_v", 1)) if optical_on else 1
+    dt_v_s = float(params.get("dt_v_h", 2.0)) * 3600.0
+
     physics_kw = dict(
         p=float(params["p"]),
         nu_log10=float(params["nu_log10"]),
@@ -447,18 +447,20 @@ def _build_models(params) -> dict:
     t_oh_model = 0.0 if toh_approx else t_overhead_s
     design = SurveyDesignParams(omega_survey_max_sr=omega_srv * DEG2_TO_SR)
 
-    # Night length is still reported (t_night_h slider) but no longer feeds a
-    # separate sub-day model: optical cadences are integer day multiples only
-    # (see grb_detect/core.py's optical_survey_tcad_seconds), so a single
-    # model serves every cell — any intra-night structure is described by the
-    # model's own N_v/dt_v_s (see the dtv-window marker construction below),
-    # decoupled from t_cad.
+    # Optical cadences are integer day multiples only (see
+    # grb_detect/core.py's optical_survey_tcad_seconds), so a single model
+    # serves every cell of the surface, both slice views, and both ZTF
+    # markers alike — any intra-night structure is described by this same
+    # model's own N_v/dt_v_s, decoupled from t_cad. t_night_h is still
+    # reported for display but no longer feeds a separate sub-day model.
     f_night = t_night_s / DAY_S
 
     model = make_rate_model(
         A_log=A_log, f_live=f_live, t_overhead_s=t_oh_model,
         omega_exp_deg2=omega_exp, design=design,
-        win_i_minus_one=win_iminus1, win_from_peak=win_tp, **physics_kw,
+        win_i_minus_one=win_iminus1, win_from_peak=win_tp,
+        N_v=N_v, dt_v_s=dt_v_s,
+        **physics_kw,
     )
 
     # TEMP-FDEC-OVERRIDE — begin
@@ -490,6 +492,8 @@ def _build_models(params) -> dict:
         "toh_approx":   toh_approx,
         "t_night_s":    t_night_s,
         "f_night":      f_night,
+        "N_v":          N_v,
+        "dt_v_s":       dt_v_s,
         "N_exp_max":    N_exp_max,
         "physics_kw":   physics_kw,
         "design":       design,
@@ -998,71 +1002,50 @@ def compute_all(params) -> dict:
         )
 
         # ── ZTF reference points (the two real observing modes) ─────────────
-        # Each mode is evaluated on its own aux model, carrying the same
-        # physics/instrument/window settings as the sidebar model but with
-        # its own (N_v, dt_v_s) intra-night schedule baked in at construction
-        # — see DetectionRateModel.__init__. t_cad keeps its real meaning
-        # (field-revisit period): both modes now revisit nightly/every-other-
-        # night at day-multiple cadences, so no separate "only every N nights"
-        # correction is needed here — t_exp_s already divides the sky-tiling
-        # budget over that period. i_det stays the shared/global value (not
-        # baked into the aux models) — confirmation-count is a real physical
-        # choice, decoupled from each mode's own visit schedule.
+        # Both markers are evaluated on the SAME shared model that draws the
+        # surface/slices, at their own real (N_exp, t_cad) coordinate — so a
+        # marker always sits exactly on whatever's displayed. This means only
+        # the mode whose N_v/dt_v_s currently match the sliders is fully
+        # accurate everywhere at once; the other marker's coordinate is still
+        # its own true footprint/cadence, but its rate reflects the CURRENT
+        # schedule, not its own real one, until you switch presets (or dial
+        # N_v/dt_v_s to match it) — paramsMatchPreset()/the grayed-out marker
+        # styling in web/app.js signals which mode that currently is.
         #
-        # The rate ITSELF does get one more correction, applied inside the
-        # engine (DetectionRateModel._sync_penalty_log10, gated on
-        # dt_v_s is not None): the dominant-term math assumes the first
-        # detection lands for free at the burst's peak, which is only a fair
-        # assumption when the confirming revisit truly recurs every dt_v_s
-        # forever (main's use of the real t_cad). Substituting the short
-        # intra-night dt_v_s here would otherwise silently overcount — that
+        # The rate itself gets one correction, applied inside the engine
+        # (DetectionRateModel._sync_penalty_log10, gated on dt_v_s is not
+        # None): the dominant-term math assumes the first detection lands for
+        # free at the burst's peak, which is only a fair assumption when the
+        # confirming revisit truly recurs every dt_v_s forever (dt_v_s is
+        # None: t_cad's real, continuously-recurring period). Substituting a
+        # short intra-night dt_v_s would otherwise silently overcount — that
         # confirmation opportunity only exists during the N_v-visit window,
         # not continuously — so the engine multiplies the rate by
         # min(1, N_v*dt_v_s/t_cad), a crude order-of-magnitude stand-in for
         # the probability the (assumed-optimal) peak epoch actually falls
         # inside that window.
-        def _ztf_aux_model(N_v: int, dt_v_s: float) -> DetectionRateModel:
-            return DetectionRateModel(
-                phys=model.phys, instrument=model.instrument, micro=model.micro,
-                pls=model.pls, win_i_minus_one=model.win_i_minus_one,
-                win_from_peak=model.win_from_peak, N_v=N_v, dt_v_s=dt_v_s,
-            )
 
-        def _ztf_schedule_fits_night(dt_v_s: float) -> bool:
-            i_eff = (i_det - 1) if model.win_i_minus_one else i_det
-            return i_eff * dt_v_s <= t_night_s
-
-        # Mode A — public all-sky: ~15,000 deg² every 2 nights, 2 visits/night
-        # 2h apart.
+        # Mode A — public all-sky: ~15,000 deg² every 2 nights.
         N_ztf = min(ZTF_PUBLIC_OMEGA_SRV_DEG2 / ZTF_OMEGA_EXP_DEG2, N_exp_max)
         t_cad_ztf_s = ZTF_PUBLIC_T_CAD_S
-        model_ztf_public = _ztf_aux_model(ZTF_PUBLIC_N_V, ZTF_PUBLIC_DT_V_S)
         R_ztf, t_exp_ztf_s, q_med_ztf, D_med_Gpc_ztf = _eval_point(
-            N_ztf, t_cad_ztf_s, i_det, model_ztf_public, toh_approx, t_overhead_s,
+            N_ztf, t_cad_ztf_s, i_det, model, toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
             rise_random_start=rise_random_start,
             fade_random_start=fade_random_start,
         )
-        if optical_on and not _ztf_schedule_fits_night(ZTF_PUBLIC_DT_V_S):
-            R_ztf = math.nan
 
-        # Mode B — high-cadence partnership/ZUDS: ~2,500 deg², nightly,
-        # 6 visits/night 1h apart.
+        # Mode B — high-cadence partnership/ZUDS: ~2,500 deg², nightly.
         N_ztf_hc = min(ZTF_HC_OMEGA_SRV_DEG2 / ZTF_OMEGA_EXP_DEG2, N_exp_max)
         t_cad_ztf_hc_s = ZTF_HC_T_CAD_S
-        model_ztf_hc = _ztf_aux_model(ZTF_HC_VISITS_PER_NIGHT, ZTF_HC_DT_V_S)
         R_ztf_hc, t_exp_ztf_hc_s, q_med_ztf_hc, D_med_Gpc_ztf_hc = _eval_point(
-            N_ztf_hc, t_cad_ztf_hc_s, i_det, model_ztf_hc, toh_approx, t_overhead_s,
+            N_ztf_hc, t_cad_ztf_hc_s, i_det, model, toh_approx, t_overhead_s,
             full_integral=full_on, q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
             rise_random_start=rise_random_start,
             fade_random_start=fade_random_start,
         )
-        if optical_on and not _ztf_schedule_fits_night(ZTF_HC_DT_V_S):
-            # Infeasible schedule (can't fit the intra-night visits in one
-            # configured night) — hide.
-            R_ztf_hc = math.nan
 
         _prof_t0 = _prof_add("optimizer+points", _prof_t0)
 

@@ -48,7 +48,7 @@
     <div class="metric-badge"><span class="metric-label">t<sub>exp</sub></span><span class="metric-value metric-muted" id="m-texp-opt">—</span></div>
   </div>
   <div class="metric-sep-prominent"></div>
-  <div class="metric-group" id="mg-ztf" title="ZTF public all-sky mode: ~15,000 deg² every 2 nights, evaluated with your current strategy &amp; physics. Dimmed when those differ from the ZTF public preset.">
+  <div class="metric-group" id="mg-ztf" title="ZTF public all-sky mode: ~15,000 deg² every 2 nights, 2 visits per visit-night, evaluated with your current strategy &amp; physics (incl. N_v/Δt_v). Dimmed when those differ from the ZTF public preset.">
     <span class="metric-group-label mg-ztf">ZTF public</span>
     <div class="metric-badge"><span class="metric-label">R<sub>det</sub></span><span class="metric-value metric-coral" id="m-R-ztf">—</span></div>
     <div class="metric-badge"><span class="metric-label">t<sub>cad</sub></span><span class="metric-value metric-muted" id="m-tcad-ztf">—</span></div>
@@ -56,7 +56,7 @@
     <div class="metric-badge"><span class="metric-label">t<sub>exp</sub></span><span class="metric-value metric-muted" id="m-texp-ztf">—</span></div>
   </div>
   <div class="metric-sep-prominent"></div>
-  <div class="metric-group" id="mg-hc" title="ZTF high-cadence mode: ~2,500 deg², 6 visits/night, evaluated with your current strategy &amp; physics. Dimmed when those differ from the ZTF high-cadence preset.">
+  <div class="metric-group" id="mg-hc" title="ZTF high-cadence mode: ~2,500 deg², nightly, 6 visits per visit-night, evaluated with your current strategy &amp; physics (incl. N_v/Δt_v). Dimmed when those differ from the ZTF high-cadence preset.">
     <span class="metric-group-label mg-hc">ZTF HC</span>
     <div class="metric-badge"><span class="metric-label">R<sub>det</sub></span><span class="metric-value metric-violet" id="m-R-hc">—</span></div>
     <div class="metric-badge"><span class="metric-label">t<sub>cad</sub></span><span class="metric-value metric-muted" id="m-tcad-hc">—</span></div>
@@ -80,7 +80,7 @@
 <div class="acc-body">
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="i_slider" title="Number of detections required per GRB to count as a detection event. ZTF reference: ~2 epochs in the public 2-night survey, ~6 visits/night in the high-cadence mode.">i</label>
+      <label class="param-label" for="i_slider" title="Number of detection epochs required per GRB to count as a detection event — a confirmation-pipeline property, independent of how many visits per night (N_v) the schedule offers. ZTF-like pipelines: ~2.">i</label>
       <input type="number" id="i_input" class="param-input" min="2" max="100" step="1" value="2">
     </div>
     %%SLIDER_I%%
@@ -174,6 +174,18 @@
     %%SLIDER_TNIGHT%%
     <div id="tnight-floor-note"></div>
     <div id="subnight-limit-display"></div>
+  </div>
+  <div class="param-block" id="schedule-block" style="display:none">
+    <div class="param-row">
+      <label class="param-label" for="nv_slider" title="Number of visits per visit-night, spaced Δt_v apart. N_v=1 (no intra-night schedule) reproduces the plain single-cadence model.">N<sub>v</sub></label>
+      <input type="number" id="nv_input" class="param-input" min="1" max="10" step="1" value="1">
+    </div>
+    %%SLIDER_NV%%
+    <div class="param-row" id="dtv-block">
+      <label class="param-label" for="dtv_slider" title="Spacing between consecutive visits within one visit-night, in hours. Inert (dimmed) at N_v=1.">Δt<sub>v</sub> [hr]</label>
+      <input type="number" id="dtv_input" class="param-input" min="0.25" max="12" step="0.25" value="2">
+    </div>
+    %%SLIDER_DTV%%
   </div>
 </div>
 </details>

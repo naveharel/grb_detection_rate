@@ -52,6 +52,8 @@ def _make_rate_model_cached(
     rho_grb_log10: float,
     win_i_minus_one: bool,
     win_from_peak: bool,
+    N_v: int,
+    dt_v_s: float | None,
 ) -> DetectionRateModel:
     """Cached model construction — called only when parameters change."""
     p_val      = float(p)
@@ -96,6 +98,7 @@ def _make_rate_model_cached(
         phys=phys, instrument=instrument, micro=micro,
         win_i_minus_one=bool(win_i_minus_one),
         win_from_peak=bool(win_from_peak),
+        N_v=int(N_v), dt_v_s=dt_v_s,
     )
 
 
@@ -120,6 +123,10 @@ def make_rate_model(
     # Detection-window settings (see DetectionRateModel docstring)
     win_i_minus_one: bool = False,
     win_from_peak: bool = False,
+    # Night schedule (see DetectionRateModel docstring): N_v=1 (default)
+    # reproduces the plain single-cadence model regardless of dt_v_s.
+    N_v: int = 1,
+    dt_v_s: float | None = None,
 ) -> DetectionRateModel:
     """Construct a rate model from the survey parameters exposed in the UI.
 
@@ -136,6 +143,12 @@ def make_rate_model(
         return round(float(x), n)
 
     omega_max = design.omega_survey_max_sr if design is not None else _sd.omega_survey_max_sr
+
+    # Normalize before the cache key: at N_v <= 1 there is no intra-night
+    # schedule, so dt_v_s is irrelevant — force it to None (a no-op inside
+    # DetectionRateModel) rather than caching a spurious dependence on it.
+    N_v_val = int(N_v)
+    dt_v_val = float(dt_v_s) if (N_v_val > 1 and dt_v_s is not None) else None
 
     return _make_rate_model_cached(
         _r(A_log),
@@ -156,6 +169,8 @@ def make_rate_model(
         _r(rho_grb_log10)  if rho_grb_log10  is not None else _r(math.log10(_d.rho_grb_gpc3_yr)),
         bool(win_i_minus_one),
         bool(win_from_peak),
+        N_v_val,
+        dt_v_val,
     )
 
 

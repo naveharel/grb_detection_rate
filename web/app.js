@@ -41,15 +41,20 @@ const PLASMA_SCALE = [
 //              f_live = 0.08 gives t_exp ≈ 30 s at (N = 319, t_cad = 2 d).
 //   high-cad — ~2,500 deg² partnership/ZUDS, 6 visits/night; f_live = 0.17
 //              gives t_exp ≈ 30 s at (N = 53, t_cad = t_night/6).
+// nv/dtv are each mode's real intra-night schedule (N_v visits per
+// visit-night, Δt_v hours apart) -- decoupled from i, which stays the
+// confirmation-pipeline's own epoch requirement.
 const PRESETS = {
-  ztf_public: {i:2, f_live:0.08, A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
-  ztf_hc:     {i:2, f_live:0.17, A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
-  rubin:      {i:2, f_live:0.7,  A_log:-7.0,  omega_exp:9.6, t_oh:30, optical:true},
+  ztf_public: {i:2, f_live:0.08, nv:2, dtv:2,   A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
+  ztf_hc:     {i:2, f_live:0.17, nv:6, dtv:1,   A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
+  rubin:      {i:2, f_live:0.7,  nv:1, dtv:2,   A_log:-7.0,  omega_exp:9.6, t_oh:30, optical:true},
 };
 // Map preset keys to DOM slider/switch IDs.
 const PRESET_MAP = {
   i:         'i_slider',
   f_live:    'flive_slider',
+  nv:        'nv_slider',
+  dtv:       'dtv_slider',
   A_log:     'Alog_slider',
   omega_exp: 'omegaexp_slider',
   t_oh:      'toh_slider',
@@ -133,7 +138,7 @@ document.querySelectorAll('.view-btn').forEach(btn => {
 
 // ── Slider ↔ input sync ────────────────────────────────────────────────────
 const SLIDER_IDS = [
-  'i','flive','Alog','omegaexp','toh','omega_srv','qmin','Dmin','sfade','srise','tnight',
+  'i','flive','nv','dtv','Alog','omegaexp','toh','omega_srv','qmin','Dmin','sfade','srise','tnight',
   'p','nu_log','Ekiso_log','n0_log','gamma0_log','thetaj','epse','epsB','deuc','rho_grb_log',
   'fdec_log', // TEMP-FDEC-OVERRIDE
 ];
@@ -178,6 +183,7 @@ function syncFromSlider(id) {
   if (id === 'Alog') updateMagDisplay();
   if (id === 'flive') _updateTnightFloor();
   if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
+  if (id === 'nv') _updateDtvDim();
   if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
   if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
   _checkPresetDrift();
@@ -206,6 +212,7 @@ function syncFromInput(id) {
   if (id === 'Alog') updateMagDisplay();
   if (id === 'flive') _updateTnightFloor();
   if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
+  if (id === 'nv') _updateDtvDim();
   if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
   if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
   _checkPresetDrift();
@@ -318,9 +325,10 @@ SLIDER_IDS.forEach(id => {
   if (inp) inp.addEventListener('change', () => syncFromInput(id));
 });
 
-// Optical switch shows/hides t_night
+// Optical switch shows/hides t_night and the night-schedule (N_v, Δt_v) block
 document.getElementById('optical-switch').addEventListener('change', function() {
   document.getElementById('tnight-block').style.display = this.checked ? 'block' : 'none';
+  document.getElementById('schedule-block').style.display = this.checked ? 'block' : 'none';
   updateSubnightLimitDisplay();
   _updateTnightFloorNote();
   _checkPresetDrift();
@@ -471,30 +479,36 @@ document.getElementById('preset-select').addEventListener('change', function() {
   for (const [k, domId] of Object.entries(PRESET_MAP)) {
     _setSliderValue(domId, p[k]);
   }
-  // Optical toggle: drives t_night visibility
+  // Optical toggle: drives t_night + schedule-block visibility
   const opticalSwitch = document.getElementById('optical-switch');
   const newOptical = !!p.optical;
   if (opticalSwitch.checked !== newOptical) {
     opticalSwitch.checked = newOptical;
     document.getElementById('tnight-block').style.display = newOptical ? 'block' : 'none';
+    document.getElementById('schedule-block').style.display = newOptical ? 'block' : 'none';
   }
   _activePresetKey = key;
   _presetApplying = false;
   updateGrbCounts();
   _updateTnightFloor();
+  _updateDtvDim();
   _fdecOverride = false; _updateFdecNote();  // TEMP-FDEC-OVERRIDE — presets return to physics-derived F_dec
   triggerUpdate();
 });
 
 // True when the current sidebar matches this preset on the parameters that
-// actually define/affect the ZTF marker: i, f_live, log A, Ω_exp, t_OH.
-// Ω_srv,max, the optical-survey toggle and the physics sliders are intentionally
-// ignored — the marker hard-codes ZTF's footprint, and physics is the shared GRB
-// population rather than a survey property. The rise/fade identification cuts
-// (s_rise, s_fade) are also excluded: they are free user knobs, not part of a
-// survey's identity, so toggling them does not gray the marker. Used to gray the
-// ZTF metrics/markers when the current configuration is no longer that survey.
-const PRESET_MATCH_KEYS = ['i', 'f_live', 'A_log', 'omega_exp', 't_oh'];
+// actually define/affect the ZTF marker: i, f_live, N_v, Δt_v, log A, Ω_exp,
+// t_OH. Ω_srv,max, the optical-survey toggle and the physics sliders are
+// intentionally ignored — the marker hard-codes ZTF's footprint (and its own
+// schedule when matched), and physics is the shared GRB population rather
+// than a survey property. The rise/fade identification cuts (s_rise, s_fade)
+// are also excluded: they are free user knobs, not part of a survey's
+// identity, so toggling them does not gray the marker. Used to gray the
+// ZTF metrics/markers when the current configuration is no longer that survey
+// (N_v/Δt_v mismatched means the marker's coordinate is real but its rate
+// reflects the CURRENT schedule, not its own — see the marker-consistency
+// note in standalone_bridge.py's compute_all).
+const PRESET_MATCH_KEYS = ['i', 'f_live', 'nv', 'dtv', 'A_log', 'omega_exp', 't_oh'];
 function paramsMatchPreset(key) {
   const p = PRESETS[key];
   if (!p) return false;
@@ -535,6 +549,8 @@ function readParams() {
     i_det:           Math.round(v('i_slider')),
     A_log:           v('Alog_slider'),
     f_live:          v('flive_slider'),
+    N_v:             Math.round(v('nv_slider')),
+    dt_v_h:          v('dtv_slider'),
     t_overhead_s:    v('toh_slider'),
     omega_exp_deg2:  v('omegaexp_slider'),
     omega_srv_deg2:  v('omega_srv_slider'),
@@ -698,6 +714,16 @@ function _updateTnightFloorNote() {
   }
 }
 
+// Δt_v is inert at N_v = 1 (a single visit per night has no spacing) — dim
+// its block so that reads at a glance. It stays interactive: raising N_v
+// re-activates whatever Δt_v was set.
+function _updateDtvDim() {
+  const block = document.getElementById('dtv-block');
+  if (!block) return;
+  const nv = parseFloat(document.getElementById('nv_slider').value);
+  block.style.opacity = (isFinite(nv) && nv <= 1) ? '0.45' : '';
+}
+
 // TEMP-FDEC-OVERRIDE — begin
 function _updateFdecNote() {
   const el = document.getElementById('fdec-override-note');
@@ -742,6 +768,7 @@ function updateMagDisplay() {
 }
 updateMagDisplay();
 _updateTnightFloor();
+_updateDtvDim();
 
 // ── Debounced update trigger ───────────────────────────────────────────────
 function triggerUpdate() {
@@ -2261,7 +2288,7 @@ async function initPyodide() {
     await pyodide.runPythonAsync(`
 import standalone_bridge as _b
 _b.compute_all({
-    'i_det':2,'A_log':-4.68,'f_live':0.2,'t_overhead_s':0.0,
+    'i_det':2,'A_log':-4.68,'f_live':0.2,'N_v':1,'dt_v_h':2.0,'t_overhead_s':0.0,
     'omega_exp_deg2':47.0,'omega_srv_deg2':27500.0,'t_night_h':10.0,
     'p':2.2,'nu_log10':14.7,'E_kiso_log10':53.0,'n0_log10':0.0,
     'epsilon_e_log10':-1.0,'epsilon_B_log10':-4.0,'theta_j_rad':0.1,
