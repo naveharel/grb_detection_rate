@@ -1134,6 +1134,24 @@ def compute_all(params) -> dict:
                 # Infeasible schedule (can't fit i visits in one night) — hide.
                 R_ztf_hc = math.nan
 
+        # Display-floor gate (same invariant as compute_surface's "good" mask):
+        # the surface masks cells with log10 R below ZMIN_DISPLAY_LOG10, so a
+        # marker there would float over a hole in the surface — hide the whole
+        # point instead of drawing it disconnected from what's displayed.
+        def _gate_point(point):
+            R_p = point[0]
+            if not (math.isfinite(R_p) and R_p > 0.0
+                    and math.log10(R_p) >= float(ZMIN_DISPLAY_LOG10)):
+                return (math.nan,) * len(point)
+            return point
+
+        (R_opt, t_exp_opt_s, q_med_opt, D_med_Gpc_opt) = _gate_point(
+            (R_opt, t_exp_opt_s, q_med_opt, D_med_Gpc_opt))
+        (R_ztf, t_exp_ztf_s, q_med_ztf, D_med_Gpc_ztf) = _gate_point(
+            (R_ztf, t_exp_ztf_s, q_med_ztf, D_med_Gpc_ztf))
+        (R_ztf_hc, t_exp_ztf_hc_s, q_med_ztf_hc, D_med_Gpc_ztf_hc) = _gate_point(
+            (R_ztf_hc, t_exp_ztf_hc_s, q_med_ztf_hc, D_med_Gpc_ztf_hc))
+
         _prof_t0 = _prof_add("optimizer+points", _prof_t0)
 
         # ── Slice sweeps at user-chosen positions ────────────────────────────

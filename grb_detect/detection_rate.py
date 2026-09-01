@@ -1538,7 +1538,11 @@ class DetectionRateModel:
             bins   = np.searchsorted(d_grid, De_f, side="right") - 1          # (N_q, M)
             cols   = np.broadcast_to(np.arange(M), bins.shape)
             keep   = bins >= 0
-            lin    = bins[keep].astype(np.int64) * M + cols[keep]
+            # intp (not int64): np.bincount requires safe-castability to intp,
+            # which is int32 under Pyodide's wasm32 numpy — int64 here raised
+            # "Cannot cast array data from dtype('int64') to dtype('int32')"
+            # in the browser (never on a native 64-bit intp==int64 platform).
+            lin    = bins[keep].astype(np.intp) * M + cols[keep]
             Hf     = np.bincount(lin, weights=base_f[keep], minlength=N_D * M)
             H      = Hf.reshape((N_D,) + shape)
             # Q_sq_eff[j] = 2·Σ_{k ≥ j} H[k]  (reverse cumulative sum over levels)
