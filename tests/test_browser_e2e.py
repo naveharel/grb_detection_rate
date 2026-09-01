@@ -248,7 +248,6 @@ def _bilinear_interp(x_grid, y_grid, z_grid, x, y):
     return z0 + ty * (z1 - z0)
 
 
-@pytest.mark.parametrize("preset", ["none", "ztf_public", "ztf_hc", "rubin"])
 def _linear_interp_on_dayline(day_lines, x, y):
     """Optical mode's day-cadence markers sit on a per-day 1D overlay line
     (addDay3DLines in web/app.js), not the continuous surface grid — find the
