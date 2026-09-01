@@ -140,9 +140,13 @@ def test_eval_point_aux_model_extras_match_own_t_exp(state):
         win_from_peak=model.win_from_peak, N_v=N_v, dt_v_s=dt_v_s,
     )
     N_exp, t_cad_s = 50.0, float(DAY_S)  # nightly revisit, HC-style
+    # i_det=3 (not state["i_det"]=10): the sync-penalty window is
+    # (N_v - i_eff)*dt_v_s, so i_eff must stay below N_v=6 for the
+    # intra-night confirmation channel to have any nonzero window at all.
+    i_det = 3
 
     R, t_exp, q_med, D_med_Gpc = sb._eval_point(
-        N_exp, t_cad_s, state["i_det"], aux,
+        N_exp, t_cad_s, i_det, aux,
         approx_on=False, t_overhead_s=state["t_overhead_s"],
         full_integral=False,
     )

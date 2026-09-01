@@ -140,7 +140,7 @@ class DetectionRateModel:
             return t_cad_arr
         return np.full_like(t_cad_arr, self.dt_v_s)
 
-    def _sync_penalty_log10(self, t_cad_s: np.ndarray) -> np.ndarray | float:
+    def _sync_penalty_log10(self, i_det: int, t_cad_s: np.ndarray) -> np.ndarray | float:
         """log10 correction for the (N_v, dt_v_s) intra-night schedule.
 
         The dominant-term rate assumes the first detection lands exactly at
@@ -151,19 +151,23 @@ class DetectionRateModel:
         recur every t_cad, so "caught once -> caught again t_cad later" is a
         certainty). It is NOT free of charge when dt_v_s is a short
         intra-night spacing that only recurs during an N_v-visit cluster
-        every t_cad: the assumed-peak epoch must also happen to fall inside
-        that cluster, which only happens a fraction of the time. This
-        multiplies the rate by that fraction, min(1, N_v*dt_v_s/t_cad) — a
-        crude, order-of-magnitude stand-in for the exact P_i(T) treatment a
-        real two-timescale schedule model would need (see dtv-window branch
+        every t_cad: the assumed-peak epoch must also fall on one of the
+        cluster's first (N_v - i_eff) visits, so that the remaining i_eff
+        confirmations still land inside the same cluster — which only
+        happens a fraction of the time. This multiplies the rate by that
+        fraction, min(1, (N_v - i_eff)*dt_v_s/t_cad) — a crude,
+        order-of-magnitude stand-in for the exact P_i(T) treatment a real
+        two-timescale schedule model would need (see dtv-window branch
         notes); it is not applied to the medians (a conditional property of
         the confirmed population, unaffected by an overall rate rescaling).
         """
         if self.dt_v_s is None:
             return 0.0
+        i_eff = i_det - 1 if self.win_i_minus_one else i_det
+        n_window = max(self.N_v - i_eff, 0)
         t_cad_arr = np.asarray(t_cad_s, dtype=float)
         with np.errstate(divide="ignore", invalid="ignore"):
-            factor = np.minimum(1.0, (self.N_v * self.dt_v_s) / t_cad_arr)
+            factor = np.minimum(1.0, (n_window * self.dt_v_s) / t_cad_arr)
         return _safe_log10(np.asarray(factor, dtype=float))
 
     # ---------- Derived scales ----------
@@ -1121,7 +1125,7 @@ class DetectionRateModel:
         logR[masks["A6"]] = R6[masks["A6"]]
         logR[masks["A7"]] = R7[masks["A7"]]
 
-        logR = logR + self._sync_penalty_log10(t_cad_b)
+        logR = logR + self._sync_penalty_log10(i_det, t_cad_b)
 
         # win_from_peak + return_components: the early return above was
         # skipped so the caller still gets the rectangle components, but the
@@ -1324,7 +1328,7 @@ class DetectionRateModel:
 
         R = fO * (theta_j ** 2) * R_int * I
         R = np.where(np.isfinite(t_exp), R, np.nan)
-        return _safe_log10(R) + self._sync_penalty_log10(t_cad_s)
+        return _safe_log10(R) + self._sync_penalty_log10(i_det, t_cad_s)
 
     # ---------- Median q and D for detected GRBs ----------
 

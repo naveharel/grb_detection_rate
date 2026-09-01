@@ -38,14 +38,17 @@ const PLASMA_SCALE = [
 // The two ZTF entries are the survey's two real observing modes (Ho et al.
 // 2022; Andreoni et al. 2021):
 //   public   — ~15,000 deg² every 2 nights; detected events have i ≈ 2;
-//              f_live = 0.08 gives t_exp ≈ 30 s at (N = 319, t_cad = 2 d).
+//              f_live = 0.17 gives t_exp ≈ 31 s at (N = 319, t_cad = 2 d,
+//              N_v = 2) -- same live/duty-cycle fraction as the high-cad
+//              mode below (same telescope), accounting for the N_v divisor
+//              in t_exp_s.
 //   high-cad — ~2,500 deg² partnership/ZUDS, 6 visits/night; f_live = 0.17
 //              gives t_exp ≈ 30 s at (N = 53, t_cad = t_night/6).
 // nv/dtv are each mode's real intra-night schedule (N_v visits per
 // visit-night, Δt_v hours apart) -- decoupled from i, which stays the
 // confirmation-pipeline's own epoch requirement.
 const PRESETS = {
-  ztf_public: {i:2, f_live:0.08, nv:2, dtv:2,   A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
+  ztf_public: {i:2, f_live:0.17, nv:2, dtv:2,   A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
   ztf_hc:     {i:2, f_live:0.17, nv:6, dtv:1,   A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
   rubin:      {i:2, f_live:0.7,  nv:1, dtv:2,   A_log:-7.0,  omega_exp:9.6, t_oh:30, optical:true},
 };

@@ -1021,9 +1021,10 @@ def compute_all(params) -> dict:
         # short intra-night dt_v_s would otherwise silently overcount — that
         # confirmation opportunity only exists during the N_v-visit window,
         # not continuously — so the engine multiplies the rate by
-        # min(1, N_v*dt_v_s/t_cad), a crude order-of-magnitude stand-in for
-        # the probability the (assumed-optimal) peak epoch actually falls
-        # inside that window.
+        # min(1, (N_v-i_eff)*dt_v_s/t_cad), a crude order-of-magnitude
+        # stand-in for the probability the (assumed-optimal) peak epoch
+        # falls on one of the cluster's first (N_v-i_eff) visits, leaving
+        # room for the remaining i_eff confirmations inside the same window.
 
         # Mode A — public all-sky: ~15,000 deg² every 2 nights.
         N_ztf = min(ZTF_PUBLIC_OMEGA_SRV_DEG2 / ZTF_OMEGA_EXP_DEG2, N_exp_max)

@@ -85,7 +85,7 @@ CONFIGS = {
     "optical_default":     {"optical_survey": True},
     "optical_drifted":     {"optical_survey": True, "f_live": 0.55, "N_v": 3,
                             "dt_v_h": 1.0},
-    "ztf_public_preset":   {"optical_survey": True, "i_det": 2, "f_live": 0.08,
+    "ztf_public_preset":   {"optical_survey": True, "i_det": 2, "f_live": 0.17,
                             "N_v": 2, "dt_v_h": 2.0, "A_log": -4.68,
                             "omega_exp_deg2": 47.0, "t_overhead_s": 15.0},
     "ztf_hc_preset":       {"optical_survey": True, "i_det": 2, "f_live": 0.17,
