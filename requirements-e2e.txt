@@ -1,0 +1,6 @@
+# Browser-level end-to-end tests (tests/test_browser_e2e.py) — optional, the
+# rest of the suite (`pytest tests/`) does not need this.
+#
+#   pip install -r requirements-e2e.txt
+#   playwright install chromium
+playwright==1.62.0
