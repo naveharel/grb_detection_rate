@@ -27,6 +27,7 @@ The \textbf{Euclidean horizon} $q_{\rm Euc}$ is the maximum off-axis viewing ang
 The \textbf{cadence horizon} $q_i$ is the maximum off-axis angle whose afterglow peak arrives early enough to be caught within $i$ cadence intervals.
 Comparing these two angles against three characteristic afterglow angles ($q_{\rm dec}$, $q_j$, $q_{\rm nr}$) divides the strategy space into seven piecewise regimes A1--A7, each with its own analytic rate formula.
 The surface $\log_{10}R_{\rm det}(N_{\rm exp},t_{\rm cad})$ is computed on a dense grid and displayed interactively.
+An optional \emph{intrinsic luminosity function} (Section~\ref{sec:lf}) replaces the single-luminosity population with a truncated power law over $L\equiv\nu L_\nu(1\,\mathrm{d})$, integrated in closed form in both rate modes.
 
 % -------------------------------------------------------
 \section{Parameters}
@@ -86,6 +87,11 @@ $q_{\rm min}$ & 0 & 0 (introduced 2026-05-15) & -- & Minimum viewing-angle param
 $D_{\rm min}$ & 0 & 0 (introduced 2026-05-15) & Gpc & Minimum detection distance; 0 = no filter \\
 $s_{\rm fade}$ & 0 & 0 (introduced 2026-07, as \texttt{s\_min}) & mag/day & Minimum fading-rate identification cut; 0 = no filter \\
 $s_{\rm rise}$ & 0 & 0 (introduced 2026-07) & mag/day & Minimum rise-rate identification cut; 0 = no filter \\
+\midrule
+\multicolumn{5}{l}{\textit{Luminosity function} (Section~\ref{sec:lf}; introduced 2026-09-02, off by default)} \\
+$\alpha$ & $-2$ & $-2$ & -- & LF index, $\varphi(L)\propto L^{\alpha}$ \\
+$L_{\rm min}$ & $10^{42.5}$ & $10^{42.5}$ & erg/s & Faint cutoff of $\nu L_\nu(1\,\mathrm{d})$ \\
+$L_{\rm max}$ & $10^{45.5}$ & $10^{45.5}$ & erg/s & Bright cutoff of $\nu L_\nu(1\,\mathrm{d})$ \\
 \bottomrule
 \end{longtable}
 }
@@ -642,6 +648,277 @@ Define $Q(D)=\max\{q:\tilde{D}_{\rm eff}(q)\ge D/D_{\rm euc}\}$ (the largest ang
 p(D)\propto D^2\,Q(D)^2,
 \end{equation}
 which reduces to $D^2$ for uniform density and constant $Q$. The median is found by cumulative summation over a grid of 100 normalized distance levels $D/D_{\rm euc,\,eff}\in[0,1]$, where $D_{\rm euc,\,eff}=\tilde{D}_{\rm eff}(0)\cdot D_{\rm euc}$.
+
+% -------------------------------------------------------
+\section{Intrinsic Luminosity Function}
+\label{sec:lf}
+
+\subsection{Motivation and the structural invariant}
+
+The single-luminosity model asks: \emph{if every afterglow had the fiducial brightness, how many would a survey catch?} A real population spans decades in brightness, and the detection rate does not average linearly around the median, because detectability responds very asymmetrically to luminosity:
+\begin{itemize}
+\item A \textbf{fainter} burst loses detection \emph{volume} as $L^{3/2}$ --- the horizon is a flux sphere, $D\propto\sqrt{L}$, volume $\propto L^{3/2}$. Halving $L$ costs $\sim65\%$ of the detections.
+\item A \textbf{brighter} burst gains almost nothing once its horizon reaches a \emph{wall}: either the crossover into the flux-limited regimes, where only the angular reach $q_{\rm Euc}$ keeps growing (slowly, see Eq.~\eqref{eq:lf_qE_of_s}), or the Euclidean sphere itself (regime A1, fully saturated).
+\end{itemize}
+$R(L)$ is therefore a \emph{rising-then-saturating} function, and mixing a distribution over it produces the Malmquist behaviour that no single-$L$ recalibration can mimic: the detected population is much brighter than the intrinsic one, and detected distances stretch toward the wall while the rate is held down by the faint half of the population.
+
+The entire calculation rests on one structural fact of the model (pinned by \texttt{tests/test\_fdec\_override.py}): \textbf{luminosity enters every formula only through the ratio $F_{\rm lim}/F_{\rm dec}$} (with $F_j,\,F_{\rm nr}$ co-scaling). Scaling a burst's normalization by $s$ is exactly the substitution $F_{\rm lim}\to F_{\rm lim}/s$, which pushes every horizon distance up by $\sqrt{s}$ and moves \emph{nothing else}: all timescales ($t_{\rm dec}$, $t_j$, $t_p$), all angles ($q_{\rm dec}$, $q_j$, $q_{\rm nr}$, $q_i$), the fade caps and the rise-window quantities ($t_{p,\rm eff}$, $t_{f,s}$, $k$, $\eta$) are luminosity-independent. One non-obvious member of this list is the cadence-side rise boundary $q_{ri}=q_{\rm Euc}\!\left(\eta F_{\rm lim}(D_i/D_{\rm euc})^2\right)$: its argument carries $F_{\rm lim}/s$ from the flux and $s$ from $D_i^2$, which cancel.
+
+\subsection{The luminosity variable and its reduction to one number}
+
+\noindent\textbf{Definition.} $L\equiv\nu L_\nu(1\,\mathrm{day})$, the on-axis luminosity at the observing frequency one day after trigger --- the natural observable (detected events are quoted in it) and a pure rescaling of the model's normalization:
+\begin{equation}
+\label{eq:lf_L_def}
+L \;=\; \nu\cdot 4\pi D_{\rm euc}^2\cdot F_{\rm 1d}\cdot 10^{-23}\ \mathrm{erg/s},
+\qquad
+F_{\rm 1d} =
+\begin{cases}
+F_{\rm dec}\,\bigl(\frac{1\,\mathrm{d}}{t_{\rm dec}}\bigr)^{\alpha_{\rm II}} & t_j\ge 1\,\mathrm{d},\\[4pt]
+F_{\rm dec}\,\bigl(\frac{t_j}{t_{\rm dec}}\bigr)^{\alpha_{\rm II}}\bigl(\frac{1\,\mathrm{d}}{t_j}\bigr)^{\alpha_{\rm III}} & t_j< 1\,\mathrm{d},
+\end{cases}
+\end{equation}
+with $\alpha_{\rm II},\alpha_{\rm III}$ the (negative) temporal flux indices of the active PLS. Both branches are linear in $F_{\rm dec}$, and since $F_{\rm dec}\propto D_{\rm euc}^{-2}$, $L$ is $D_{\rm euc}$-invariant. (For $t_{\rm dec}>1$\,d the first branch back-extrapolates along phase~II --- a labeling convention for the normalization, still linear in $F_{\rm dec}$.) Implemented as \texttt{DetectionRateModel.L0\_erg\_s}, evaluated \emph{lazily} from the current derived scales --- see \S\ref{sec:lf_consistency}.
+
+\noindent\textbf{Modeling assumption (the ``gray'' LF).} The light-curve \emph{shape} is common to all bursts; the LF varies only the normalization. Each burst is then labeled by the single scale
+\begin{equation}
+\label{eq:lf_s_def}
+s \;\equiv\; \frac{L}{L_0} \;=\; \frac{F_{\rm dec}}{F_{\rm dec,0}},
+\end{equation}
+where $L_0$ is the fiducial (slider-derived) luminosity. This deliberately ignores, e.g., the $E$--$t_{\rm dec}$ covariance (a more energetic burst also decelerates later); that refinement moves comparison points by factors of order $(\Delta E)^{1/3}$ inside $q$-ratios and is far below the fidelity of the Euclidean framework.
+
+\noindent\textbf{The distribution.} A truncated power law, normalized to unity so that the total burst rate $R_{\rm int}$ is untouched --- the LF \emph{redistributes brightness among the same bursts}:
+\begin{equation}
+\label{eq:lf_phi}
+\varphi(s)\,ds = C\,s^{\alpha}\,ds \quad\text{on } [s_1, s_2],
+\qquad C = \frac{\alpha+1}{s_2^{\alpha+1}-s_1^{\alpha+1}},
+\qquad s_{1,2} = \frac{L_{\rm min,max}}{L_0}.
+\end{equation}
+The total rate is $R_{\rm tot}=\int \varphi(s)\,R(\text{strategy};s)\,ds$ with $R(\cdot;s)$ the single-$L$ model at scaled normalization.
+
+\noindent\textbf{The workhorse integrals.} Every result below reduces to clamped power brackets and LF moments:
+\begin{equation}
+\label{eq:lf_bracket}
+J_e(a,b) = \int_{[a,b]\cap[s_1,s_2]} s^{e}\,ds
+= \frac{b'^{\,e+1}-a'^{\,e+1}}{e+1},
+\qquad
+M_e(a,b) = C\,J_{\alpha+e}(a,b),
+\end{equation}
+with $b'=\min(b,s_2)$, $a'=\max(a,s_1)$ (zero if empty), so $M_0(s_1,s_2)=1$. Numerically $J$ is evaluated as $e^{u\ln a'}\,\mathrm{expm1}\!\bigl(u\ln(b'/a')\bigr)/u$ with $u=e+1$, which is uniformly stable through $u=0$; the slider-reachable singular exponents ($\alpha=-1$; $\alpha=-5/2$ against the $+\tfrac32$ volume moment; the $p$-dependent hits $\alpha+2w=-1$) therefore need no case analysis (\texttt{\_pow\_bracket}).
+
+\subsection{Anatomy of the single-burst rate $R(s)$}
+
+Under Eq.~\eqref{eq:lf_s_def}, all radial reaches scale as $\sqrt{s}$ (writing $\tilde D\equiv D/D_{\rm euc}$):
+\begin{equation}
+\tilde D_{\rm dec}(s)=\sqrt{s}\,\tilde D_{\rm dec,0},\qquad
+\tilde D_{i}(s)=\sqrt{s}\,\tilde D_{i,0},\qquad
+\text{(window cap, rise-shifted $\tilde D_{\rm dec}\,\eta^{-1/2}$ --- likewise)},
+\end{equation}
+and the only $s$-dependent angle is the flux boundary, whose two branches take the compact anchored form
+\begin{equation}
+\label{eq:lf_qE_of_s}
+\tilde q_{\rm Euc}(s) =
+\begin{cases}
+\tilde q_{\rm dec}\,\bigl(s/s_{\rm dec}\bigr)^{w_{\rm II}}, & s\le s_j \quad (\text{phase II}),\\[4pt]
+\bigl(s/s_j\bigr)^{w_{\rm III}}, & s\ge s_j \quad (\text{phase III}),
+\end{cases}
+\qquad w_{\rm II}=\frac{1}{2a_{\rm II}},\quad w_{\rm III}=\frac{1}{2a_{\rm III}},
+\end{equation}
+a slowly rising function (at $p=2.2$: $w_{\rm II}\approx0.42$, $w_{\rm III}\approx0.23$). Everything else is $s$-independent.
+
+\noindent\textbf{Regime migration.} The regime conditions compare $q_{\rm Euc}(s)$ against the fixed ladder $q_{\rm dec}<q_j<q_{\rm nr}$ and against $q_i$. Since $q_{\rm Euc}(s)$ is continuous and strictly increasing, each grid cell traverses, as $s$ grows, the fixed chain
+\[
+\text{(doubly/cadence-limited)}\;\longrightarrow\;\mathrm{A3}\;\longrightarrow\;\mathrm{A2}\;\longrightarrow\;\mathrm{A1},
+\]
+with closed-form crossing points, each with a clean physical reading:
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.35}
+\begin{tabular}{cll}
+\toprule
+Breakpoint & Value & Meaning \\
+\midrule
+$s_{\rm dec}$ & $F_{\rm lim}/F_{\rm dec,0}$ & $q_{\rm Euc}=q_{\rm dec}$: even an on-axis burst at $D_{\rm euc}$ clears the limit \\
+$s_j$ & $F_{\rm lim}/F_{j,0}$ & $q_{\rm Euc}=q_j$ \emph{and} the phase-II/III branch switch (they coincide) \\
+$s_{\rm nr}$ & $F_{\rm lim}/F_{\rm nr,0}$ & $q_{\rm Euc}=q_{\rm nr}$: the whole beaming cone detectable at $D_{\rm euc}$ (A1) \\
+$s_{qi}$ & $(D_{\rm euc}/D_{i,0})^2$ & $q_{\rm Euc}=q_i \Leftrightarrow D_i(s)=D_{\rm euc}$: cadence horizon reaches the sphere \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The $s_j$ coincidence follows from $F_j=F_{\rm dec}\,\tilde q_{\rm dec}^{\,2a_{\rm II}}$: $F_{\rm lim}=F_j(s)\Leftrightarrow \tilde q_{\rm Euc}=1\Leftrightarrow q_{\rm Euc}=2=q_j$; likewise $s_{\rm nr}=F_{\rm lim}/F_{\rm nr,0}$ via the $F_{\rm nr}$ identity. Since $\tilde q_{\rm dec}<1$ implies $F_{\rm nr,0}<F_{j,0}<F_{\rm dec,0}$, the ordering $s_{\rm dec}<s_j<s_{\rm nr}$ always holds, and $s_{qi}\gtrless s_{\rm dec}$ exactly as $q_i\gtrless q_{\rm dec}$, giving two canonical chains:
+\begin{itemize}
+\item $q_i<q_{\rm dec}$ (cadence generous): A7 on $[s_1,s_{\rm dec})$ with $D_{\rm eff}=\min(D_{\rm dec},D_i)$, then A3\,$\to$\,A2\,$\to$\,A1 at $s_{\rm dec},s_j,s_{\rm nr}$.
+\item $q_i\ge q_{\rm dec}$ (cadence binding): $\mathrm{A}c$ on $[s_1,s_{qi})$, where $c\in\{6,5,4\}$ is fixed by $q_i$'s slot in the ladder ($s$-independent!), then the flux family entered at the matching slot, up through A1.
+\end{itemize}
+$R(s)$ is \emph{continuous} across every switch (at $s_{qi}$, $D_i=D_{\rm euc}$ and $q_i=q_{\rm Euc}$ simultaneously, so $q_i^2(D_i/D_{\rm euc})^3 = q_{\rm Euc}^2\cdot1^3$; at $s_j$ both branches give $q_{\rm Euc}=2$) --- ideal for exact segment-wise integration, hostile to naive fixed quadrature.
+
+\noindent\textbf{Scaling table} (the exponents that drive everything):
+\begin{equation}
+\label{eq:lf_scalings}
+\mathrm{A4\text{--}A7}:\; R\propto q_{\rm cap}^2\, s^{3/2};
+\qquad
+\mathrm{A3}:\; R\propto\bigl(1+\tilde q_{\rm E,0}^{\rm II}s^{w_{\rm II}}\bigr)^2;
+\qquad
+\mathrm{A2}:\; R\propto\bigl(1+\tilde q_{\rm E,0}^{\rm III}s^{w_{\rm III}}\bigr)^2;
+\qquad
+\mathrm{A1}:\; R\propto s^{0}.
+\end{equation}
+
+\subsection{Dominant-term mode: exact piecewise closed form}
+\label{sec:lf_dominant}
+
+The total per-cell rate is
+\begin{equation}
+\label{eq:lf_master}
+R_{\rm tot} = \int_{s_1}^{s_2}\varphi(s)\,R(s)\,ds
+= \tfrac12 f_\Omega\theta_j^2 R_{\rm int}\sum_{\rm segments}\int_{\rm seg}\varphi(s)\,Q_{\rm seg}(s)\,V_{\rm seg}(s)\,ds,
+\end{equation}
+where per segment $Q(s)$ is the (filtered) angular factor and $V(s)$ the (filtered) radial factor. Both are short sums of powers of $s$:
+\begin{itemize}
+\item \textbf{Cadence family / A7:} $Q=\bigl(q_{\rm cap}^2-q_{\rm min}^2\bigr)_+$ constant, $V=\bigl(\tilde v\,s^{3/2}-\tilde D_{\rm min}^3\bigr)_+$ with $\tilde v=\tilde D_{{\rm eff},0}^3$. The $D$-bracket switches on at
+\begin{equation}
+s_D=\bigl(\tilde D_{\rm min}/\tilde D_{{\rm eff},0}\bigr)^2
+\quad\text{--- \emph{the luminosity whose horizon just reaches the floor}},
+\end{equation}
+and the segment contributes $Q\,[\tilde v\,M_{3/2}-\tilde D_{\rm min}^3 M_0]$ over the clamped range.
+\item \textbf{A3/A2:} $V=(1-\tilde D_{\rm min}^3)_+$ constant, $Q(s)=\bigl(\min(q_{\rm Euc}(s),q_{\rm caps})^2-q_{\rm min}^2\bigr)_+$. Sub-split at the closed-form crossings $q_{\rm Euc}(s)=\text{cap}$ (invert Eq.~\eqref{eq:lf_qE_of_s}); on the unclipped part expand
+\begin{equation}
+\label{eq:lf_expand}
+\bigl(1+b\,s^{w}\bigr)^2-q_{\rm min}^2 = (1-q_{\rm min}^2)+2b\,s^{w}+b^2 s^{2w}
+\;\longrightarrow\;
+(1-q_{\rm min}^2)M_0 + 2b\,M_w + b^2 M_{2w}.
+\end{equation}
+\item \textbf{A1:} both factors constant --- a pure $M_0$ mass term.
+\end{itemize}
+Together the exponents that occur are $\{\alpha\}+\{0,\,w,\,2w\}+\{0,\,\tfrac32\}$, all handled by Eq.~\eqref{eq:lf_bracket}.
+
+\noindent\textbf{Filters.} $q_{\rm min}$/$D_{\rm min}$ enter as above --- note $D_{\rm min}$ is a detectability floor, and its bracket must sit \emph{inside} the $s$-integral: a faint enough burst loses its entire $[D_{\rm min},D_{\rm eff}(s)]$ shell, which is precisely the mechanism that makes the LF matter. The fade cut contributes only $s$-independent caps $q_s^{\rm II/III}$ (crossings via the inverse of Eq.~\eqref{eq:lf_qE_of_s}). The rise cut shifts the flux-anchored breakpoints to $\eta\,s_{\rm dec},\,\eta\,s_j,\,\eta\,s_{\rm nr}$ (the raised boundary is $q_{\rm Euc}$ at $\eta F_{\rm lim}$, always below the plain one, so the two never cross), scales $D_{{\rm dec},r}=D_{\rm dec}\eta^{-1/2}\propto\sqrt s$ like every radius, and gates the flux-family angular term at $s_{{\rm dec},r}=\eta s_{\rm dec}$ ($q_{{\rm E},r}\ge q_{\rm dec}$).
+
+\noindent\textbf{The one non-closed-form crossing.} With the rise cut on, each regime's rate is $\max(\text{angular term},\ t_{\rm on}\text{ term})$ (Section~\ref{sec:filter_srise}), and the crossing of two multi-power sums is transcendental. Resolution: per segment take the \textbf{max of the two closed-form integrals}. Both terms are already lower bounds of the true pass volume, so the max of their integrals is a valid lower bound with the same semantics the dominant mode has at a single luminosity; it is conservative only on the single segment containing a crossing, and only when $s_{\rm rise}>0$.
+
+\noindent\textbf{Assembly} (\texttt{\_rate\_lf\_dominant}). Per cell: build the $\sim$9--15 candidate breakpoints (all arrays over the strategy grid), clamp to $[s_1,s_2]$ and sort (zero-width segments integrate to 0, so no dedup); evaluate the branch selectors once per segment at the geometric midpoint --- they are constant within a segment \emph{by construction}, every condition that could flip being itself a breakpoint; sum the bracket contributions into per-regime accumulators. The accumulators give both $R_{\rm tot}$ and the \textbf{dominant-contribution regime} (their argmax), the honest generalization of ``which regime is this cell in'' to a population: \emph{which regime most of the cell's detections come from} (used for surface coloring; \texttt{regime\_id\_lf}). Cost: $\approx$3--5$\times$ the legacy dominant mode, \emph{exact to machine precision} --- no quadrature anywhere in simple mode.
+
+\subsection{Dominant-term approximations: which end wins}
+\label{sec:lf_dominance}
+
+Strip the slow transitional A2/A3 growth and model $R(s)$ by the two-branch envelope every cell follows,
+\begin{equation}
+R(s)\;\approx\;R_{\rm knee}\cdot\min\!\Bigl[\bigl(s/s_k\bigr)^{3/2},\,1\Bigr],
+\end{equation}
+where the \textbf{knee} $s_k$ is the luminosity at which the cell leaves the $s^{3/2}$ branch --- $s_k=s_{qi}$ where the cadence horizon reaches the wall, or $s_k\approx s_{\rm dec}\ldots s_{\rm nr}$ where flux saturation takes over --- and $R_{\rm knee}=R(s_k)$. Then
+\begin{equation}
+\label{eq:lf_envelope}
+R_{\rm tot}\;\approx\;R_{\rm knee}\,C\left[
+\frac{s_k^{\alpha+1}-s_1^{\alpha+5/2}\,s_k^{-3/2}}{\alpha+5/2}
++\frac{s_2^{\alpha+1}-s_k^{\alpha+1}}{\alpha+1}
+\right],
+\end{equation}
+and reading off which endpoint controls each bracket gives the three-branch classification:
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.35}
+\begin{tabular}{lll}
+\toprule
+LF index & Dominated by & Leading behaviour \\
+\midrule
+$\alpha>-1$ & bright end ($L_{\rm max}$) & few strong afterglows; $R_{\rm tot}$ tracks $L_{\rm max}$, saturating once $s_2\gg s_k$ \\
+$-\tfrac52<\alpha<-1$ & \textbf{the knee} & $R_{\rm tot}\approx R_{\rm knee}\,C\,s_k^{\alpha+1}\bigl[\tfrac{1}{\alpha+5/2}+\tfrac{1}{|\alpha+1|}\bigr]$; cutoffs enter as small powers \\
+$\alpha<-\tfrac52$ & faint end ($L_{\rm min}$) & many weak afterglows; detections scale with the $s^{3/2}$ volume at $L_{\rm min}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent The default $\alpha=-2$ sits in the knee branch: the survey mostly detects the bursts whose horizon matches its own reach --- the physically sensible middle ground. The \textbf{effective single luminosity} $L_{\rm eff}$ (at which the old model reproduces $R_{\rm tot}$) follows by inverting $R(s_{\rm eff})=R_{\rm tot}$, e.g.\ $s_{\rm eff}=s_k\,(R_{\rm tot}/R_{\rm knee})^{2/3}$ on the rising branch.
+
+\noindent\textbf{Detected vs.\ intrinsic luminosity (Malmquist).} The detected-luminosity density is $dR/ds=\varphi(s)R(s)$ --- the LF reweighted by the rate. Its median solves $\int_{s_{\rm med}}^{s_2}\varphi R\,ds=\tfrac12 R_{\rm tot}$ (closed form per segment). At the defaults, $\varphi\propto s^{-2}$ against $R\propto s^{3/2}$ gives $dR/ds\propto s^{-1/2}$ on the rising branch --- nearly flat per decade --- so the detected median sits far above the population median
+\begin{equation}
+\label{eq:lf_pop_median}
+L_{\rm med}^{\alpha+1}=\tfrac12\bigl(L_{\rm min}^{\alpha+1}+L_{\rm max}^{\alpha+1}\bigr)
+\end{equation}
+(the app displays $L_0$ and $L_{\rm med}$ under the LF sliders). This is the selection effect that previously had to be absorbed by hand into the $\varepsilon_B$ calibration.
+
+\subsection{Full-integral mode: integrate over $L$ first}
+\label{sec:lf_full}
+
+The exact mode computes $R=f_\Omega\theta_j^2R_{\rm int}\int_0^{q_{\rm nr}}q\,V_w(q)\,dq$ (Eq.~\eqref{eq:full_integral}). Under the LF,
+\[
+R_{\rm tot}= f_\Omega\theta_j^2R_{\rm int}\int_0^{q_{\rm nr}}\!\!q\int\! ds\,\varphi(s)\,V_w(q;s)\,dq ,
+\]
+and since every $s$-dependence in $V_w$ is the $\sqrt s$ scaling of distances, \textbf{the inner $\int ds$ collapses to a closed-form per-$q$ weight}: the $q$-grid, the chunking and the optimizer stay exactly as they are, at essentially zero extra cost. No luminosity quadrature is used anywhere in the rate paths.
+
+\noindent\textbf{Rise cut off.} $V_w=P_{\rm fade}(q)\,\bigl[\min(\sqrt s\,g(q),1)^3-\tilde D_{\rm min}^3\bigr]_+$ with $g(q)=\min\bigl(\tilde D_{\rm max,0}(q),\tilde D_{\rm eff,0}\bigr)$ the \emph{uncapped} fiducial horizon profile (a $\min$ cannot be pulled through an integral, so the $D_{\rm euc}$ wall moves inside the expectation). Splitting at $s_{\rm floor}=(\tilde D_{\rm min}/g)^2$ (shell opens) and $s_{\rm wall}=g^{-2}$ (horizon hits the wall):
+\begin{equation}
+\label{eq:lf_W}
+W(g)\equiv\mathbb{E}_\varphi\!\Bigl[\bigl(\min(\sqrt s\,g,1)^3-\tilde D_{\rm min}^3\bigr)_+\Bigr]
+= g^3 M_{3/2}(s_{\rm floor},s_{\rm wall})
+- \tilde D_{\rm min}^3\,M_0(s_{\rm floor},s_{\rm wall})
++ (1-\tilde D_{\rm min}^3)\,M_0(s_{\rm wall},s_2),
+\end{equation}
+with $P_{\rm fade}$ ($s$-independent) multiplying outside; the \texttt{win\_from\_peak} window cap is $\propto\sqrt s$ and folds into $g$ (\texttt{\_lf\_volume\_weight}).
+
+\noindent\textbf{Rise cut on.} Here $s$ enters non-multiplicatively through the survival ramp, but the ramp is \emph{piecewise homogeneous} in $s$. In the notation of Eq.~\eqref{eq:V_w}, all window quantities ($t_{p,\rm eff}$, $w_f$, $k$, $\eta$) are $s$-independent while $D_0=\sqrt s\,d_0$ (with $d_0=\tilde D_{\rm max,0}\,\eta^{-1/2}$), the ramp start $D_c=\sqrt s\,c$ (with $c=d_0\,[t_{p}/(t_{p}+w_f)]^{1/k}$) and $u=\min(g,d_0)$. The constant piece is the walled-volume form again,
+\begin{equation}
+\mathbb{E}_\varphi[\text{term}_{\rm const}]=\frac{w_f}{t_{\rm cad}}\;W\bigl(\min(g,c)\bigr),
+\end{equation}
+and the ramp piece decomposes through the homogeneity of $G(\tilde D;D_0)=3D_0^{k}\tilde D^{3-k}/(3-k)-\tilde D^3$:
+\[
+G(\sqrt s\,x;\sqrt s\,d_0)= s^{3/2}\,G(x;d_0)\ \ \text{(pre-wall)},\qquad
+G(1;\sqrt s\,d_0)=\frac{3d_0^{k}}{3-k}\,s^{k/2}-1\ \ \text{(post-wall)},
+\]
+so $\int[G(U)-G(L)]\varphi\,ds$ is a sum of brackets with exponents $\alpha+\tfrac32$, $\alpha+\tfrac{k}{2}$ (a per-$q$ array) and $\alpha$, split at the closed-form crossings
+\[
+s_{uD}=(\tilde D_{\rm min}/u)^2,\qquad s_{cD}=(\tilde D_{\rm min}/c)^2,\qquad s_u=u^{-2},\qquad s_{c1}=c^{-2},
+\]
+the ramp being active only where $c<u$ (it collapses under the hard-rise flag, $c=d_0$). Explicitly (\texttt{\_lf\_weighted\_D\_volume}):
+\begin{align}
+\label{eq:lf_ramp}
+\mathbb{E}_\varphi[\text{term}_{\rm ramp}]=\frac{t_{p}}{t_{\rm cad}}\Bigl[\;
+&G(u;d_0)\,M_{3/2}\bigl(s_{uD},\min(s_{c1},s_u)\bigr)
++\tfrac{3d_0^{k}}{3-k}M_{k/2}\bigl(\max(s_{uD},s_u),s_{c1}\bigr)
+- M_0\bigl(\max(s_{uD},s_u),s_{c1}\bigr)\notag\\
+&-\tfrac{3d_0^{k}\tilde D_{\rm min}^{3-k}}{3-k}M_{k/2}\bigl(s_{uD},\min(s_{cD},s_{c1})\bigr)
++\tilde D_{\rm min}^3\,M_0\bigl(s_{uD},\min(s_{cD},s_{c1})\bigr)
+- G(c;d_0)\,M_{3/2}\bigl(\max(s_{cD},s_{uD}),s_{c1}\bigr)\Bigr]_+ .
+\end{align}
+The hard-boundary flags reduce exactly as in Eq.~\eqref{eq:V_w} (hard fade: $w_f\in\{t_{\rm cad},0\}$; hard rise: $c=d_0$).
+
+\noindent\textbf{Accuracy.} Both modes were validated against a dense ($n_s=1500$--$3000$) log-$s$ trapezoid over the single-$L$ engine across 420 combinations of $\alpha\in[-3.5,0]$, $L$-ranges up to 6 decades, and every filter/window/hard-boundary state: worst relative deviation $6\times10^{-5}$, which is the \emph{reference's} discretization error --- the closed forms are exact (\texttt{tests/test\_luminosity\_function.py}).
+
+\subsection{Distributions and medians under the mixture}
+\label{sec:lf_medians}
+
+Rule: \emph{never average per-$s$ medians} --- the median of a mixture is not the mixture of medians. Everything follows from LF-weighted differential distributions:
+\begin{itemize}
+\item \textbf{Viewing angle:} $dR/dq\propto q\cdot\mathbb{E}_\varphi[V_w](q)$ --- the per-$q$ weight \emph{is} Eq.~\eqref{eq:lf_W}/\eqref{eq:lf_ramp}, so $q_{\rm med}$ and the $R(q)$ view are mixture-exact for free.
+\item \textbf{Distance:} a burst at $\tilde D$ with angle $q$ is detected iff $\sqrt s\,g(q)\ge\tilde D$ (plus windows), so the detected density gains the LF pass expectation
+\begin{equation}
+\label{eq:lf_dRdD}
+\frac{dR}{d\tilde D}\propto 3\tilde D^2\!\int\! q\,dq\;
+\mathbb{E}_\varphi\!\left[\mathbf{1}\{\sqrt s\,g\ge\tilde D\}\; w_{\rm joint}(q,\tilde D;s)\right],
+\end{equation}
+which is again closed form (\texttt{\_lf\_expected\_pass\_weight}): with the rise cut off it is $P_{\rm fade}\cdot S_\varphi\bigl((\tilde D/g)^2\bigr)$, $S_\varphi(x)=M_0(x,s_2)$ the LF survival --- \emph{the fraction of the population bright enough to be seen at $\tilde D$}; with the rise cut on, the ramp $t_{\rm lim}=t_p(\sqrt s\,d_0/\tilde D)^k$ rises through $[t_p,\,t_p+w_f]$ on $s\in[s_a,s_b]$, $s_a=(\tilde D/d_0)^2$, $s_b=s_a[(t_p+w_f)/t_p]^{2/k}$, giving
+\begin{equation}
+\mathbb{E} = \frac{t_p}{t_{\rm cad}}\Bigl[(d_0/\tilde D)^k M_{k/2}-M_0\Bigr]\bigl(\max(s_{\rm lo},s_a),\,s_b\bigr)
++\frac{w_f}{t_{\rm cad}} M_0\bigl(\max(s_{\rm lo},s_b),\,s_2\bigr),
+\qquad s_{\rm lo}=(\tilde D/g)^2 .
+\end{equation}
+\item \textbf{Surface medians:} the numerical-medians path (Section~9.2) is reused with these weights; only its $D$-histogram fast path (which requires a sharp per-$q$ horizon) runs as a small Gauss--Legendre node mixture in $\ln s$ ($n=8$, \texttt{\_LF\_MEDIAN\_GL\_NODES}) --- a hover-level statistic whose quadrature error is far below the $D$-level discretization.
+\end{itemize}
+
+\subsection{Consistency, limits and edge cases}
+\label{sec:lf_consistency}
+
+\begin{itemize}
+\item \textbf{Off-state parity:} every LF branch is gated on the model's \texttt{lf} being set; with it unset the legacy paths are untouched (bit-parity, tested).
+\item \textbf{Degenerate limit} $s_1=s_2=s_\ast$: $\varphi\to\delta(s-s_\ast)$ and $R_{\rm tot}\to R(s_\ast)$, implemented as a short-circuit through a single scaled-derived model copy, so the $L_{\rm min}=L_{\rm max}$ limit is \emph{exact} rather than convergent.
+\item \textbf{$F_{\rm dec}$-override invariance:} the $s$-bounds are computed lazily from the \emph{current} derived scales, so a copy-on-write override rescales $F_{\rm dec,0}$ and $L_0$ together and cancels: the per-burst flux depends on $L$ alone, and the LF-on rate is invariant under the override (pinned test). Correspondingly, the pure-normalization sliders ($\varepsilon_e$, $\varepsilon_B$) are \emph{rate-inert} while the LF is on --- deliberate and physically correct; shape parameters ($p$, $E_{k,\rm iso}$, $n_0$, $\Gamma_0$, $\theta_j$, $\nu$, $D_{\rm euc}$) still act through timescales, exponents and volume.
+\item \textbf{Faint-$s$ $q_{\rm Euc}$ plateau:} for $s<s_{\rm dec}$ the extrapolated $q_{\rm Euc}(s)<q_{\rm dec}$ is fictitious; the piecewise chain never evaluates flux-family expressions there (those segments are A7/cadence by construction).
+\item \textbf{Walls are $D_{\rm euc}$-invariant} exactly as in the single-$L$ model; $\varphi$ is normalized, so the all-sky rate anchor $R_{\rm int}\theta_j^2/2$ is untouched by the LF.
+\end{itemize}
 
 % -------------------------------------------------------
 \section{Optical Cadence Constraints}
