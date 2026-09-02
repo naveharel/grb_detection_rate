@@ -100,6 +100,19 @@ class LuminosityFunction:
     log10_L_min: float
     log10_L_max: float
 
+    def median_log10_L(self) -> float:
+        """Population median of φ: L_med^{α+1} = (L_min^{α+1} + L_max^{α+1})/2.
+
+        (α = −1 limit: the geometric mean.)  Factored about L_min so no huge
+        exponents are formed.
+        """
+        a = self.alpha + 1.0
+        l1, l2 = float(self.log10_L_min), float(self.log10_L_max)
+        if abs(a * (l2 - l1)) < 1e-12:
+            return 0.5 * (l1 + l2)
+        r = 10.0 ** (a * (l2 - l1))
+        return l1 + float(np.log10(0.5 * (1.0 + r))) / a
+
 
 def _safe_log10(x: np.ndarray) -> np.ndarray:
     """log10 with masking for non-positive inputs."""
@@ -1637,9 +1650,9 @@ class DetectionRateModel:
             eta, ise = self._rise_eta(t_cad_b, s_rise)
             with np.errstate(over="ignore", invalid="ignore"):
                 q_ri = self.q_Euc(eta * F_lim * Dt_i0 ** 2)  # s-independent
-            s_dec_r = eta * s_dec
-            s_j_r = eta * s_j
-            s_nr_r = eta * s_nr
+                s_dec_r = eta * s_dec
+                s_j_r = eta * s_j
+                s_nr_r = eta * s_nr
             Dt_dec_r0 = Dt_dec0 * ise
             valid_i = q_ri >= q_dec
         else:

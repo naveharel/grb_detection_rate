@@ -146,3 +146,29 @@ def test_toggling_exact_mode_on_and_off_never_errors(preset_name, preset):
           "win_iminus1": True, "win_tp": True,
           "rise_random_start": True, "fade_random_start": True})
     _run({**base_params, "full_integral": False})
+
+
+# Luminosity-function slider extremes (build_standalone.py _SLIDERS): the
+# widest range, a degenerate-width range, and both α endpoints.
+LF_STATES = {
+    "lf-widest":     {"lf_on": True, "lf_alpha": -3.5, "lf_lmin": 41.0, "lf_lmax": 47.5},
+    "lf-degenerate": {"lf_on": True, "lf_alpha": 0.0,  "lf_lmin": 44.0, "lf_lmax": 44.0},
+    "lf-default":    {"lf_on": True, "lf_alpha": -2.0, "lf_lmin": 42.5, "lf_lmax": 45.5},
+}
+
+
+@pytest.mark.parametrize("lf_name,lf_state", LF_STATES.items(), ids=list(LF_STATES.keys()))
+@pytest.mark.parametrize("full_on", [False, True], ids=["dominant", "exact"])
+def test_lf_states_never_error(lf_name, lf_state, full_on):
+    """LF slider extremes × both rate modes × extreme filters + optical +
+    regime coloring — every LF state reachable from the sidebar must not
+    error."""
+    params = {
+        **BASE, **PRESETS["ztf_public"], **lf_state,
+        "optical_survey": True,
+        "color_regimes": True,
+        "full_integral": full_on,
+        "win_iminus1": True, "win_tp": full_on,
+        **EXTREME_FILTERS,
+    }
+    _run(params)

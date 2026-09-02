@@ -111,6 +111,25 @@ def _masks_1d(masks: dict, n: int) -> np.ndarray:
     return rid
 
 
+def _regime_ids_1d(model, i_det, N_arr, t_arr, *, q_min=0.0, D_min_cm=0.0,
+                   s_fade=0.0, s_rise=0.0, s_mode="discrete") -> np.ndarray:
+    """1-D regime ids with the LF-aware dispatch used by compute_surface.
+
+    Single-L model: the active region mask.  Under the luminosity function a
+    cell mixes bursts across the regime chain, so the honest classification is
+    the dominant-contribution regime (argmax of the per-regime LF-integrated
+    contributions) — `regime_id_lf`.
+    """
+    if getattr(model, "lf", None) is not None:
+        return np.asarray(model.regime_id_lf(
+            i_det, N_arr, t_arr,
+            q_min=q_min, D_min_cm=D_min_cm,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+        ), dtype=float).ravel()
+    masks = model.region_masks(i_det, N_arr, t_arr, include_unphysical=False)
+    return _masks_1d(masks, int(np.asarray(N_arr).size))
+
+
 # ── 1-D rate sweep ──────────────────────────────────────────────────────────
 
 def _compute_rate(
@@ -169,8 +188,11 @@ def _compute_rate(
 
     rid = np.full(len(N_arr), np.nan)
     if color_on:
-        masks = model.region_masks(i_det, N_arr, t_arr, include_unphysical=False)
-        rid = _masks_1d(masks, len(N_arr))
+        rid = _regime_ids_1d(
+            model, i_det, N_arr, t_arr,
+            q_min=q_min, D_min_cm=D_min_cm,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+        )
 
     q_med, D_med_cm = model.compute_medians(
         i_det, N_arr, t_arr, full_integral=full_integral,
@@ -376,12 +398,11 @@ def _build_day_line_arrays(
         D_med_Gpc_arr = D_med_cm_arr / GPC_TO_CM
 
         # Regime IDs (always computed; JS can decide whether to colour by them).
-        masks = model_day.region_masks(int(i_det), N_line, np.full_like(N_line, t_s),
-                                       include_unphysical=False)
-        rid_row = np.full(n_N, np.nan, dtype=float)
-        for k, key in enumerate(["A1", "A2", "A3", "A4", "A5", "A6", "A7"], start=1):
-            mk = np.asarray(masks[key]).reshape(1, -1).ravel()
-            rid_row[mk] = float(k)
+        rid_row = _regime_ids_1d(
+            model_day, int(i_det), N_line.ravel(), np.full(n_N, t_s),
+            q_min=q_min, D_min_cm=D_min_cm,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+        )
 
         # Mask t_exp/q/D on non-`good` entries too so JS overlay hover is consistent.
         t_exp_row      = np.where(good, t_exp_arr, np.nan)
@@ -452,6 +473,16 @@ def _build_models(params) -> dict:
     win_iminus1  = bool(params.get("win_iminus1", True))
     win_tp       = bool(params.get("win_tp", False))
 
+    # Intrinsic luminosity function (off by default = the single-L model).
+    # L bounds are log10 νL_ν(1 day) [erg/s]; the UI enforces L_min ≤ L_max
+    # via a dynamic slider floor, but guard anyway (swap-free clamp).
+    lf_on    = bool(params.get("lf_on", False))
+    lf_alpha = float(params.get("lf_alpha", -2.0))
+    lf_lmin  = float(params.get("lf_lmin", 42.5))
+    lf_lmax  = float(params.get("lf_lmax", 45.5))
+    if lf_lmin > lf_lmax:
+        lf_lmin = lf_lmax
+
     physics_kw = dict(
         p=float(params["p"]),
         nu_log10=float(params["nu_log10"]),
@@ -475,16 +506,21 @@ def _build_models(params) -> dict:
     # via a dynamic t_night floor, but we still guard against a zero denominator.
     f_live_night = f_live / max(f_night, 1e-12)
 
+    lf_kw = dict(lf_on=lf_on, lf_alpha=lf_alpha,
+                 lf_log10_L_min=lf_lmin, lf_log10_L_max=lf_lmax)
+
     model_day = make_rate_model(
         A_log=A_log, f_live=f_live, t_overhead_s=t_oh_model,
         omega_exp_deg2=omega_exp, design=design,
-        win_i_minus_one=win_iminus1, win_from_peak=win_tp, **physics_kw,
+        win_i_minus_one=win_iminus1, win_from_peak=win_tp,
+        **lf_kw, **physics_kw,
     )
     model_night = (
         make_rate_model(
             A_log=A_log, f_live=f_live_night, t_overhead_s=t_oh_model,
             omega_exp_deg2=omega_exp, design=design,
-            win_i_minus_one=win_iminus1, win_from_peak=win_tp, **physics_kw,
+            win_i_minus_one=win_iminus1, win_from_peak=win_tp,
+            **lf_kw, **physics_kw,
         )
         if optical_on else None
     )
@@ -528,6 +564,7 @@ def _build_models(params) -> dict:
         "omega_exp":    omega_exp,
         "model_day":    model_day,
         "model_night":  model_night,
+        "lf_on":        lf_on,
         "fdec_override_applied": fdec_override_applied,  # TEMP-FDEC-OVERRIDE
     }
 
@@ -718,8 +755,15 @@ def _compute_qdview_sweep(
     f_night_mul     = f_night if is_subday_optical else 1.0
     f_live_validity = f_live_night if is_subday_optical else f_live_val
     # win_from_peak has no closed dominant-term curves (q-dependent D_eff) —
-    # the R(q)/R(D) views fall back to the full-integral branch for it.
-    use_full = full_on or bool(getattr(model, "win_from_peak", False))
+    # the R(q)/R(D) views fall back to the full-integral branch for it.  Same
+    # under the luminosity function: the dominant rectangle curves describe a
+    # single burst, while the LF views need the mixture (the full-integral
+    # dR/dq, dR/dD are LF-aware and exact at a single strategy point).
+    use_full = (
+        full_on
+        or bool(getattr(model, "win_from_peak", False))
+        or getattr(model, "lf", None) is not None
+    )
 
     # Geometry the JS render layer always needs (drawn even on invalid payloads).
     q_dec_val = float(model.derived.q_dec)
@@ -798,6 +842,16 @@ def _compute_qdview_sweep(
         return _empty_payload()
 
     regime_id_val = float(regime_keys.index(active) + 1)
+    # Under the LF, report the dominant-contribution regime instead of the
+    # fiducial single-L classification (matches the surface coloring).
+    if getattr(model, "lf", None) is not None:
+        _rid_lf = float(np.asarray(model.regime_id_lf(
+            i_det, N_arr, t_arr,
+            q_min=q_min, D_min_cm=D_min_cm,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+        )).ravel()[0])
+        if math.isfinite(_rid_lf):
+            regime_id_val = _rid_lf
     fO_val    = float(np.asarray(comps["f_Omega"]).ravel()[0])
     qE_val    = float(np.asarray(comps["q_Euc"]).ravel()[0])
     qi_val    = float(np.asarray(comps["q_i"]).ravel()[0])
@@ -1189,6 +1243,15 @@ def compute_all(params) -> dict:
         t_dec_s_val  = float(model_day.derived.t_dec_s)
         F_nu_tdec_Jy = float(model_day.derived.F_dec_Jy)
 
+        # ── Luminosity-function echoes ───────────────────────────────────────
+        # L0 = fiducial νL_ν(1 day) (shown as a derived row under the LF
+        # sliders); population median of φ when the LF is on.
+        L0_erg_s_val = float(model_day.L0_erg_s())
+        lf_L_med_pop = (
+            10.0 ** float(model_day.lf.median_log10_L())
+            if model_day.lf is not None else None
+        )
+
         zmax_log10 = float(np.nanmax(Z_plot)) if np.any(np.isfinite(Z_plot)) else 0.0
         R_surface_max = float(np.nanmax(R_lin)) if np.any(np.isfinite(R_lin)) else 0.0
 
@@ -1281,6 +1344,9 @@ def compute_all(params) -> dict:
             "R_toward_day": float(R_toward_day),
             "t_dec_s":      t_dec_s_val,
             "F_nu_tdec_Jy": F_nu_tdec_Jy,
+            "lf_applied":   bool(state["lf_on"]),
+            "L0_erg_s":     L0_erg_s_val,
+            "lf_L_med_pop_erg_s": lf_L_med_pop,
             "F_dec_override_applied": bool(state["fdec_override_applied"]),  # TEMP-FDEC-OVERRIDE
             "N_exp_max":    float(N_exp_max),
             "gap_lo_h":     _nan_to_none(gap_lo_h) if gap_lo_h is not None else None,
