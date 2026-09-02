@@ -215,6 +215,8 @@ details.acc-item[open] summary::after{transform:rotate(90deg)}
 /* Indented sub-options gated by a master toggle (e.g. Exact rate mode) */
 .sub-toggle-group{margin-left:12px;padding-left:12px;border-left:1px solid var(--border);transition:opacity var(--t-fast)}
 .sub-toggle-group.disabled{opacity:0.4;pointer-events:none}
+/* Controls made rate-inert by the luminosity function (pure normalization) */
+.lf-inert{opacity:0.4;pointer-events:none;transition:opacity var(--t-fast)}
 /* ── Group labels ────────────────────────────────────────────────────────── */
 .param-group-label{font-size:10px;font-weight:600;letter-spacing:0.05em;text-transform:uppercase;color:var(--text-lo);margin:6px 0 2px}
 /* ── Derived value display ───────────────────────────────────────────────── */

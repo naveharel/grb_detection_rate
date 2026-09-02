@@ -103,6 +103,12 @@ _SLIDERS = [
     ('EPSB',        'epsB',        -5,     -1,      0.05,   -4,      [(-5,'-5'),(-4,'-4'),(-2,'-2'),(-1,'-1')]),
     ('DEUC',        'deuc',        1,      12,      0.01,   4.55,    [(1,'1'),(4.55,'4.55'),(8,'8'),(12,'12')]),
     ('RHO_GRB_LOG', 'rho_grb_log', 1,      3.3,     0.005,  2.415,   [(1,'10'),(2,'100'),(2.415,'260'),(3,'1k'),(3.3,'2k')]),
+    # Luminosity function (φ(L) ∝ L^α on [L_min, L_max], L = νL_ν(1 day)).
+    # L_max carries a dynamic floor at the current L_min (app.js
+    # _updateLfLmaxFloor), mirroring the t_night floor mechanism.
+    ('LF_ALPHA',    'lf_alpha',    -3.5,   0,       0.05,   -2,      [(-3.5,'-3.5'),(-2.5,'-2.5'),(-2,'-2'),(-1,'-1'),(0,'0')]),
+    ('LF_LMIN',     'lf_lmin',     41,     46,      0.05,   42.5,    [(41,'41'),(42.5,'42.5'),(44,'44'),(46,'46')]),
+    ('LF_LMAX',     'lf_lmax',     42,     47.5,    0.05,   45.5,    [(42,'42'),(44,'44'),(45.5,'45.5'),(47.5,'47.5')]),
     # TEMP-FDEC-OVERRIDE — begin (delete this row on removal)
     ('FDEC_LOG',    'fdec_log',    -6,     6,       0.01,   -2.05,   [(-6,'-6'),(-3,'-3'),(-2.05,'-2.05'),(3,'3'),(6,'6')]),
     # TEMP-FDEC-OVERRIDE — end

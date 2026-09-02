@@ -135,6 +135,7 @@ document.querySelectorAll('.view-btn').forEach(btn => {
 const SLIDER_IDS = [
   'i','flive','Alog','omegaexp','toh','omega_srv','qmin','Dmin','sfade','srise','tnight',
   'p','nu_log','Ekiso_log','n0_log','gamma0_log','thetaj','epse','epsB','deuc','rho_grb_log',
+  'lf_alpha','lf_lmin','lf_lmax',
   'fdec_log', // TEMP-FDEC-OVERRIDE
 ];
 
@@ -178,6 +179,7 @@ function syncFromSlider(id) {
   if (id === 'Alog') updateMagDisplay();
   if (id === 'flive') _updateTnightFloor();
   if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
+  if (id === 'lf_lmin') _updateLfLmaxFloor();
   if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
   if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
   _checkPresetDrift();
@@ -206,6 +208,7 @@ function syncFromInput(id) {
   if (id === 'Alog') updateMagDisplay();
   if (id === 'flive') _updateTnightFloor();
   if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
+  if (id === 'lf_lmin') _updateLfLmaxFloor();
   if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
   if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
   _checkPresetDrift();
@@ -332,6 +335,24 @@ document.getElementById('optical-switch').addEventListener('change', function() 
  'win-i-switch','win-tp-switch','rise-rs-switch','fade-rs-switch'].forEach(id => {
   document.getElementById(id).addEventListener('change', triggerUpdate);
 });
+
+// Luminosity-function switch: shows/hides the (α, L_min, L_max) slider block.
+// While on, the pure-normalization controls (ε_e, ε_B, the F_dec override)
+// are rate-inert — the absolute LF replaces the fiducial normalization — so
+// they are dimmed and locked (the toggle hint explains why).
+function _syncLfBlock() {
+  const on = document.getElementById('lf-switch').checked;
+  document.getElementById('lf-block').style.display = on ? 'block' : 'none';
+  ['epse-block','epsB-block','fdec-override-block'].forEach(bid => {
+    const el = document.getElementById(bid);
+    if (el) el.classList.toggle('lf-inert', on);
+  });
+}
+document.getElementById('lf-switch').addEventListener('change', function() {
+  _syncLfBlock();
+  triggerUpdate();
+});
+_syncLfBlock();  // initial state on load (LF off → block hidden, controls live)
 
 // "Exact rate mode" is a master toggle: its three refinements
 // (Include t_− ≈ t_on, and the rise/fade random-start controls) live in
@@ -562,6 +583,11 @@ function readParams() {
     toh_approx:      b('toh-approx-switch'),
     win_iminus1:     !b('win-i-switch'),
     win_tp:          exactOn && b('win-tp-switch'),
+    // Intrinsic luminosity function φ(L) ∝ L^α on [L_min, L_max].
+    lf_on:           b('lf-switch'),
+    lf_alpha:        v('lf_alpha_slider'),
+    lf_lmin:         v('lf_lmin_slider'),
+    lf_lmax:         v('lf_lmax_slider'),
     nslice_tfix_log: v('nslice-tfix-slider'),
     tslice_nfix_log: v('tslice-nfix-slider'),
     qdview_nfix_log: v('qdview-nfix-slider'),
@@ -678,6 +704,41 @@ function _updateTnightFloor() {
   _updateTnightFloorNote();
 }
 
+// Dynamic L_max lower bound: enforce L_min ≤ L_max on the luminosity-function
+// sliders. Sets data-min-floor on the lf_lmax .cs-wrap (read by _effMin) and
+// clamps the current value up if it falls below the new floor — same
+// mechanism as the t_night floor.
+function _updateLfLmaxFloor() {
+  const sl = document.getElementById('lf_lmax_slider');
+  if (!sl) return;
+  const wrap = sl.closest('.cs-wrap');
+  if (!wrap) return;
+  const lmin = parseFloat(document.getElementById('lf_lmin_slider').value);
+  const structuralMin = parseFloat(sl.min);
+  const maxV = parseFloat(sl.max);
+  const step = parseFloat(sl.step) || 0.05;
+  const rawFloor = Math.min(maxV, Math.max(structuralMin, isFinite(lmin) ? lmin : structuralMin));
+  // Snap up to the step grid (both sliders share the 0.05 grid on integers).
+  const floor = Math.min(maxV, Math.ceil(rawFloor / step - 1e-9) * step);
+  wrap.dataset.minFloor = String(floor);
+  const pctFloor = (floor - structuralMin) / (maxV - structuralMin);
+  wrap.querySelectorAll('.cs-tick').forEach(t => {
+    const tp = parseFloat(t.dataset.pct);
+    t.classList.toggle('below-floor', isFinite(tp) && tp < pctFloor - 1e-6);
+  });
+  wrap.querySelectorAll('.cs-mark').forEach(m => {
+    const mp = parseFloat(m.style.getPropertyValue('--mpct'));
+    m.classList.toggle('below-floor', isFinite(mp) && mp < pctFloor - 1e-6);
+  });
+  const cur = parseFloat(sl.value);
+  if (isFinite(cur) && cur < floor - 1e-9) {
+    sl.value = floor;
+    const inp = document.getElementById('lf_lmax_input');
+    if (inp) inp.value = sl.value;
+    updateSliderVisual(sl);
+  }
+}
+
 function _updateTnightFloorNote() {
   const el = document.getElementById('tnight-floor-note');
   if (!el) return;
@@ -742,6 +803,7 @@ function updateMagDisplay() {
 }
 updateMagDisplay();
 _updateTnightFloor();
+_updateLfLmaxFloor();
 
 // ── Debounced update trigger ───────────────────────────────────────────────
 function triggerUpdate() {
@@ -2207,6 +2269,21 @@ function updateDerivedDisplays(data) {
     }
     _updateFdecNote();
     // TEMP-FDEC-OVERRIDE — end
+  }
+
+  // Luminosity-function derived rows: fiducial L0 = νL_ν(1 d) and the
+  // population median of φ (pre-formatted as 10^x to match the log sliders).
+  const l0El = document.getElementById('lf-l0-display');
+  if (l0El && data.L0_erg_s != null && isFinite(data.L0_erg_s) && data.L0_erg_s > 0) {
+    l0El.innerHTML =
+      'L<sub>0</sub> = 10^' + Math.log10(data.L0_erg_s).toFixed(2) + ' erg/s';
+  }
+  const lmedEl = document.getElementById('lf-lmed-display');
+  if (lmedEl) {
+    const lm = data.lf_L_med_pop_erg_s;
+    lmedEl.innerHTML = (lm != null && isFinite(lm) && lm > 0)
+      ? 'L<sub>med</sub> = 10^' + Math.log10(lm).toFixed(2) + ' erg/s'
+      : 'L<sub>med</sub> = —';
   }
 }
 

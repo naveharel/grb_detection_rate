@@ -214,6 +214,53 @@ def test_toggling_exact_mode_never_shows_red_error(page, preset):
 
 
 # --------------------------------------------------------------------------- #
+# 2b. Luminosity-function toggle flow                                          #
+# --------------------------------------------------------------------------- #
+
+
+def test_lf_toggle_end_to_end(page):
+    """The luminosity-function user flow: the toggle ships OFF; switching it
+    on reveals the (α, L_min, L_max) block, recomputes clean, populates the
+    L0/L_med derived rows and dims the rate-inert normalization controls;
+    pushing L_min above L_max clamps L_max via the dynamic floor; switching
+    back off recomputes clean and hides the block again."""
+    open_accordion(page, "Parameters")
+    box = page.locator("#lf-switch")
+    assert not box.is_checked(), "LF must ship unchecked (single-L default)"
+    assert not page.locator("#lf-block").is_visible()
+
+    page.locator('label[for="lf-switch"] .toggle-track').click()
+    wait_for_compute(page)
+    assert not status_is_error(page), (
+        f"error after enabling the LF: {_status_text(page)}")
+    assert box.is_checked()
+    assert page.locator("#lf-block").is_visible()
+
+    # Derived rows populate from the payload echoes (L0 always; L_med when on).
+    assert "10^" in page.locator("#lf-l0-display").inner_text()
+    assert "10^" in page.locator("#lf-lmed-display").inner_text()
+
+    # Pure-normalization controls are rate-inert while the LF is on.
+    for bid in ("epse-block", "epsB-block", "fdec-override-block"):
+        assert "lf-inert" in (page.locator(f"#{bid}").get_attribute("class") or ""), bid
+
+    # Dynamic floor: raise L_min above the current L_max → L_max clamps up.
+    set_number_input(page, "lf_lmin", 46.0)
+    assert not status_is_error(page), (
+        f"error after raising L_min: {_status_text(page)}")
+    lmax_val = float(page.locator("#lf_lmax_slider").input_value())
+    assert lmax_val >= 46.0 - 1e-9, f"L_max not clamped up (got {lmax_val})"
+
+    page.locator('label[for="lf-switch"] .toggle-track').click()
+    wait_for_compute(page)
+    assert not status_is_error(page), (
+        f"error after disabling the LF: {_status_text(page)}")
+    assert not page.locator("#lf-block").is_visible()
+    for bid in ("epse-block", "epsB-block", "fdec-override-block"):
+        assert "lf-inert" not in (page.locator(f"#{bid}").get_attribute("class") or ""), bid
+
+
+# --------------------------------------------------------------------------- #
 # 3. Markers must sit on the rendered surface                               #
 # --------------------------------------------------------------------------- #
 

@@ -225,14 +225,14 @@
     </div>
     %%SLIDER_THETAJ%%
   </div>
-  <div class="param-block">
+  <div class="param-block" id="epse-block">
     <div class="param-row">
       <label class="param-label" for="epse_slider" title="log₁₀ of electron energy fraction. Enters flux as (ε_e·(p−2)/(p−1))^{p−1}.">log ε<sub>e</sub></label>
       <input type="number" id="epse_input" class="param-input" min="-2" max="-0.3" step="0.05" value="-1">
     </div>
     %%SLIDER_EPSE%%
   </div>
-  <div class="param-block">
+  <div class="param-block" id="epsB-block">
     <div class="param-row">
       <label class="param-label" for="epsB_slider" title="log₁₀ of magnetic energy fraction. Enters flux as ε_B^{(p+1)/4}. Default −4: below the naive value (−3.4) that would put the light curve through the median ZTF-detected νL_ν(1 day) ≈ 1.9e44 erg/s (Ho et al. 2022 Table 5), since that observed median is itself selection-biased toward brighter detected events. Consistent with broadband afterglow modelling (ε_B ~ 1e-5–1e-2, Santana et al. 2014). The old 1e-2 default gave a bright-tail light curve ~55× above this default.">log ε<sub>B</sub></label>
       <input type="number" id="epsB_input" class="param-input" min="-5" max="-1" step="0.05" value="-4">
@@ -271,6 +271,42 @@
   <div class="param-row grb-derived-row">
     <span id="grb-ntotal-display" class="grb-derived-val">R<sub>int</sub> = —</span>
     <span id="grb-ntoward-display" class="grb-derived-val">f<sub>b</sub>R<sub>int</sub> = —</span>
+  </div>
+  <div class="param-group-label" style="margin-top:10px">Luminosity distribution</div>
+  <div class="param-switch-row">
+    <label class="toggle-switch" for="lf-switch">
+      <input type="checkbox" id="lf-switch">
+      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+    </label>
+    <span class="switch-label" onclick="document.getElementById('lf-switch').click()">Luminosity function</span>
+  </div>
+  <p class="toggle-hint">Draws each burst's intrinsic luminosity L ≡ νL<sub>ν</sub>(1 day) from a power law φ(L) ∝ L<sup>α</sup> on [L<sub>min</sub>, L<sub>max</sub>] instead of the single fiducial L<sub>0</sub>. φ is normalized, so the total burst rate is unchanged: the distribution only redistributes brightness. Faint bursts lose detection volume as L<sup>3/2</sup> while bright ones saturate at the survey depth or the D<sub>Euc</sub> wall — the Malmquist asymmetry no single luminosity can mimic. While on, the pure-normalization controls (log ε<sub>e</sub>, log ε<sub>B</sub>, and the F<sub>ν</sub> override) no longer affect the rate; shape parameters (p, E<sub>k,iso</sub>, n<sub>0</sub>, Γ<sub>0</sub>, θ<sub>j</sub>, ν, D<sub>Euc</sub>) still do.</p>
+  <div id="lf-block" style="display:none">
+    <div class="param-block">
+      <div class="param-row">
+        <label class="param-label" for="lf_alpha_slider" title="Power-law index of the intrinsic luminosity function, dN/dL ∝ L^α on [L_min, L_max]. α > −1: detections dominated by the bright end (L_max). −5/2 < α < −1: dominated by the knee — bursts whose horizon just reaches the survey depth or the D_Euc wall. α < −5/2: dominated by the faint end (L_min).">α</label>
+        <input type="number" id="lf_alpha_input" class="param-input" min="-3.5" max="0" step="0.05" value="-2">
+      </div>
+      %%SLIDER_LF_ALPHA%%
+    </div>
+    <div class="param-block">
+      <div class="param-row">
+        <label class="param-label" for="lf_lmin_slider" title="log₁₀ of the faint cutoff of the luminosity function — the minimum νL_ν(1 day) in erg/s. Controls the rate only in the faint-dominated branch (α < −5/2), but always sets the population median.">log L<sub>min</sub> [erg/s]</label>
+        <input type="number" id="lf_lmin_input" class="param-input" min="41" max="46" step="0.05" value="42.5">
+      </div>
+      %%SLIDER_LF_LMIN%%
+    </div>
+    <div class="param-block">
+      <div class="param-row">
+        <label class="param-label" for="lf_lmax_slider" title="log₁₀ of the bright cutoff of the luminosity function — the maximum νL_ν(1 day) in erg/s. The explicit bright-end truncation; shapes D_90 and the detected-luminosity tail. Kept ≥ L_min by a dynamic floor.">log L<sub>max</sub> [erg/s]</label>
+        <input type="number" id="lf_lmax_input" class="param-input" min="42" max="47.5" step="0.05" value="45.5">
+      </div>
+      %%SLIDER_LF_LMAX%%
+    </div>
+    <div class="param-row grb-derived-row">
+      <span id="lf-l0-display" class="grb-derived-val" title="Fiducial luminosity nu*L_nu(1 day) implied by the current physics sliders — where the old single-luminosity model sits relative to [L_min, L_max]">L<sub>0</sub> = —</span>
+      <span id="lf-lmed-display" class="grb-derived-val" title="Population median of the luminosity function (half the bursts are fainter). The DETECTED median is brighter — Malmquist selection">L<sub>med</sub> = —</span>
+    </div>
   </div>
 </div>
 </details>
