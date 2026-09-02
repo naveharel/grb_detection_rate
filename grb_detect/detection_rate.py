@@ -22,7 +22,8 @@ conventions for large dynamic range surfaces.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import copy
+from dataclasses import dataclass, replace as _dc_replace
 from typing import Dict, Tuple
 
 import numpy as np
@@ -44,8 +45,25 @@ _REGION_BOUNDARY_EPS: float = 1e-12
 # (n_chunk, *grid) intermediate (2e6 el ≈ 16 MiB; ~15 concurrent slabs in the
 # s_rise > 0 branch of _weighted_D_volume → ~250 MiB peak, safe inside
 # Pyodide's WASM32 ~4 GiB address space independent of the strategy-grid
-# size).  Read at call time so tests can monkeypatch it.
+# size).  Read at call time so tests can monkeypatch it.  When the LF node
+# quadrature is active (luminosity function × rise cut) the chunk size is
+# additionally divided by the node count so the peak stays the same.
 _FULL_INTEGRAL_CHUNK_ELEMS: int = 2_000_000
+
+# Gauss–Legendre node count for the log-s luminosity quadrature.  The RATE
+# paths are fully closed-form (including the rise cut — its survival ramp is
+# piecewise homogeneous in s); the nodes serve only the D-median histogram
+# mixture (a hover extra whose quadrature error is far below the D-level
+# discretization) and the exact degenerate-LF limit (a single node).
+_LF_MEDIAN_GL_NODES: int = 8
+
+# Reduced D-level count for the LF+rise medians path (per-level × per-node
+# loops multiply; 60 levels keep the cost at the pre-LF rise-on scale).
+_LF_MEDIAN_N_D_RISE: int = 60
+
+# Relative width below which the LF is treated as degenerate (a delta at
+# sqrt(s_min·s_max)) — makes the L_min = L_max limit exact, not convergent.
+_LF_DEGENERATE_RTOL: float = 1e-9
 
 
 @dataclass(frozen=True)
@@ -63,6 +81,26 @@ class DerivedAfterglowScales:
     F_nr_Jy: float
 
 
+@dataclass(frozen=True)
+class LuminosityFunction:
+    """Truncated power-law intrinsic luminosity function.
+
+    φ(L) dL ∝ L^alpha dL on [L_min, L_max], normalized to 1, with
+    L ≡ νL_ν(1 day) [erg/s] — the on-axis luminosity at the observing
+    frequency one day after trigger (`DetectionRateModel.L0_erg_s`).
+
+    The LF varies only the flux normalization at fixed light-curve shape
+    (t_dec, t_j, slopes and the q ladder are common to all bursts), so each
+    burst is labeled by the single scale s = L/L0 = F_dec/F_dec,0 and the
+    total intrinsic rate R_int is untouched: the distribution redistributes
+    brightness among the same bursts.
+    """
+
+    alpha: float
+    log10_L_min: float
+    log10_L_max: float
+
+
 def _safe_log10(x: np.ndarray) -> np.ndarray:
     """log10 with masking for non-positive inputs."""
 
@@ -70,6 +108,27 @@ def _safe_log10(x: np.ndarray) -> np.ndarray:
     mask = x > 0
     out[mask] = np.log10(x[mask])
     return out
+
+
+def _pow_bracket(lo: np.ndarray, hi: np.ndarray, e: np.ndarray | float) -> np.ndarray:
+    """Elementwise ∫_lo^hi s^e ds; 0 where hi ≤ lo.  Stable through e = −1.
+
+    Computed as exp(u·ln lo)·expm1(u·ln(hi/lo))/u with u = e+1, whose u → 0
+    limit is ln(hi/lo) — so the slider-reachable singular exponents (α = −1,
+    α = −5/2 against the +3/2 volume moment, the p-dependent α + 2w = −1
+    hits) evaluate correctly with no case enumeration.  Inputs must be
+    positive where hi > lo (the LF support is [s_min, s_max] with s_min > 0).
+    """
+    lo_a = np.asarray(lo, dtype=float)
+    hi_a = np.asarray(hi, dtype=float)
+    e_a = np.asarray(e, dtype=float)
+    u = e_a + 1.0
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        ln_lo = np.log(np.maximum(lo_a, 1e-300))
+        ln_r = np.log(np.maximum(hi_a, 1e-300)) - ln_lo
+        core = np.exp(u * ln_lo) * np.expm1(u * ln_r) / np.where(u == 0.0, 1.0, u)
+        out = np.where(u == 0.0, ln_r, core)
+    return np.where(hi_a > lo_a, out, 0.0)
 
 
 class DetectionRateModel:
@@ -103,6 +162,7 @@ class DetectionRateModel:
         *,
         win_i_minus_one: bool = False,
         win_from_peak: bool = False,
+        lf: LuminosityFunction | None = None,
     ):
         self.phys = phys
         self.instrument = instrument
@@ -110,6 +170,7 @@ class DetectionRateModel:
         self.pls = pls if pls is not None else PLSG()
         self.win_i_minus_one = bool(win_i_minus_one)
         self.win_from_peak = bool(win_from_peak)
+        self.lf = lf
 
         self._derived = self._compute_derived_scales()
 
@@ -153,6 +214,305 @@ class DetectionRateModel:
     @property
     def derived(self) -> DerivedAfterglowScales:
         return self._derived
+
+    # ---------- Luminosity function (LF) building blocks ----------
+    def L0_erg_s(self) -> float:
+        """Fiducial νL_ν(1 day) [erg/s] implied by the current derived scales.
+
+        L = ν · 4π D_euc² · F_1d · 10⁻²³ with F_1d the on-axis flux at 1 day:
+            F_1d = F_dec · (1 d / t_dec)^{α_II}                       (t_j ≥ 1 d)
+            F_1d = F_dec · (t_j / t_dec)^{α_II} · (1 d / t_j)^{α_III}  (t_j < 1 d)
+        Both branches are linear in F_dec, and F_dec ∝ D_euc⁻² makes L
+        D_euc-invariant.  Reads `self._derived` lazily, so a copy-on-write
+        F_dec override rescales L0 in lockstep and the LF-on rate is invariant
+        under it (per-burst flux depends on L alone).  For t_dec > 1 day the
+        first branch back-extrapolates along phase II — a labeling convention
+        for the normalization, still linear in F_dec.
+        """
+        d = self._derived
+        p = self.phys.p
+        a_II_t = float(self.pls.alpha_II_temporal(p))
+        a_III_t = float(self.pls.alpha_III_temporal(p))
+        t_dec = float(d.t_dec_s)
+        t_j = float(d.t_j_s)
+        if t_j >= DAY_S:
+            F_1d = d.F_dec_Jy * (DAY_S / t_dec) ** a_II_t
+        else:
+            F_1d = d.F_dec_Jy * (t_j / t_dec) ** a_II_t * (DAY_S / t_j) ** a_III_t
+        return float(
+            self.phys.nu_hz * 4.0 * np.pi * self.phys.D_euc_cm ** 2 * F_1d * 1e-23
+        )
+
+    def _lf_s_bounds(self) -> tuple[float, float, float] | None:
+        """(s_min, s_max, alpha) of the LF in fiducial units s = L/L0, or None."""
+        if self.lf is None:
+            return None
+        L0 = self.L0_erg_s()
+        s_min = 10.0 ** float(self.lf.log10_L_min) / L0
+        s_max = 10.0 ** float(self.lf.log10_L_max) / L0
+        if s_max < s_min:  # defensive; the UI enforces L_min ≤ L_max
+            s_min, s_max = s_max, s_min
+        return s_min, s_max, float(self.lf.alpha)
+
+    @staticmethod
+    def _lf_is_degenerate(s_min: float, s_max: float) -> bool:
+        return s_max <= s_min * (1.0 + _LF_DEGENERATE_RTOL)
+
+    def _lf_scaled_copy(self, s: float) -> "DetectionRateModel":
+        """Copy of this model with the flux scales rescaled by s and LF off.
+
+        Copy-on-write (the model may be a shared lru_cache entry): F_dec, F_j
+        and F_nr co-scale, which is exactly equivalent to physically changing
+        the burst normalization (pinned by tests/test_fdec_override.py).
+        """
+        m = copy.copy(self)
+        d = self._derived
+        m.lf = None
+        m._derived = _dc_replace(
+            d,
+            F_dec_Jy=d.F_dec_Jy * s,
+            F_j_Jy=d.F_j_Jy * s,
+            F_nr_Jy=d.F_nr_Jy * s,
+        )
+        return m
+
+    def _lf_gl_nodes(self, n: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+        """Gauss–Legendre nodes/weights for ∫ φ(s) f(s) ds ≈ Σ ŵ_k f(s_k).
+
+        The rule lives in x = ln s: ŵ_k = w_k·(Δx/2)·C·s_k^{α+1}, renormalized
+        to Σŵ_k = 1 so a constant f integrates exactly (the A1-saturated and
+        bypass limits stay exact).  A degenerate LF returns the single node
+        s = sqrt(s_min·s_max) with weight 1.
+        """
+        s_min, s_max, alpha = self._lf_s_bounds()
+        if self._lf_is_degenerate(s_min, s_max):
+            return np.array([np.sqrt(s_min * s_max)]), np.array([1.0])
+        n_nodes = int(_LF_MEDIAN_GL_NODES if n is None else n)
+        x, w = np.polynomial.legendre.leggauss(n_nodes)
+        ln1, ln2 = np.log(s_min), np.log(s_max)
+        s_k = np.exp(0.5 * (ln1 + ln2) + 0.5 * (ln2 - ln1) * x)
+        w_k = w * 0.5 * (ln2 - ln1) * s_k ** (alpha + 1.0)
+        return s_k, w_k / w_k.sum()
+
+    def _lf_volume_weight(self, g: np.ndarray, D_min_norm: float) -> np.ndarray:
+        """Closed-form LF expectation of the detection volume per q-node.
+
+        W(g) = E_φ[(min(√s·g, 1)³ − D̃_min³)₊] for the power-law φ on
+        [s_min, s_max]: every horizon distance scales as √s (luminosity enters
+        the engine only through F_lim/F_dec), so per q the burst at scale s is
+        detectable out to min(√s·g, 1) with g the *uncapped* fiducial horizon
+        profile — the D_euc wall cap moves inside the expectation.  Splitting
+        at s_floor = (D̃_min/g)² (shell opens) and s_wall = g⁻² (horizon hits
+        the wall):
+
+            W = C·[ g³·J(α+3/2; s_floor, s_wall) − D̃_min³·J(α; s_floor, s_wall)
+                    + (1 − D̃_min³)·J(α; s_wall, s_max) ]
+
+        with J the clamped power bracket and C the LF normalization.  Callers
+        guarantee a non-degenerate LF (degenerate → single-node path).
+        """
+        s_min, s_max, alpha = self._lf_s_bounds()
+        C = 1.0 / float(_pow_bracket(s_min, s_max, alpha))
+        Dm = float(D_min_norm)
+        g_a = np.asarray(g, dtype=float)
+        if Dm >= 1.0:
+            # The detectability floor sits at/beyond the Euclidean wall: the
+            # bracket is non-positive for every s.
+            return np.zeros_like(g_a)
+        Dm3 = Dm ** 3
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            g_safe = np.maximum(g_a, 1e-300)
+            s_wall = g_safe ** -2.0
+            s_floor = (Dm / g_safe) ** 2.0
+        lo = np.clip(s_floor, s_min, s_max)
+        wall = np.clip(s_wall, s_min, s_max)
+        W = C * (
+            g_a ** 3 * _pow_bracket(lo, wall, alpha + 1.5)
+            - Dm3 * _pow_bracket(lo, wall, alpha)
+            + (1.0 - Dm3) * _pow_bracket(wall, s_max, alpha)
+        )
+        return np.maximum(W, 0.0)
+
+    def _lf_weighted_D_volume(
+        self,
+        q: np.ndarray,
+        D_tilde_max: np.ndarray,
+        g: np.ndarray,
+        D_min_norm: float,
+        i_det: int,
+        t_cad_s: np.ndarray,
+        s_fade: float,
+        s_rise: float,
+        s_mode: str,
+        *,
+        rise_random_start: bool = True,
+        fade_random_start: bool = True,
+    ) -> np.ndarray:
+        """Closed-form LF expectation of the joint-weighted D-volume, E_φ[V_w].
+
+        The LF counterpart of `_weighted_D_volume`, exact for every filter
+        combination.  All the per-(q, cell) window quantities (t_p,eff, w_f,
+        k, η) are s-independent while every distance scales as √s, so the two
+        terms of V_w become closed-form power brackets:
+
+        * term_const = (w_f/t_cad)·[min(√s·min(g, c), 1)³ − D̃_min³]₊ — the
+          walled-volume form of `_lf_volume_weight` with the horizon profile
+          min(g, c), c = D̃₀,fid·(t_p/(t_p+w_f))^{1/k} the fiducial ramp start.
+        * term_ramp — piecewise HOMOGENEOUS in s: with u = min(g, d₀) and
+          G(D̃; D₀) = 3D₀^k D̃^{3−k}/(3−k) − D̃³,
+
+            G(√s·x; √s·d₀) = s^{3/2}·G(x; d₀)  (pre-wall)
+            G(1;   √s·d₀) = (3d₀^k/(3−k))·s^{k/2} − 1  (post-wall)
+
+          so ∫[G(U) − G(L)]φ ds decomposes into brackets with exponents
+          α+3/2, α+k/2 (a per-q array) and α, split at the closed-form
+          crossings s_uD = (D̃_min/u)², s_cD = (D̃_min/c)², s_u = u⁻²,
+          s_c1 = c⁻² (ramp active only where c < u, i.e. rise ramps before
+          the horizon).  The hard-boundary flags reduce exactly as in
+          `_weighted_D_volume` (hard fade → w_f ∈ {t_cad, 0}; hard rise →
+          c = d₀, collapsing the ramp).
+
+        s_rise ≤ 0 delegates to `_lf_volume_weight`·P_fade.  Callers
+        guarantee a non-degenerate LF.
+        """
+        Dm = float(D_min_norm)
+        if float(s_rise) <= 0.0:
+            # _fading_survival is exactly 1 when the fade cut is bypassed.
+            return self._lf_volume_weight(g, Dm) * self._fading_survival(
+                q, i_det, t_cad_s, s_fade, s_mode,
+                fade_random_start=fade_random_start,
+            )
+
+        s_min, s_max, alpha = self._lf_s_bounds()
+        C = 1.0 / float(_pow_bracket(s_min, s_max, alpha))
+
+        def J(e, a, b):
+            return C * _pow_bracket(
+                np.clip(a, s_min, s_max), np.clip(b, s_min, s_max), alpha + e
+            )
+
+        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        t_p, t_fs, k, ise = self._rise_fade_windows(
+            q, i_det, t_cad_arr, s_fade, s_rise, s_mode
+        )
+        with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+            if not fade_random_start:
+                t_fs = np.where(t_fs >= t_p, np.inf, -np.inf)
+            w_f = np.clip(t_fs - t_p, 0.0, t_cad_arr)
+            d0 = np.asarray(D_tilde_max, dtype=float) * ise
+            c = d0 * (t_p / (t_p + w_f)) ** (1.0 / k)
+            if not rise_random_start:
+                c = d0
+            u = np.minimum(np.asarray(g, dtype=float), d0)
+
+            # Constant piece: full fade window out to the ramp start.
+            V_const = (w_f / t_cad_arr) * self._lf_volume_weight(
+                np.minimum(np.asarray(g, dtype=float), c), Dm
+            )
+
+            # Ramp piece (only where the ramp starts inside the horizon).
+            active = c < u
+            u_s = np.maximum(u, 1e-300)
+            c_s = np.maximum(c, 1e-300)
+            expo = 3.0 - k
+            Gu = 3.0 * d0 ** k * u_s ** expo / expo - u_s ** 3
+            Gc = 3.0 * d0 ** k * c_s ** expo / expo - c_s ** 3
+            G1k = 3.0 * d0 ** k / expo           # coeff of s^{k/2} in G(1; √s·d0)
+            GDk = G1k * Dm ** expo               # coeff of s^{k/2} in G(D̃_min; √s·d0)
+            Dm3 = Dm ** 3
+            s_u = u_s ** -2.0
+            s_c1 = c_s ** -2.0
+            s_uD = (Dm / u_s) ** 2
+            s_cD = (Dm / c_s) ** 2
+
+            ramp = (
+                # ∫ G(U): U = √s·u below the wall, 1 above it
+                Gu * J(1.5, s_uD, np.minimum(s_c1, s_u))
+                + G1k * J(0.5 * k, np.maximum(s_uD, s_u), s_c1)
+                - J(0.0, np.maximum(s_uD, s_u), s_c1)
+                # − ∫ G(L): L = D̃_min below s_cD, √s·c above it
+                - GDk * J(0.5 * k, s_uD, np.minimum(s_cD, s_c1))
+                + Dm3 * J(0.0, s_uD, np.minimum(s_cD, s_c1))
+                - Gc * J(1.5, np.maximum(s_cD, s_uD), s_c1)
+            )
+            V_ramp = np.where(
+                active, (t_p / t_cad_arr) * np.maximum(ramp, 0.0), 0.0
+            )
+        return V_const + V_ramp
+
+    def _lf_expected_pass_weight(
+        self,
+        D_tilde: np.ndarray,
+        D_tilde_max: np.ndarray,
+        g: np.ndarray,
+        i_det: int,
+        t_cad_s: np.ndarray,
+        s_fade: float,
+        s_rise: float,
+        s_mode: str,
+        *,
+        q: np.ndarray,
+        rise_random_start: bool = True,
+        fade_random_start: bool = True,
+    ) -> np.ndarray:
+        """Closed-form E_φ[1{min(√s·g, 1) ≥ D̃} · w_joint(q, D̃; s)].
+
+        The LF counterpart of the pointwise `_joint_survival` × horizon
+        indicator used by the distance marginals.  The indicator opens at
+        s_lo = (D̃/g)²; the rise ramp t_lim = t_p·(√s·d₀/D̃)^k rises through
+        [t_p, t_p + w_f] on s ∈ [s_a, s_b] with s_a = (D̃/d₀)² ≤ s_lo and
+        s_b = s_a·((t_p+w_f)/t_p)^{2/k}, giving
+
+            E = (t_p/t_cad)·[(d₀/D̃)^k·J(α+k/2) − J(α)] over [max(s_lo,s_a), s_b]
+              + (w_f/t_cad)·J(α) over [max(s_lo, s_b), s_max].
+
+        Hard-rise collapses the ramp to the indicator s ≥ s_a; hard-fade sets
+        w_f ∈ {t_cad, 0}.  s_rise ≤ 0 reduces to P_fade·S_φ(s ≥ s_lo).
+        """
+        s_min, s_max, alpha = self._lf_s_bounds()
+        C = 1.0 / float(_pow_bracket(s_min, s_max, alpha))
+
+        def J(e, a, b):
+            return C * _pow_bracket(
+                np.clip(a, s_min, s_max), np.clip(b, s_min, s_max), alpha + e
+            )
+
+        t_cad_arr = np.asarray(t_cad_s, dtype=float)
+        D_t = np.asarray(D_tilde, dtype=float)
+        with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+            s_lo = (D_t / np.maximum(np.asarray(g, dtype=float), 1e-300)) ** 2
+
+            if float(s_rise) <= 0.0:
+                P_fade = self._fading_survival(
+                    q, i_det, t_cad_arr, s_fade, s_mode,
+                    fade_random_start=fade_random_start,
+                )
+                return P_fade * J(0.0, s_lo, s_max)
+
+            t_p, t_fs, k, ise = self._rise_fade_windows(
+                q, i_det, t_cad_arr, s_fade, s_rise, s_mode
+            )
+            if not fade_random_start:
+                t_fs = np.where(t_fs >= t_p, np.inf, -np.inf)
+            w_f = np.clip(t_fs - t_p, 0.0, t_cad_arr)
+            d0 = np.asarray(D_tilde_max, dtype=float) * ise
+            D_safe = np.maximum(D_t, 1e-300)
+            s_a = (D_safe / np.maximum(d0, 1e-300)) ** 2
+            if not rise_random_start:
+                # Hard rise: pass ⇔ D̃ ≤ √s·d₀, with the full fade window.
+                return (w_f / t_cad_arr) * J(0.0, np.maximum(s_lo, s_a), s_max)
+            s_b = s_a * ((t_p + w_f) / t_p) ** (2.0 / k)
+            ramp_lo = np.maximum(s_lo, s_a)
+            J_ramp = J(0.5 * k, ramp_lo, s_b)
+            # (d0/D̃)^k can overflow for D̃ → 0, but only where the ramp
+            # bracket is empty (J_ramp = 0) — guard the product.
+            ramp_term = np.where(
+                J_ramp > 0.0, (d0 / D_safe) ** k * J_ramp, 0.0
+            )
+            E = (t_p / t_cad_arr) * (
+                ramp_term - J(0.0, ramp_lo, s_b)
+            ) + (w_f / t_cad_arr) * J(0.0, np.maximum(s_lo, s_b), s_max)
+        return np.maximum(E, 0.0)
 
     # ---------- Core building blocks (vectorized) ----------
     def t_exp_s(self, N_exp: np.ndarray, t_cad_s: np.ndarray) -> np.ndarray:
@@ -921,6 +1281,16 @@ class DetectionRateModel:
                 fade_random_start=fade_random_start,
             )
 
+        # Luminosity function: the dominant-term rate is the exact piecewise
+        # closed-form LF average (see `_rate_lf_dominant`).  Under
+        # win_from_peak the full integral above already folds the LF in.
+        if self.lf is not None and not self.win_from_peak and not return_components:
+            return _safe_log10(self._rate_lf_dominant(
+                i_det, N_exp, t_cad_s,
+                q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            ))
+
         N_exp = np.asarray(N_exp, dtype=float)
         t_cad_s = np.asarray(t_cad_s, dtype=float)
 
@@ -1064,9 +1434,9 @@ class DetectionRateModel:
         logR[masks["A6"]] = R6[masks["A6"]]
         logR[masks["A7"]] = R7[masks["A7"]]
 
-        # win_from_peak + return_components: the early return above was
-        # skipped so the caller still gets the rectangle components, but the
-        # rate itself comes from the q-integral (see Notes).
+        # win_from_peak / LF + return_components: the early returns above were
+        # skipped so the caller still gets the (fiducial) rectangle
+        # components, but the rate itself comes from the LF-aware path.
         if self.win_from_peak:
             logR = self.rate_log10_full_integral(
                 i_det, N_exp, t_cad_s,
@@ -1075,6 +1445,12 @@ class DetectionRateModel:
                 rise_random_start=rise_random_start,
                 fade_random_start=fade_random_start,
             )
+        elif self.lf is not None:
+            logR = _safe_log10(self._rate_lf_dominant(
+                i_det, N_exp, t_cad_s,
+                q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            ))
 
         if not return_components:
             return logR
@@ -1101,6 +1477,366 @@ class DetectionRateModel:
 
         logR = self.rate_log10(i_det, N_exp, t_cad_s)
         return 10.0 ** logR
+
+    # ---------- Dominant-term rate under the luminosity function ----------
+
+    def _s_at_q_boundary(
+        self,
+        q_target: np.ndarray | float,
+        s_dec_ref: np.ndarray,
+        s_j_ref: np.ndarray,
+    ) -> np.ndarray:
+        """Luminosity scale s at which the flux boundary reaches q_target.
+
+        Inverts q_Euc(s) = 1 + q̃(s) with
+
+            q̃(s) = q̃_dec·(s/s_dec_ref)^{w_II}   (shallow, q ≤ q_j)
+            q̃(s) = (s/s_j_ref)^{w_III}           (deep,    q > q_j)
+
+        where (s_dec_ref, s_j_ref) anchor the boundary — (s_dec, s_j) for the
+        plain limit F_lim, (η·s_dec, η·s_j) for the rise-raised limit.  The
+        two branches are continuous at q_target = q_j (verified: both give
+        s_j_ref).  q_target ≤ 1 → 0 (no crossing from below); +∞ stays +∞.
+        """
+        q_j = float(self.derived.q_j)
+        q_td = float(self.derived.q_dec) - 1.0
+        a_II = float(self.pls.a_II(self.phys.p))
+        a_III = float(self.pls.a_III(self.phys.p))
+        q_t = np.asarray(q_target, dtype=float)
+        qt = np.maximum(q_t - 1.0, 0.0)
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            shallow = s_dec_ref * (qt / q_td) ** (2.0 * a_II)
+            deep = s_j_ref * qt ** (2.0 * a_III)
+        out = np.where(q_t <= q_j, shallow, deep)
+        return np.where(q_t <= 1.0, 0.0, out)
+
+    def _rate_lf_dominant(
+        self,
+        i_det: int,
+        N_exp: np.ndarray,
+        t_cad_s: np.ndarray,
+        *,
+        q_min: float = 0.0,
+        D_min_cm: float = 0.0,
+        s_fade: float = 0.0,
+        s_rise: float = 0.0,
+        s_mode: str = "discrete",
+        return_regime: bool = False,
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
+        """LF-averaged dominant-term rate, exact piecewise closed form.
+
+        Evaluates R_tot = ∫ φ(s)·R(strategy; s) ds with R the dominant-term
+        rate of a burst at luminosity scale s = L/L0.  Since luminosity enters
+        only through F_lim/F_dec, every horizon distance scales as √s and the
+        only s-dependent angle is the flux boundary q_Euc(s); as s grows each
+        cell traverses the fixed regime chain (A7 or A4/A5/A6) → A3 → A2 → A1
+        at closed-form breakpoints:
+
+            s_dec = F_lim/F_dec,0        (q_Euc = q_dec)
+            s_j   = F_lim/F_j,0          (q_Euc = q_j — also the phase switch)
+            s_nr  = F_lim/F_nr,0         (q_Euc = q_nr — A1 saturation)
+            s_qi  = (D_euc/D_i,0)²       (q_Euc = q_i ⇔ D_i(s) = D_euc)
+
+        plus filter breakpoints (cap/q_min crossings of the flux boundary,
+        D_min shell openings, rise-raised variants).  On each segment the
+        integrand is a short sum of powers of s — the q-factor is either a
+        constant bracket or (1 + b·s^w)² expanded to three terms, the
+        D-factor is c₀ + c_{3/2}·s^{3/2} — integrated exactly with
+        `_pow_bracket`.  Branch selectors are evaluated at the geometric
+        midpoint of each segment (constant within a segment by construction:
+        every condition that could flip is itself a breakpoint).
+
+        Rise cut: each regime's rate is max(angular term, on-axis term) —
+        the crossing of two multi-power sums is transcendental, so the
+        segment contribution takes the max of the two closed-form integrals.
+        Both terms are documented lower bounds of the pass volume, so this
+        preserves the dominant-term semantics exactly (conservative only on
+        the single segment containing a crossing, only when s_rise > 0).
+
+        Returns the LINEAR rate (NaN outside A0); with return_regime=True
+        also the dominant-contribution regime id grid (argmax of the
+        per-regime LF-integrated contributions, NaN where the total is 0).
+        """
+        s1, s2, alpha = self._lf_s_bounds()
+
+        N_exp = np.asarray(N_exp, dtype=float)
+        t_cad_s = np.asarray(t_cad_s, dtype=float)
+        shape = np.broadcast(N_exp, t_cad_s).shape
+        N_exp_b = np.broadcast_to(N_exp, shape)
+        t_cad_b = np.broadcast_to(t_cad_s, shape)
+
+        # Degenerate LF: a delta at sqrt(s1·s2) — evaluate the legacy
+        # dominant-term rate on a scaled copy (exact, not convergent).
+        if self._lf_is_degenerate(s1, s2):
+            s_star = float(np.sqrt(s1 * s2))
+            m = self._lf_scaled_copy(s_star)
+            logR = m.rate_log10(
+                i_det, N_exp_b, t_cad_b,
+                q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            )
+            R = np.where(np.isfinite(logR), 10.0 ** logR, np.nan)
+            if not return_regime:
+                return R
+            masks = m.region_masks(i_det, N_exp_b, t_cad_b)
+            rid = np.full(shape, np.nan, dtype=float)
+            for k, key in enumerate(("A1", "A2", "A3", "A4", "A5", "A6", "A7"), start=1):
+                rid[masks[key]] = k
+            return R, rid
+
+        # ── Fiducial (s = 1) per-cell quantities ────────────────────────────
+        t_exp = self.t_exp_s(N_exp_b, t_cad_b)
+        F_lim = self.F_lim_Jy(t_exp)
+        fO = self.f_Omega(N_exp_b)
+
+        Nmax = N_exp_max(self.instrument)
+        eps = _REGION_BOUNDARY_EPS
+        A0 = (
+            (N_exp_b >= 1.0 - eps)
+            & (N_exp_b <= Nmax + eps)
+            & np.isfinite(t_exp)
+            & (t_exp > 0.0)
+        )
+
+        d = self.derived
+        p = self.phys.p
+        q_dec = float(d.q_dec)
+        q_j = float(d.q_j)
+        q_nr = float(d.q_nr)
+        q_td = q_dec - 1.0
+        a_II = float(self.pls.a_II(p))
+        a_III = float(self.pls.a_III(p))
+        w_II = 1.0 / (2.0 * a_II)
+        w_III = 1.0 / (2.0 * a_III)
+
+        D_Euc = self.phys.D_euc_cm
+        R_int = self.phys.R_int_yr
+        theta_j = self.phys.theta_j_rad
+
+        qi = self.q_i(i_det, t_cad_b)
+        Dt_dec0 = self.D_dec(F_lim) / D_Euc
+        Dt_i0 = self.D_i(i_det, t_cad_b, F_lim) / D_Euc
+
+        q_s_II, q_s_III = self._q_s_fading_caps(i_det, t_cad_b, s_fade, s_mode)
+
+        q_min_f = float(q_min)
+        qmin2 = q_min_f ** 2
+        Dm = float(D_min_cm) / D_Euc
+        Dm3 = Dm ** 3
+
+        # Regime-chain breakpoints (unraised flux boundary).
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            s_dec = F_lim / d.F_dec_Jy
+            s_j = F_lim / d.F_j_Jy
+            s_nr = F_lim / d.F_nr_Jy
+            s_qi = Dt_i0 ** -2.0
+
+        # Rise cut: value boundaries anchor at the raised limit η·F_lim.
+        rise_on = float(s_rise) > 0.0
+        if rise_on:
+            eta, ise = self._rise_eta(t_cad_b, s_rise)
+            with np.errstate(over="ignore", invalid="ignore"):
+                q_ri = self.q_Euc(eta * F_lim * Dt_i0 ** 2)  # s-independent
+            s_dec_r = eta * s_dec
+            s_j_r = eta * s_j
+            s_nr_r = eta * s_nr
+            Dt_dec_r0 = Dt_dec0 * ise
+            valid_i = q_ri >= q_dec
+        else:
+            ise = 1.0
+            q_ri = np.inf
+            s_dec_r, s_j_r, s_nr_r = s_dec, s_j, s_nr
+            Dt_dec_r0 = Dt_dec0
+            valid_i = np.broadcast_to(True, shape)
+
+        # A7's effective distance scale (all ∝ √s): min(D_dec, D_i, D_dec_r).
+        Dt7_0 = np.minimum(np.minimum(Dt_dec0, Dt_i0), Dt_dec_r0)
+
+        # Filter/value breakpoints.
+        with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+            x_sII = self._s_at_q_boundary(q_s_II, s_dec_r, s_j_r)
+            x_sIII = self._s_at_q_boundary(q_s_III, s_dec_r, s_j_r)
+            x_qmin = (
+                self._s_at_q_boundary(q_min_f, s_dec_r, s_j_r)
+                if q_min_f > 1.0 else np.zeros(shape)
+            )
+            s_D456 = (Dm / np.maximum(Dt_i0, 1e-300)) ** 2 if Dm > 0 else np.zeros(shape)
+            s_D7 = (Dm / np.maximum(Dt7_0, 1e-300)) ** 2 if Dm > 0 else np.zeros(shape)
+
+        bps = [s_dec, s_j, s_nr, s_qi, x_sII, x_sIII, x_qmin, s_D456, s_D7]
+        if rise_on:
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                s_wall_r = np.maximum(Dt_dec_r0, 1e-300) ** -2.0
+                s_fl_r = (Dm / np.maximum(Dt_dec_r0, 1e-300)) ** 2
+                s_ton456 = (Dm / np.maximum(np.minimum(Dt_i0, Dt_dec_r0), 1e-300)) ** 2
+            bps += [s_dec_r, s_j_r, s_nr_r, s_wall_r, s_fl_r, s_ton456]
+
+        B = np.stack([np.broadcast_to(np.asarray(b, dtype=float), shape) for b in bps])
+        B = np.where(np.isfinite(B), B, s2)
+        B = np.clip(B, s1, s2)
+        B.sort(axis=0)
+        edges = np.concatenate(
+            [np.full((1,) + shape, s1), B, np.full((1,) + shape, s2)], axis=0
+        )
+
+        # LF normalization.
+        C = 1.0 / float(_pow_bracket(s1, s2, alpha))
+
+        # Constant q-caps per regime (s-independent).
+        qc1 = np.minimum(q_nr, q_s_III)
+        qc2 = q_s_III
+        qc3 = q_s_II
+        qc4 = np.minimum(np.minimum(q_nr, q_s_III), q_ri)
+        qc5 = np.minimum(np.minimum(qi, q_s_III), q_ri)
+        qc6 = np.minimum(np.minimum(qi, q_s_II), q_ri)
+        qc7 = np.minimum(q_dec, q_s_II)
+
+        v456 = Dt_i0 ** 3
+        v7 = Dt7_0 ** 3
+
+        acc = np.zeros((7,) + shape, dtype=float)
+
+        n_seg = edges.shape[0] - 1
+        for k in range(n_seg):
+            lo = edges[k]
+            hi = edges[k + 1]
+            seg_ok = (hi > lo) & A0
+            if not np.any(seg_ok):
+                continue
+            sm = np.sqrt(lo * hi)
+
+            # Regime at the segment midpoint (constant within the segment).
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                qtE_m = np.where(
+                    sm <= s_j,
+                    q_td * (sm / s_dec) ** w_II,
+                    (sm / s_j) ** w_III,
+                )
+            qE_m = 1.0 + qtE_m
+            famE = qE_m >= qi
+            rid = np.select(
+                [
+                    famE & (qE_m >= q_nr),
+                    famE & (qE_m >= q_j),
+                    famE & (qE_m >= q_dec),
+                    famE,
+                    qi >= q_nr,
+                    qi >= q_j,
+                    qi >= q_dec,
+                ],
+                [1, 2, 3, 7, 4, 5, 6],
+                default=7,
+            )
+
+            # Raised (value) flux boundary at the midpoint: q̃ = b·s^w.
+            shallow_r = sm <= s_j_r
+            with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+                b = np.where(
+                    shallow_r,
+                    q_td * s_dec_r ** (-w_II),
+                    s_j_r ** (-w_III),
+                )
+                wexp = np.where(shallow_r, w_II, w_III)
+                qEr_m = 1.0 + b * sm ** wexp
+
+            # Angular factor: constant cap vs. flux-boundary expansion.
+            q_const = np.select(
+                [rid == 1, rid == 2, rid == 3, rid == 4, rid == 5, rid == 6],
+                [qc1, qc2, qc3, qc4, qc5, qc6],
+                default=qc7,
+            )
+            use_flux = (rid <= 3) & (qEr_m < q_const)
+            cq0 = np.where(use_flux, 1.0 - qmin2, q_const ** 2 - qmin2)
+            cq1 = np.where(use_flux, 2.0 * b, 0.0)
+            cq2 = np.where(use_flux, b * b, 0.0)
+            q_mid = np.where(use_flux, qEr_m, q_const)
+            qpos = (q_mid ** 2 - qmin2) > 0.0
+
+            # Radial factor: c0 + c_{3/2}·s^{3/2}.
+            dd0 = np.where(rid <= 3, 1.0 - Dm3, -Dm3)
+            dd32 = np.select([rid <= 3, rid <= 6], [0.0, v456], default=v7)
+            dpos = (dd0 + dd32 * sm ** 1.5) > 0.0
+
+            # Rise validity gates (segment-constant: s_dec_r is a breakpoint).
+            if rise_on:
+                valid = np.where(rid <= 3, sm >= s_dec_r,
+                                 np.where(rid <= 6, valid_i, True))
+            else:
+                valid = True
+
+            # Normalized LF moments over the segment.
+            nb0 = C * _pow_bracket(lo, hi, alpha)
+            nb32 = C * _pow_bracket(lo, hi, alpha + 1.5)
+            nbw = C * _pow_bracket(lo, hi, alpha + wexp)
+            nbw32 = C * _pow_bracket(lo, hi, alpha + wexp + 1.5)
+            nb2w = C * _pow_bracket(lo, hi, alpha + 2.0 * wexp)
+            nb2w32 = C * _pow_bracket(lo, hi, alpha + 2.0 * wexp + 1.5)
+
+            ang = (
+                dd0 * (cq0 * nb0 + cq1 * nbw + cq2 * nb2w)
+                + dd32 * (cq0 * nb32 + cq1 * nbw32 + cq2 * nb2w32)
+            )
+            ang = np.where(qpos & dpos & valid, np.maximum(ang, 0.0), 0.0)
+
+            # On-axis alternative terms (rise cut only; none for A7).
+            if rise_on:
+                tq = np.maximum(qc7 ** 2 - qmin2, 0.0)
+                sub_wall = sm < s_wall_r
+                ton_dd0 = np.where(
+                    rid <= 3, np.where(sub_wall, -Dm3, 1.0 - Dm3), -Dm3
+                )
+                ton_dd32 = np.where(
+                    rid <= 3,
+                    np.where(sub_wall, Dt_dec_r0 ** 3, 0.0),
+                    np.minimum(Dt_i0, Dt_dec_r0) ** 3,
+                )
+                ton_pos = (ton_dd0 + ton_dd32 * sm ** 1.5) > 0.0
+                ton = tq * (ton_dd0 * nb0 + ton_dd32 * nb32)
+                ton = np.where(ton_pos & (rid != 7), np.maximum(ton, 0.0), 0.0)
+                contrib = np.maximum(ang, ton)
+            else:
+                contrib = ang
+
+            contrib = np.where(seg_ok, contrib, 0.0)
+            for r in range(7):
+                acc[r] += np.where(rid == r + 1, contrib, 0.0)
+
+        base = 0.5 * fO * (theta_j ** 2) * R_int
+        total = acc.sum(axis=0)
+        R = np.where(A0, base * total, np.nan)
+
+        if not return_regime:
+            return R
+        rid_out = np.where(
+            A0 & (total > 0.0), np.argmax(acc, axis=0) + 1.0, np.nan
+        )
+        return R, rid_out
+
+    def regime_id_lf(
+        self,
+        i_det: int,
+        N_exp: np.ndarray,
+        t_cad_s: np.ndarray,
+        *,
+        q_min: float = 0.0,
+        D_min_cm: float = 0.0,
+        s_fade: float = 0.0,
+        s_rise: float = 0.0,
+        s_mode: str = "discrete",
+    ) -> np.ndarray:
+        """Dominant-contribution regime ids under the LF (1.0–7.0, NaN outside).
+
+        The honest generalization of "which regime is this cell in" to a
+        population: the regime most of the cell's detections come from
+        (argmax of the per-regime LF-integrated dominant-term contributions).
+        """
+        _, rid = self._rate_lf_dominant(
+            i_det, N_exp, t_cad_s,
+            q_min=q_min, D_min_cm=D_min_cm,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            return_regime=True,
+        )
+        return rid
 
     def rate_log10_full_integral(
         self,
@@ -1181,15 +1917,27 @@ class DetectionRateModel:
         a_II    = float(self.pls.a_II(self.phys.p))
         a_III   = float(self.pls.a_III(self.phys.p))
 
+        # Luminosity function: fully closed-form per-q weights (the rise-cut
+        # survival ramp is piecewise homogeneous in s — `_lf_weighted_D_volume`).
+        # Only the degenerate LF goes through the (single-)node path, which
+        # makes the L_min = L_max limit exact.
+        lf_bounds = self._lf_s_bounds()
+        lf_on = lf_bounds is not None
+        lf_nodes = None
+        if lf_on and self._lf_is_degenerate(lf_bounds[0], lf_bounds[1]):
+            lf_nodes = self._lf_gl_nodes()
+
         # Cadence distance scale: D̃_eff = min(D_i / D_Euc, 1).  Under
         # win_from_peak the cap is q-dependent (window measured from t_p) and
-        # is computed per q-chunk inside the loop instead.
+        # is computed per q-chunk inside the loop instead.  With the LF on the
+        # profile stays UNCAPPED — the D_euc wall moves inside the per-q LF
+        # weight (min(√s·g, 1) cannot be pulled through the s-integral).
         D_tilde_dec  = self.D_dec(F_lim) / D_Euc   # shape
         if self.win_from_peak:
             D_tilde_eff = None
         else:
             D_i         = self.D_i(i_det, t_cad_b, F_lim)
-            D_tilde_eff = np.minimum(D_i / D_Euc, 1.0) # shape, capped at 1
+            D_tilde_eff = (D_i / D_Euc) if lf_on else np.minimum(D_i / D_Euc, 1.0)
 
         # Trapezoidal integral: ∫_{q_min}^{q_nr} q * max(D̃_eff^3 − D̃_min^3, 0) dq
         # At q_min=0, D_min=0 the weight and the max() reduce to 1 and D̃_eff³,
@@ -1206,7 +1954,9 @@ class DetectionRateModel:
         q_vals    = np.linspace(0.0, q_nr, N_q + 1)[1:]  # skip q=0 to avoid q̃=−1
         ndim      = len(shape)
         grid_size = max(1, int(np.prod(shape, dtype=np.int64)))
-        n_chunk   = max(2, int(_FULL_INTEGRAL_CHUNK_ELEMS) // grid_size)
+        # The LF weight builds a few more concurrent (n_chunk, *shape) slabs
+        # than the legacy branch — halve the chunk to keep the same peak.
+        n_chunk   = max(2, int(_FULL_INTEGRAL_CHUNK_ELEMS) // (grid_size * (2 if lf_on else 1)))
 
         I     = np.zeros(shape, dtype=float)
         n_q   = int(q_vals.size)
@@ -1238,11 +1988,11 @@ class DetectionRateModel:
 
             # Effective detectable distance: min(D̃_max, D̃_eff).  Under
             # win_from_peak D̃_eff is the per-q window distance (one extra
-            # (n_chunk, *shape) slab inside the chunk memory budget).
+            # (n_chunk, *shape) slab inside the chunk memory budget); with the
+            # LF on it stays uncapped (the wall lives inside the LF weight).
             if self.win_from_peak:
-                D_tilde_eff_g = np.minimum(
-                    self._D_eff_window_cm(q_g, i_det, t_cad_b, F_lim) / D_Euc, 1.0
-                )
+                D_win = self._D_eff_window_cm(q_g, i_det, t_cad_b, F_lim) / D_Euc
+                D_tilde_eff_g = D_win if lf_on else np.minimum(D_win, 1.0)
             else:
                 D_tilde_eff_g = D_tilde_eff
             D_eff = np.minimum(D_tilde_max, D_tilde_eff_g)  # (n_chunk, *shape)
@@ -1252,12 +2002,38 @@ class DetectionRateModel:
             # `_weighted_D_volume`).  With s_rise = 0 this is exactly
             # max(D_eff³ − D̃_min³, 0)·P_fade, and with s_fade = 0 too it is
             # bit-identical to the pre-filter integrand.
-            V_w = self._weighted_D_volume(
-                q_g, D_tilde_max, D_eff, D_min_norm,
-                i_det, t_cad_b, s_fade, s_rise, s_mode,
-                rise_random_start=rise_random_start,
-                fade_random_start=fade_random_start,
-            )
+            if not lf_on:
+                V_w = self._weighted_D_volume(
+                    q_g, D_tilde_max, D_eff, D_min_norm,
+                    i_det, t_cad_b, s_fade, s_rise, s_mode,
+                    rise_random_start=rise_random_start,
+                    fade_random_start=fade_random_start,
+                )
+            elif lf_nodes is None:
+                # LF closed form (exact for every filter combination): per-q
+                # expectation of the joint-weighted walled volume.  D_eff here
+                # is the uncapped horizon profile g = min(D̃_max, D̃_cad/win).
+                V_w = self._lf_weighted_D_volume(
+                    q_g, D_tilde_max, D_eff, D_min_norm,
+                    i_det, t_cad_b, s_fade, s_rise, s_mode,
+                    rise_random_start=rise_random_start,
+                    fade_random_start=fade_random_start,
+                )
+            else:
+                # Degenerate LF (single node at √(s_min·s_max)): evaluate the
+                # legacy weighted volume with every horizon scaled by √s —
+                # the L_min = L_max limit is exact.
+                s_nodes, w_nodes = lf_nodes
+                V_w = 0.0
+                for s_k, w_k in zip(s_nodes, w_nodes):
+                    rt = np.sqrt(s_k)
+                    V_w = V_w + w_k * self._weighted_D_volume(
+                        q_g, rt * D_tilde_max, np.minimum(rt * D_eff, 1.0),
+                        D_min_norm,
+                        i_det, t_cad_b, s_fade, s_rise, s_mode,
+                        rise_random_start=rise_random_start,
+                        fade_random_start=fade_random_start,
+                    )
             q_keep = q_g >= q_min_f
             integrand = np.where(q_keep, q_g * V_w, 0.0)   # (n_chunk, *shape)
             I += np.trapezoid(integrand, q_c, axis=0)      # shape
@@ -1440,15 +2216,27 @@ class DetectionRateModel:
         q_g    = q_vals.reshape((-1,) + (1,) * ndim)
         qt_g   = np.maximum(q_g - 1.0, 0.0)
 
+        # Luminosity function: mixture statistics via the log-s node
+        # quadrature (medians are robust; the GL error is far below the
+        # D-level discretization).  The horizon profile stays UNCAPPED — each
+        # node scales it by √s_k and re-applies the D_euc wall.
+        lf_bounds_m = self._lf_s_bounds()
+        lf_on_m = lf_bounds_m is not None
+        if lf_on_m:
+            lf_degen_m = self._lf_is_degenerate(lf_bounds_m[0], lf_bounds_m[1])
+            s_nodes_m, w_nodes_m = self._lf_gl_nodes(_LF_MEDIAN_GL_NODES)
+
         # Cadence distance cap: q-dependent under win_from_peak (window
         # measured from t_p), constant D_i otherwise.
         if self.win_from_peak:
-            D_tilde_eff = np.minimum(
-                self._D_eff_window_cm(q_g, i_det, t_cad_b, F_lim) / D_Euc, 1.0
-            )
+            D_win = self._D_eff_window_cm(q_g, i_det, t_cad_b, F_lim) / D_Euc
+            D_tilde_eff = D_win if lf_on_m else np.minimum(D_win, 1.0)
         else:
             D_i_arr     = self.D_i(i_det, t_cad_b, F_lim)
-            D_tilde_eff = np.minimum(D_i_arr / D_Euc, 1.0)
+            D_tilde_eff = (
+                (D_i_arr / D_Euc) if lf_on_m
+                else np.minimum(D_i_arr / D_Euc, 1.0)
+            )
 
         on_axis   = q_g <  q_dec
         phase_II  = (q_g >= q_dec) & (q_g < q_j)
@@ -1464,7 +2252,8 @@ class DetectionRateModel:
                       np.where(phase_II, D_max_II,
                                          D_max_III))
 
-        D_eff = np.minimum(D_tilde_max, D_tilde_eff)   # (N_q, *shape), normalized
+        # (N_q, *shape); with the LF on this is the uncapped profile g(q).
+        D_eff = np.minimum(D_tilde_max, D_tilde_eff)
 
         # Filter: only q ≥ q_min and D ≥ D_min count.  At q_min=0, D_min=0
         # the integrand below reduces to the original q · D_eff³.
@@ -1478,12 +2267,33 @@ class DetectionRateModel:
 
         # ── Median q ──────────────────────────────────────────────────────────
         # Filtered marginal: w(q) = 1{q ≥ q_min} · q · V_w(q).
-        V_w = self._weighted_D_volume(
-            q_g, D_tilde_max, D_eff, D_min_norm,
-            i_det, t_cad_b, s_fade, s_rise, s_mode,
-            rise_random_start=rise_random_start,
-            fade_random_start=fade_random_start,
-        )
+        if lf_on_m and not lf_degen_m:
+            # Exact closed-form LF weight (same integrand as the rate).
+            V_w = self._lf_weighted_D_volume(
+                q_g, D_tilde_max, D_eff, D_min_norm,
+                i_det, t_cad_b, s_fade, s_rise, s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+            )
+        elif lf_on_m:
+            # Degenerate LF: single scaled node (exact limit).
+            V_w = 0.0
+            for s_k, w_k in zip(s_nodes_m, w_nodes_m):
+                rt = np.sqrt(s_k)
+                V_w = V_w + w_k * self._weighted_D_volume(
+                    q_g, rt * D_tilde_max, np.minimum(rt * D_eff, 1.0),
+                    D_min_norm,
+                    i_det, t_cad_b, s_fade, s_rise, s_mode,
+                    rise_random_start=rise_random_start,
+                    fade_random_start=fade_random_start,
+                )
+        else:
+            V_w = self._weighted_D_volume(
+                q_g, D_tilde_max, D_eff, D_min_norm,
+                i_det, t_cad_b, s_fade, s_rise, s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+            )
         w_q        = np.where(q_keep_mask, q_g * V_w, 0.0)                   # (N_q, *shape)
         cumsum_q   = np.cumsum(w_q, axis=0)
         total_q    = cumsum_q[-1:] + 1e-300
@@ -1497,10 +2307,21 @@ class DetectionRateModel:
         # slope of D_eff, the q-integral reduces to (Q(D)² − q_min²)/2 (the
         # analytic form).  With a filter active the integrand carries the
         # continuous joint survival weight, so we integrate numerically.
-        D_eff_max  = np.maximum(D_eff.max(axis=0), 1e-30)  # (*shape)
+        if lf_on_m:
+            # Largest horizon of the mixture (brightest burst × the wall).
+            s_top = float(lf_bounds_m[1])
+            D_eff_max = np.maximum(
+                np.minimum(np.sqrt(s_top) * D_eff.max(axis=0), 1.0), 1e-30
+            )
+        else:
+            D_eff_max = np.maximum(D_eff.max(axis=0), 1e-30)  # (*shape)
         D_eff_norm = D_eff / D_eff_max[np.newaxis, ...]    # (N_q, *shape), in [0, 1]
 
         N_D    = 100
+        if lf_on_m and float(s_rise) > 0.0:
+            # Per-level × per-node loops multiply: keep the cost at the
+            # pre-LF rise-on scale with a reduced level count.
+            N_D = int(_LF_MEDIAN_N_D_RISE)
         d_grid = np.linspace(1.0 / N_D, 1.0, N_D)     # normalized D levels, (N_D,)
 
         # Q_sq_eff[j] = 2·∫ q · 1{D_eff_norm ≥ d_j} · 1{q ≥ q_min} · w_joint dq.
@@ -1514,7 +2335,7 @@ class DetectionRateModel:
         trap_c[-1] *= 0.5
         trap_c   = trap_c.reshape((-1,) + (1,) * ndim)                        # (N_q, 1, …)
 
-        if float(s_rise) <= 0.0:
+        if float(s_rise) <= 0.0 and not lf_on_m:
             # Rise cut off ⇒ w_joint = _fading_survival is independent of the
             # distance level d.  Then Q_sq_eff over all N_D levels is a survival
             # function: bin each q-point by the highest level it clears
@@ -1547,29 +2368,85 @@ class DetectionRateModel:
             H      = Hf.reshape((N_D,) + shape)
             # Q_sq_eff[j] = 2·Σ_{k ≥ j} H[k]  (reverse cumulative sum over levels)
             Q_sq_eff = 2.0 * np.cumsum(H[::-1], axis=0)[::-1]
+        elif float(s_rise) <= 0.0:
+            # LF × (fade-only): the fade survival is s-independent and each
+            # node has a sharp per-q horizon min(√s_k·g, 1), so the survival
+            # trick applies node by node — accumulate the ŵ_k-weighted
+            # histograms and reverse-cumsum once.
+            w = self._joint_survival(                # fade-only, s-independent
+                q_g, D_tilde_max, D_tilde_max,
+                i_det, t_cad_b, s_fade, s_rise, s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+            )
+            base   = (trap_c * q_g * q_keep_mask) * w
+            n_qm   = base.shape[0]
+            M      = int(np.prod(shape, dtype=np.int64)) if shape else 1
+            base_f = np.ascontiguousarray(base).reshape(n_qm, M)
+            cols_r = np.arange(M)
+            Hf_acc = np.zeros(N_D * M, dtype=float)
+            for s_k, w_k in zip(s_nodes_m, w_nodes_m):
+                De_k = np.minimum(np.sqrt(s_k) * D_eff, 1.0) / D_eff_max[np.newaxis, ...]
+                De_f = np.ascontiguousarray(De_k).reshape(n_qm, M)
+                bins = np.searchsorted(d_grid, De_f, side="right") - 1
+                cols = np.broadcast_to(cols_r, bins.shape)
+                keep = bins >= 0
+                lin  = bins[keep].astype(np.intp) * M + cols[keep]
+                Hf_acc += w_k * np.bincount(
+                    lin, weights=base_f[keep], minlength=N_D * M
+                )
+            H = Hf_acc.reshape((N_D,) + shape)
+            Q_sq_eff = 2.0 * np.cumsum(H[::-1], axis=0)[::-1]
+        elif lf_on_m and not lf_degen_m:
+            # LF × rise: the per-level weight is the exact closed-form LF
+            # expectation of (horizon indicator × joint survival) —
+            # `_lf_expected_pass_weight` — evaluated level by level (reduced
+            # N_D keeps the total cost at the pre-LF rise-on scale).
+            Q_sq_eff = np.empty((N_D,) + shape, dtype=float)
+            for j, d in enumerate(d_grid):
+                E = self._lf_expected_pass_weight(
+                    d * D_eff_max[np.newaxis, ...], D_tilde_max, D_eff,
+                    i_det, t_cad_b, s_fade, s_rise, s_mode,
+                    q=q_g,
+                    rise_random_start=rise_random_start,
+                    fade_random_start=fade_random_start,
+                )
+                integrand_q = np.where(q_keep_mask, q_g * E, 0.0)
+                Q_sq_eff[j] = 2.0 * np.trapezoid(integrand_q, q_vals, axis=0)
         else:
             # Rise cut active ⇒ w_joint depends on d, so the survival trick does
             # not apply.  Keep the per-level loop but hoist every d-independent
             # quantity out of it (only t_lim and the final clip depend on d).
+            # A degenerate LF runs through this loop as its single scaled node.
             t_p_eff, t_fs_sel, k_sel, ise = self._rise_fade_windows(
                 q_g, i_det, t_cad_b, s_fade, s_rise, s_mode
             )
             if not fade_random_start:
                 t_fs_sel = np.where(t_fs_sel >= t_p_eff, np.inf, -np.inf)
-            D0       = np.asarray(D_tilde_max, dtype=float) * ise             # (N_q, *shape)
-            Q_sq_eff = np.empty((N_D,) + shape, dtype=float)
-            for j, d in enumerate(d_grid):
-                D_safe = np.maximum(d * D_eff_max[np.newaxis, ...], 1e-300)
-                with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
-                    t_lim = t_p_eff * (D0 / D_safe) ** k_sel
-                    if not rise_random_start:
-                        t_lim = np.where(t_lim >= t_p_eff, np.inf, -np.inf)
-                    w_joint = np.clip(
-                        (np.minimum(t_fs_sel, t_lim) - t_p_eff) / t_cad_b, 0.0, 1.0
-                    )
-                above_and_keep = (D_eff_norm >= d) & q_keep_mask              # (N_q, *shape)
-                integrand_q    = np.where(above_and_keep, q_g * w_joint, 0.0) # (N_q, *shape)
-                Q_sq_eff[j]    = 2.0 * np.trapezoid(integrand_q, q_vals, axis=0)
+            if lf_on_m:
+                node_iter = list(zip(s_nodes_m, w_nodes_m))
+            else:
+                node_iter = [(1.0, 1.0)]
+            Q_sq_eff = np.zeros((N_D,) + shape, dtype=float)
+            for s_k, w_k in node_iter:
+                rt = np.sqrt(s_k)
+                D0 = rt * np.asarray(D_tilde_max, dtype=float) * ise          # (N_q, *shape)
+                De_norm_k = (
+                    np.minimum(rt * D_eff, 1.0) / D_eff_max[np.newaxis, ...]
+                    if lf_on_m else D_eff_norm
+                )
+                for j, d in enumerate(d_grid):
+                    D_safe = np.maximum(d * D_eff_max[np.newaxis, ...], 1e-300)
+                    with np.errstate(invalid="ignore", over="ignore", divide="ignore"):
+                        t_lim = t_p_eff * (D0 / D_safe) ** k_sel
+                        if not rise_random_start:
+                            t_lim = np.where(t_lim >= t_p_eff, np.inf, -np.inf)
+                        w_joint = np.clip(
+                            (np.minimum(t_fs_sel, t_lim) - t_p_eff) / t_cad_b, 0.0, 1.0
+                        )
+                    above_and_keep = (De_norm_k >= d) & q_keep_mask           # (N_q, *shape)
+                    integrand_q    = np.where(above_and_keep, q_g * w_joint, 0.0)
+                    Q_sq_eff[j]   += w_k * 2.0 * np.trapezoid(integrand_q, q_vals, axis=0)
 
         d_g      = d_grid.reshape((-1,) + (1,) * ndim)
         # Distance-floor mask: zero out levels below D_min_cm.
@@ -1602,9 +2479,13 @@ class DetectionRateModel:
         Returns
         -------
         q_vals     : (N_q,)            — q grid on (0, q_nr].
-        D_eff_norm : (N_q,)            — D̃_eff(q) = D_eff(q) / D_Euc.
+        D_eff_norm : (N_q,)            — D̃_eff(q) = D_eff(q) / D_Euc (walled).
         D_tilde_max: (N_q,)            — flux-limited D̃_max(q) profile (for the
                                          rise-filter weights).
+        g_uncapped : (N_q,)            — min(D̃_max, cadence/window profile)
+                                         WITHOUT the D_euc wall cap — the LF
+                                         weights need the raw √s-scalable
+                                         horizon profile.
         prefactor  : float             — f_Omega · θ_j² · R_int.
         t_exp      : float (or NaN)    — exposure time; NaN if strategy is unphysical.
         """
@@ -1618,6 +2499,7 @@ class DetectionRateModel:
         if not np.isfinite(t_exp) or t_exp <= 0:
             return (
                 np.linspace(0.0, float(self.derived.q_nr), N_q + 1)[1:],
+                np.full(N_q, np.nan),
                 np.full(N_q, np.nan),
                 np.full(N_q, np.nan),
                 float("nan"),
@@ -1645,14 +2527,13 @@ class DetectionRateModel:
         qt_g   = np.maximum(q_vals - 1.0, 0.0)
 
         # Cadence distance cap: q-dependent (N_q,) profile under win_from_peak,
-        # constant D_i otherwise.
+        # constant D_i otherwise.  Kept uncapped here; the wall is applied to
+        # D_eff_norm below (min(g, 1) ≡ the old min-of-capped form).
         if self.win_from_peak:
-            D_tilde_eff = np.minimum(
-                self._D_eff_window_cm(q_vals, i_det, t_arr, F_lim_arr) / D_Euc, 1.0
-            )
+            D_tilde_eff = self._D_eff_window_cm(q_vals, i_det, t_arr, F_lim_arr) / D_Euc
         else:
             D_i_arr     = self.D_i(i_det, t_arr, F_lim_arr)
-            D_tilde_eff = min(float(D_i_arr[0]) / D_Euc, 1.0)
+            D_tilde_eff = float(D_i_arr[0]) / D_Euc
 
         on_axis   = q_vals <  q_dec
         phase_II  = (q_vals >= q_dec) & (q_vals < q_j)
@@ -1667,10 +2548,11 @@ class DetectionRateModel:
         D_tilde_max = np.where(on_axis,  D_tilde_dec,
                       np.where(phase_II, D_max_II,
                                          D_max_III))
-        D_eff_norm = np.minimum(D_tilde_max, D_tilde_eff)
+        g_uncapped = np.minimum(D_tilde_max, D_tilde_eff)
+        D_eff_norm = np.minimum(g_uncapped, 1.0)
 
         prefactor = fO * (theta_j ** 2) * R_int
-        return q_vals, D_eff_norm, D_tilde_max, prefactor, t_exp
+        return q_vals, D_eff_norm, D_tilde_max, g_uncapped, prefactor, t_exp
 
     def dR_dq_full_integral(
         self,
@@ -1700,7 +2582,7 @@ class DetectionRateModel:
         with V_w the joint fade+rise weighted D-volume (see
         `_weighted_D_volume`; = max(D̃_eff³ − D̃_min³, 0)·P_fade at s_rise = 0).
         """
-        q_vals, D_eff_norm, D_tilde_max, prefactor, t_exp = self._D_eff_q_profile_scalar(
+        q_vals, D_eff_norm, D_tilde_max, g_unc, prefactor, t_exp = self._D_eff_q_profile_scalar(
             i_det, N_exp, t_cad_s, N_q
         )
         if not np.isfinite(t_exp):
@@ -1708,14 +2590,38 @@ class DetectionRateModel:
 
         D_min_norm = float(D_min_cm) / self.phys.D_euc_cm
         keep       = q_vals >= float(q_min)
+        t_arr      = np.array([float(t_cad_s)])
 
-        # Joint fade+rise weighted D-volume (scalar t_cad → (N_q,) weight).
-        V_w = self._weighted_D_volume(
-            q_vals, D_tilde_max, D_eff_norm, D_min_norm,
-            i_det, np.array([float(t_cad_s)]), s_fade, s_rise, s_mode,
-            rise_random_start=rise_random_start,
-            fade_random_start=fade_random_start,
-        )
+        lf_bounds = self._lf_s_bounds()
+        if lf_bounds is None:
+            # Joint fade+rise weighted D-volume (scalar t_cad → (N_q,) weight).
+            V_w = self._weighted_D_volume(
+                q_vals, D_tilde_max, D_eff_norm, D_min_norm,
+                i_det, t_arr, s_fade, s_rise, s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+            )
+        elif not self._lf_is_degenerate(lf_bounds[0], lf_bounds[1]):
+            # LF closed form (exact for every filter combination).
+            V_w = self._lf_weighted_D_volume(
+                q_vals, D_tilde_max, g_unc, D_min_norm,
+                i_det, t_arr, s_fade, s_rise, s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+            )
+        else:
+            # Degenerate LF: single scaled node (exact limit).
+            s_nodes, w_nodes = self._lf_gl_nodes()
+            V_w = 0.0
+            for s_k, w_k in zip(s_nodes, w_nodes):
+                rt = np.sqrt(s_k)
+                V_w = V_w + w_k * self._weighted_D_volume(
+                    q_vals, rt * D_tilde_max, np.minimum(rt * g_unc, 1.0),
+                    D_min_norm,
+                    i_det, t_arr, s_fade, s_rise, s_mode,
+                    rise_random_start=rise_random_start,
+                    fade_random_start=fade_random_start,
+                )
 
         dR_dq = np.where(keep, prefactor * q_vals * V_w, 0.0)
         return q_vals, dR_dq
@@ -1756,28 +2662,66 @@ class DetectionRateModel:
         D_Euc = self.phys.D_euc_cm
         D_grid_cm = np.linspace(0.0, D_Euc, N_D)
 
-        q_vals, D_eff_norm, D_tilde_max, prefactor, t_exp = self._D_eff_q_profile_scalar(
+        q_vals, D_eff_norm, D_tilde_max, g_unc, prefactor, t_exp = self._D_eff_q_profile_scalar(
             i_det, N_exp, t_cad_s, N_q
         )
         if not np.isfinite(t_exp):
             return D_grid_cm, np.full(N_D, np.nan)
 
         d_grid = D_grid_cm / D_Euc  # (N_D,) in [0, 1]
-
-        # Joint fade+rise survival on the (N_D, N_q) grid — d_grid IS D̃ here.
-        w_joint = self._joint_survival(
-            q_vals[np.newaxis, :], d_grid[:, np.newaxis],
-            D_tilde_max[np.newaxis, :],
-            i_det, np.array([float(t_cad_s)]), s_fade, s_rise, s_mode,
-            rise_random_start=rise_random_start,
-            fade_random_start=fade_random_start,
-        )                                                                # (N_D, N_q)
+        t_arr = np.array([float(t_cad_s)])
         q_keep_f = (q_vals >= float(q_min)).astype(float)                # (N_q,)
 
-        # q-integral per d.  Vectorised over (N_D, N_q) — D_eff_norm has no shape
-        # beyond N_q for this scalar-strategy entry point, so memory is modest.
-        above    = D_eff_norm[np.newaxis, :] >= d_grid[:, np.newaxis]    # (N_D, N_q)
-        integrand_q = q_vals[np.newaxis, :] * above * w_joint * q_keep_f[np.newaxis, :]
+        lf_bounds = self._lf_s_bounds()
+        if lf_bounds is None:
+            # Joint fade+rise survival on the (N_D, N_q) grid — d_grid IS D̃ here.
+            w_joint = self._joint_survival(
+                q_vals[np.newaxis, :], d_grid[:, np.newaxis],
+                D_tilde_max[np.newaxis, :],
+                i_det, t_arr, s_fade, s_rise, s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+            )                                                            # (N_D, N_q)
+
+            # q-integral per d.  Vectorised over (N_D, N_q) — D_eff_norm has no
+            # shape beyond N_q for this scalar-strategy entry point.
+            above    = D_eff_norm[np.newaxis, :] >= d_grid[:, np.newaxis]  # (N_D, N_q)
+            integrand_q = q_vals[np.newaxis, :] * above * w_joint * q_keep_f[np.newaxis, :]
+        elif not self._lf_is_degenerate(lf_bounds[0], lf_bounds[1]):
+            # LF closed form: the sharp horizon indicator × survival weight
+            # becomes its exact LF expectation per (D-level, q) —
+            # `_lf_expected_pass_weight` (rise off: P_fade·S_φ(s ≥ (D̃/g)²)).
+            E = self._lf_expected_pass_weight(
+                d_grid[:, np.newaxis], D_tilde_max[np.newaxis, :],
+                g_unc[np.newaxis, :],
+                i_det, t_arr, s_fade, s_rise, s_mode,
+                q=q_vals[np.newaxis, :],
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start,
+            )                                                            # (N_D, N_q)
+            integrand_q = q_vals[np.newaxis, :] * E * q_keep_f[np.newaxis, :]
+        else:
+            # Degenerate LF: single scaled node (exact limit).
+            s_nodes, w_nodes = self._lf_gl_nodes()
+            integrand_q = 0.0
+            for s_k, w_k in zip(s_nodes, w_nodes):
+                rt = np.sqrt(s_k)
+                w_joint_k = self._joint_survival(
+                    q_vals[np.newaxis, :], d_grid[:, np.newaxis],
+                    (rt * D_tilde_max)[np.newaxis, :],
+                    i_det, t_arr, s_fade, s_rise, s_mode,
+                    rise_random_start=rise_random_start,
+                    fade_random_start=fade_random_start,
+                )
+                above_k = (
+                    np.minimum(rt * g_unc, 1.0)[np.newaxis, :]
+                    >= d_grid[:, np.newaxis]
+                )
+                integrand_q = integrand_q + w_k * (
+                    q_vals[np.newaxis, :] * above_k * w_joint_k
+                    * q_keep_f[np.newaxis, :]
+                )
+
         q_integral = np.trapezoid(integrand_q, q_vals, axis=1)           # (N_D,)
 
         dR_dD = (3.0 * prefactor / D_Euc) * (d_grid ** 2) * q_integral
@@ -1804,11 +2748,18 @@ class DetectionRateModel:
 
         Under `win_from_peak` the analytic per-regime constants no longer
         describe the rate (D_eff is q-dependent), so the numerical path is
-        used regardless of `full_integral`.  The `*_random_start` flags apply
+        used regardless of `full_integral`.  The same holds under the
+        luminosity function: mixture medians must come from the LF-weighted
+        distributions (never from averaging per-luminosity medians), which
+        only the numerical path provides.  The `*_random_start` flags apply
         only on the numerical path (the analytic path is the hard-boundary
         dominant-term treatment already).
         """
-        if full_integral or self.win_from_peak:
+        if full_integral or self.win_from_peak or self.lf is not None:
+            # Dominant mode + LF pays for the numerical path only here — use a
+            # reduced q-grid (medians are hover extras, ≪ the 5% budget).
+            if self.lf is not None and not (full_integral or self.win_from_peak):
+                N_q = min(int(N_q), 100)
             return self.compute_medians_numerical(
                 i_det, N_exp, t_cad_s, N_q,
                 q_min=q_min, D_min_cm=D_min_cm,

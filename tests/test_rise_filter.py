@@ -265,7 +265,7 @@ def test_R06_weight_below_hard_cut(model, deep_model, strategy_grid):
             i, j = idx[len(idx) // 2]
             Nv, tv = float(N[i, j]), float(T[i, j])
             for s_rise in (0.3, 1.0):
-                q_vals, D_eff_norm, D_tilde_max, prefactor, t_exp = (
+                q_vals, D_eff_norm, D_tilde_max, _g_unc, prefactor, t_exp = (
                     m._D_eff_q_profile_scalar(i_det, Nv, tv, 800))
                 if not math.isfinite(t_exp):
                     continue

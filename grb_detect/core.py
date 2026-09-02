@@ -17,7 +17,7 @@ from functools import lru_cache
 import numpy as np
 
 from .constants import DAY_S, DEG2_TO_SR
-from .detection_rate import DetectionRateModel
+from .detection_rate import DetectionRateModel, LuminosityFunction
 from .params import (
     AfterglowPhysicalParams,
     CM_TO_GPC,
@@ -56,6 +56,10 @@ def _make_rate_model_cached(
     rho_grb_log10: float,
     win_i_minus_one: bool,
     win_from_peak: bool,
+    lf_on: bool,
+    lf_alpha: float,
+    lf_log10_L_min: float,
+    lf_log10_L_max: float,
 ) -> DetectionRateModel:
     """Cached model construction — called only when parameters change."""
     p_val      = float(p)
@@ -96,10 +100,19 @@ def _make_rate_model_cached(
         telescope=telescope,
         design=SurveyDesignParams(omega_survey_max_sr=float(omega_survey_max_sr)),
     )
+    lf = (
+        LuminosityFunction(
+            alpha=float(lf_alpha),
+            log10_L_min=float(lf_log10_L_min),
+            log10_L_max=float(lf_log10_L_max),
+        )
+        if lf_on else None
+    )
     return DetectionRateModel(
         phys=phys, instrument=instrument, micro=micro,
         win_i_minus_one=bool(win_i_minus_one),
         win_from_peak=bool(win_from_peak),
+        lf=lf,
     )
 
 
@@ -124,6 +137,12 @@ def make_rate_model(
     # Detection-window settings (see DetectionRateModel docstring)
     win_i_minus_one: bool = False,
     win_from_peak: bool = False,
+    # Intrinsic luminosity function (see LuminosityFunction): off by default —
+    # the legacy single-luminosity model.  L bounds are log10 νL_ν(1 d) [erg/s].
+    lf_on: bool = False,
+    lf_alpha: float = -2.0,
+    lf_log10_L_min: float = 42.5,
+    lf_log10_L_max: float = 45.5,
 ) -> DetectionRateModel:
     """Construct a rate model from the survey parameters exposed in the UI.
 
@@ -160,6 +179,10 @@ def make_rate_model(
         _r(rho_grb_log10)  if rho_grb_log10  is not None else _r(math.log10(_d.rho_grb_gpc3_yr)),
         bool(win_i_minus_one),
         bool(win_from_peak),
+        bool(lf_on),
+        _r(lf_alpha),
+        _r(lf_log10_L_min),
+        _r(lf_log10_L_max),
     )
 
 
@@ -529,6 +552,18 @@ def compute_surface(
             # this model serves (1-D subset) and scatter the ids back — same
             # result as masking the full-grid masks, at half the work in optical
             # mode.  Cells matching no region stay NaN.
+            #
+            # Under the luminosity function each cell mixes bursts across the
+            # whole regime chain, so the honest classification is the
+            # dominant-contribution regime (argmax of the per-regime
+            # LF-integrated contributions).
+            if model.lf is not None:
+                regime_id[sel] = model.regime_id_lf(
+                    i_det, N_exp[sel], t_cad_eff[sel],
+                    q_min=q_min, D_min_cm=D_min_cm,
+                    s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                )
+                return
             masks = model.region_masks(
                 i_det, N_exp[sel], t_cad_eff[sel], include_unphysical=False)
             ids = np.full(int(np.count_nonzero(sel)), np.nan, dtype=float)
