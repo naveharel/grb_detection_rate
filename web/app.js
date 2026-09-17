@@ -2276,14 +2276,14 @@ function updateDerivedDisplays(data) {
   const l0El = document.getElementById('lf-l0-display');
   if (l0El && data.L0_erg_s != null && isFinite(data.L0_erg_s) && data.L0_erg_s > 0) {
     l0El.innerHTML =
-      'L<sub>0</sub> = 10^' + Math.log10(data.L0_erg_s).toFixed(2) + ' erg/s';
+      'L<sub>0</sub>(1 day) = 10^' + Math.log10(data.L0_erg_s).toFixed(2) + ' erg/s';
   }
   const lmedEl = document.getElementById('lf-lmed-display');
   if (lmedEl) {
     const lm = data.lf_L_med_pop_erg_s;
     lmedEl.innerHTML = (lm != null && isFinite(lm) && lm > 0)
-      ? 'L<sub>med</sub> = 10^' + Math.log10(lm).toFixed(2) + ' erg/s'
-      : 'L<sub>med</sub> = —';
+      ? 'L<sub>med</sub>(1 day) = 10^' + Math.log10(lm).toFixed(2) + ' erg/s'
+      : 'L<sub>med</sub>(1 day) = —';
   }
 }
 

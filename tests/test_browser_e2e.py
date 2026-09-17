@@ -229,8 +229,7 @@ def test_lf_toggle_end_to_end(page):
     assert not box.is_checked(), "LF must ship unchecked (single-L default)"
     assert not page.locator("#lf-block").is_visible()
 
-    page.locator('label[for="lf-switch"] .toggle-track').click()
-    wait_for_compute(page)
+    toggle_switch(page, "lf-switch", checked=True)
     assert not status_is_error(page), (
         f"error after enabling the LF: {_status_text(page)}")
     assert box.is_checked()
@@ -239,6 +238,24 @@ def test_lf_toggle_end_to_end(page):
     # Derived rows populate from the payload echoes (L0 always; L_med when on).
     assert "10^" in page.locator("#lf-l0-display").inner_text()
     assert "10^" in page.locator("#lf-lmed-display").inner_text()
+
+    for selector in ('label[for="lf_lmin_slider"]',
+                     'label[for="lf_lmax_slider"]',
+                     '#lf-l0-display', '#lf-lmed-display'):
+        assert "(1 day)" in page.locator(selector).inner_text()
+
+    # Moving the jet break before one day updates the fiducial luminosity,
+    # while the user's absolute one-day LF cutoffs and median stay fixed.
+    l0_before = page.locator("#lf-l0-display").inner_text()
+    lmed_before = page.locator("#lf-lmed-display").inner_text()
+    set_number_input(page, "thetaj", 0.05)
+    assert not status_is_error(page), _status_text(page)
+    assert page.locator("#lf-l0-display").inner_text() != l0_before
+    assert page.locator("#lf-lmed-display").inner_text() == lmed_before
+    assert float(page.locator("#lf_lmin_slider").input_value()) == 42.5
+    assert float(page.locator("#lf_lmax_slider").input_value()) == 45.5
+    set_number_input(page, "thetaj", 0.1)
+    assert page.locator("#lf-l0-display").inner_text() == l0_before
 
     # Pure-normalization controls are rate-inert while the LF is on.
     for bid in ("epse-block", "epsB-block", "fdec-override-block"):
@@ -251,8 +268,7 @@ def test_lf_toggle_end_to_end(page):
     lmax_val = float(page.locator("#lf_lmax_slider").input_value())
     assert lmax_val >= 46.0 - 1e-9, f"L_max not clamped up (got {lmax_val})"
 
-    page.locator('label[for="lf-switch"] .toggle-track').click()
-    wait_for_compute(page)
+    toggle_switch(page, "lf-switch", checked=False)
     assert not status_is_error(page), (
         f"error after disabling the LF: {_status_text(page)}")
     assert not page.locator("#lf-block").is_visible()

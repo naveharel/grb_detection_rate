@@ -37,6 +37,18 @@ T_PTS = np.array([3e2, 3.6e3, 8.64e4, 3e6, 1e5, 1e3])
 LF_DEFAULT = dict(lf_on=True, lf_alpha=-2.0, lf_log10_L_min=42.5,
                   lf_log10_L_max=45.5)
 
+# Physics changes that affect the peak-to-one-day conversion, including
+# density/angle choices that put the jet break before one day.
+ONE_DAY_PHYSICS = [
+    pytest.param({}, id="default"),
+    pytest.param(dict(p=2.6), id="p"),
+    pytest.param(dict(E_kiso_log10=54.0), id="energy"),
+    pytest.param(dict(n0_log10=2.0), id="density-early-jet"),
+    pytest.param(dict(gamma0_log10=3.0), id="gamma"),
+    pytest.param(dict(theta_j_rad=0.05), id="angle-early-jet"),
+    pytest.param(dict(theta_j_rad=0.15), id="angle-late-jet"),
+]
+
 
 def _lin(logR):
     return np.where(np.isfinite(logR), 10.0 ** logR, 0.0)
@@ -85,14 +97,16 @@ def test_pow_bracket_basic_and_singular():
     assert float(_pow_bracket(2.0, 1.0, 0.5)) == 0.0
 
 
-def test_L0_matches_validation_formula():
-    """L0 must equal the νL_ν(1 d) conversion used in analysis/ztf_validation.py."""
-    m = make_rate_model(**BASE)
-    d = m.derived
-    p = m.phys.p
-    F_1d = d.F_dec_Jy * (dr.DAY_S / d.t_dec_s) ** (-3.0 * (p - 1.0) / 4.0)
+@pytest.mark.parametrize("physics", ONE_DAY_PHYSICS)
+def test_L0_matches_validation_formula(physics):
+    """One-day LF normalization follows the current on-axis light curve."""
+    m = make_rate_model(**BASE, **physics)
+    # Evaluate the PLS-G normalization directly at one day, independently
+    # of the engine's extrapolation from the derived peak flux.
+    F_1d = m.pls.F_dec_Jy(m.phys, m.micro, dr.DAY_S)
+    # After the jet break, the temporal index steepens from -3(p-1)/4 to -p.
+    F_1d *= min(1.0, (m.derived.t_j_s / dr.DAY_S) ** ((m.phys.p + 3.0) / 4.0))
     want = m.phys.nu_hz * 4.0 * np.pi * m.phys.D_euc_cm ** 2 * F_1d * 1e-23
-    assert d.t_j_s >= dr.DAY_S  # default params: 1 day sits in phase II
     assert np.isclose(m.L0_erg_s(), want, rtol=1e-12)
 
 
@@ -174,11 +188,12 @@ def test_off_state_is_same_cached_model():
     assert m.lf is None
 
 
-def test_degenerate_limit_reproduces_single_L():
+@pytest.mark.parametrize("physics", ONE_DAY_PHYSICS)
+def test_degenerate_limit_reproduces_single_L(physics):
     """L_min = L_max = log10 L0 reproduces the legacy single-L rate exactly."""
-    m_off = make_rate_model(**BASE)
+    m_off = make_rate_model(**BASE, **physics)
     lL0 = np.log10(m_off.L0_erg_s())
-    m_deg = make_rate_model(**BASE, lf_on=True, lf_alpha=-2.0,
+    m_deg = make_rate_model(**BASE, **physics, lf_on=True, lf_alpha=-2.0,
                             lf_log10_L_min=lL0, lf_log10_L_max=lL0)
     for full in (False, True):
         for kw in [dict(), dict(s_fade=0.3, s_rise=0.3, q_min=1.5)]:
