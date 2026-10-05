@@ -1,0 +1,72 @@
+\begin{table}[H]\centering\small
+\renewcommand{\arraystretch}{1.15}
+\caption{Full-time results for the thesis shape. Luminosity medians are global, after angular mixing.}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+$\alpha$ & $J_\alpha$ & $q_{\rm med}$ & $L_{\rm med}/L_{\rm dec}$ & $D_{\rm med}/D_\Euc$ & $P(q\le q_\dec)$ \\\midrule
+-2.4 & 0.542459 & 0.7365 & $1.98\times10^{-3}$ & 0.03125 & 98.09\% \\
+-2 & 0.548905 & 0.7409 & $5.78\times10^{-1}$ & 0.50000 & 96.94\% \\
+-1.75 & 0.559788 & 0.7482 & $1.05\times10^{0}$ & 0.62996 & 95.06\% \\
+-1.25 & 1.49735 & 1.8941 & $5.94\times10^{5}$ & 0.75786 & 35.54\% \\
+-1.05 & 36.741 & 9.3883 & $2.65\times10^{14}$ & 0.78740 & 1.45\% \\
+\bottomrule\end{tabular}\end{table}
+
+At $\alpha=-2$, the full-time core holds nearly $97\%$ of the selected
+rate, so its angular approximation is accurate. However, a similarly dominant
+angular core at $\alpha=-2.4$ does not place the luminosities near $L_{\rm dec}$:
+their global median is only about $0.002L_{\rm dec}$. At $\alpha=-1.25$,
+the global median exceeds $L_{\rm dec}$ by nearly six orders of magnitude.
+The latter shift combines the bright conditional tail with larger angular wall
+luminosities. Thus a conditional wall mode is not a universally representative
+luminosity for the full population.
+\begin{table}[H]\centering\small
+\renewcommand{\arraystretch}{1.15}
+\caption{Local luminosity concentration and two distinct angular approximations, full-time selection.}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+$\alpha$ & Local decade fraction & Global decade fraction & Core/full & Moving corner/full \\\midrule
+-2.4 & 25.60\% & 25.68\% & 0.98095 & 0.98222 \\
+-2 & 75.58\% & 75.30\% & 0.96943 & 0.97962 \\
+-1.75 & 82.22\% & 80.65\% & 0.95058 & 0.97529 \\
+-1.25 & 52.20\% & 19.35\% & 0.35538 & 0.89256 \\
+-1.05 & 13.73\% & 0.21\% & 0.01448 & 0.96715 \\
+\bottomrule\end{tabular}\end{table}
+The local fraction uses $[0.1L_{\rm wall}(q),10L_{\rm wall}(q)]$ at each angle; the global fraction uses the single interval $[0.1L_{\rm dec},10L_{\rm dec}]$.
+\begin{table}[H]\centering\small
+\renewcommand{\arraystretch}{1.15}
+\caption{Timing tests at $\alpha=-2$. The luminosity reference is $L_i=L_{\rm dec}/\widetilde F_\nu(i t_{\rm cad})$ even when a different selection is evaluated. The last column isolates the Newtonian-tail effect.}
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+$t_{\rm cad}$ [d], $i$ & Selection & $R/R_{\rm thesis}$ & $q_{\rm med}$ & $L_{\rm med}/L_i$ & $R_{\rm IV}/R_{\rm III\ ext.}$ \\\midrule
+2, 2 & Thesis step & 1.00000 & 1.9111 & 0.70833 & 1.000000 \\
+2, 10 & Thesis step & 1.00000 & 3.4083 & 0.75660 & 1.000000 \\
+2, 2 & Peak step & 0.56361 & 1.4532 & 0.93049 & 1.000000 \\
+2, 10 & Peak step & 0.46901 & 2.5704 & 1.24805 & 1.000011 \\
+2, 2 & Random phase & 1.14086 & 1.3278 & 0.32100 & 1.000000 \\
+2, 10 & Random phase & 0.51543 & 2.5140 & 1.08347 & 1.000009 \\
+1, 300 & Thesis step & 1.00000 & 9.7087 & 0.58826 & 1.000000 \\
+1, 300 & Peak step & 0.46616 & 7.8142 & 1.08556 & 1.119264 \\
+1, 300 & Random phase & 0.46738 & 7.8085 & 1.08194 & 1.118635 \\
+\bottomrule\end{tabular}\end{table}
+
+For two visits at two-day cadence, retaining the peak and averaging phase
+raises the rate by $14.09\%$ relative to the thesis step. For ten visits at
+the same cadence, it instead lowers it by $48.46\%$. These are different
+selection approximations, not statistical uncertainty intervals. The long-window
+stress case, 300 visits at one-day cadence, exposes an $11.86\%$ effect from
+including phase IV rather than continuing phase III. The corresponding effect
+for the two-visit random-phase case at two-day cadence is below $10^{-8}$.
+
+The separate single-visit test gives a periodic-to-continuous rate ratio
+of $0.00158827$ at one-day cadence and $\alpha=-2$. Reducing cadence to
+$10^{-4}$ s gives $0.99999715$. The one-day result has independent phase
+validation; short cadence tests the continuous limit.
+
+Extreme quantiles are evaluated logarithmically. For example,
+$\alpha=-1.001$ gives, for continuous selection,
+\[\log_{10}(L_{\rm med}/L_{\rm dec})=309.5692.\]
+The median is mathematically finite, but exceeds ordinary
+floating-point range and has no plausible interpretation as a physical GRB
+luminosity. This is a numerical and physical warning against using a
+nearly nonconvergent unbounded intensity as a complete population model.
+

@@ -148,12 +148,12 @@ def test_toggling_exact_mode_on_and_off_never_errors(preset_name, preset):
     _run({**base_params, "full_integral": False})
 
 
-# Luminosity-function slider extremes (build_standalone.py _SLIDERS): the
-# widest range, a degenerate-width range, and both α endpoints.
+# Scale-free LF slider endpoints and default: only convergent slopes are
+# reachable from the app; the normalization spans six decades.
 LF_STATES = {
-    "lf-widest":     {"lf_on": True, "lf_alpha": -3.5, "lf_lmin": 41.0, "lf_lmax": 47.5},
-    "lf-degenerate": {"lf_on": True, "lf_alpha": 0.0,  "lf_lmin": 44.0, "lf_lmax": 44.0},
-    "lf-default":    {"lf_on": True, "lf_alpha": -2.0, "lf_lmin": 42.5, "lf_lmax": 45.5},
+    "lf-faint-end":  {"lf_on": True, "lf_alpha": -2.49, "lf_log10_A": -3.0},
+    "lf-bright-end": {"lf_on": True, "lf_alpha": -1.01, "lf_log10_A": 3.0},
+    "lf-default":    {"lf_on": True, "lf_alpha": -2.0, "lf_log10_A": 0.0},
 }
 
 

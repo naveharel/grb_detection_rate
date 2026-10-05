@@ -1,0 +1,215 @@
+{
+  "normalization": {
+    "L_ref": 1e+32,
+    "A_units": "Gpc^-3 yr^-1 per natural log L at L_ref"
+  },
+  "scan": {
+    "alpha_min": -2.499,
+    "alpha_max": -1.001,
+    "step": 0.001,
+    "count": 1499
+  },
+  "shared_accepted_alpha_range": [
+    -1.912,
+    -1.352
+  ],
+  "endpoint_accepted_alpha_ranges": {
+    "conservative": [
+      -1.912,
+      -1.225
+    ],
+    "optimistic": [
+      -1.912,
+      -1.329
+    ]
+  },
+  "chosen": {
+    "best_shared": {
+      "alpha": -1.746,
+      "A": 22.276479418008666,
+      "score": 0.7415067302942498
+    },
+    "best_conservative": {
+      "alpha": -1.613,
+      "A": 18.87702526746246,
+      "score": 0.5904077476802408
+    },
+    "best_optimistic": {
+      "alpha": -1.727,
+      "A": 20.199766612408375,
+      "score": 0.7172292764195332
+    },
+    "alpha_minus_two": {
+      "alpha": -2.0,
+      "A": 40.61887096070255,
+      "score": 1.1818851251840943
+    },
+    "accepted_low_alpha": {
+      "alpha": -1.912,
+      "A": 34.13659683870899,
+      "score": 0.9987662105254389
+    },
+    "accepted_high_alpha": {
+      "alpha": -1.352,
+      "A": 4.65457898523884,
+      "score": 0.9996255323230858
+    }
+  },
+  "acceptance_neighbor_checks": [
+    {
+      "alpha": -1.913,
+      "A": 34.2115170118762,
+      "score": 1.0006312831881181,
+      "passes": false,
+      "classification": "fails",
+      "conservative_score": 1.0006312831881181,
+      "conservative_public_rate": 1.677899087381025,
+      "conservative_high_cadence_rate": 1.258584202111162,
+      "optimistic_score": 1.0006312831881181,
+      "optimistic_public_rate": 3.972717909229235,
+      "optimistic_high_cadence_rate": 1.4058304862779512,
+      "D_med_Gpc": 2.5211427174305356
+    },
+    {
+      "alpha": -1.912,
+      "A": 34.13659683870899,
+      "score": 0.9987662105254389,
+      "passes": true,
+      "classification": "passes_both_endpoints",
+      "conservative_score": 0.9987662105254389,
+      "conservative_public_rate": 1.681128914140137,
+      "conservative_high_cadence_rate": 1.2576071823517934,
+      "optimistic_score": 0.9987662105254389,
+      "optimistic_public_rate": 3.9758042655654444,
+      "optimistic_high_cadence_rate": 1.4045211123277936,
+      "D_med_Gpc": 2.523675486106454
+    },
+    {
+      "alpha": -1.911,
+      "A": 34.06167879267065,
+      "score": 0.9969056067383095,
+      "passes": true,
+      "classification": "passes_both_endpoints",
+      "conservative_score": 0.9969056067383095,
+      "conservative_public_rate": 1.6843644278764776,
+      "conservative_high_cadence_rate": 1.2566310239059246,
+      "optimistic_score": 0.9969056067383095,
+      "optimistic_public_rate": 3.9788926939418867,
+      "optimistic_high_cadence_rate": 1.4032131189950459,
+      "D_med_Gpc": 2.5262021860493755
+    },
+    {
+      "alpha": -1.353,
+      "A": 4.679550588541492,
+      "score": 0.9990177355397872,
+      "passes": true,
+      "classification": "passes_both_endpoints",
+      "conservative_score": 0.9990177355397868,
+      "conservative_public_rate": 4.551480517453359,
+      "conservative_high_cadence_rate": 0.8342330918955199,
+      "optimistic_score": 0.9990177355397872,
+      "optimistic_public_rate": 5.993528725453876,
+      "optimistic_high_cadence_rate": 0.8618016950670637,
+      "D_med_Gpc": 3.363461523679778
+    },
+    {
+      "alpha": -1.352,
+      "A": 4.65457898523884,
+      "score": 0.9996255323230858,
+      "passes": true,
+      "classification": "passes_both_endpoints",
+      "conservative_score": 0.9996255323230858,
+      "conservative_public_rate": 4.558662164246929,
+      "conservative_high_cadence_rate": 0.8336762328550081,
+      "optimistic_score": 0.9996255323230858,
+      "optimistic_public_rate": 5.997532138918003,
+      "optimistic_high_cadence_rate": 0.8611269637150707,
+      "D_med_Gpc": 3.3643469119790534
+    },
+    {
+      "alpha": -1.351,
+      "A": 4.629692846864185,
+      "score": 1.0002330241575905,
+      "passes": false,
+      "classification": "fails",
+      "conservative_score": 1.0002330241575905,
+      "conservative_public_rate": 4.5658506527459695,
+      "conservative_high_cadence_rate": 0.8331200246357819,
+      "optimistic_score": 1.0002330241575903,
+      "optimistic_public_rate": 6.001536215848211,
+      "optimistic_high_cadence_rate": 0.8604531508965569,
+      "D_med_Gpc": 3.3652309915914156
+    }
+  ],
+  "convergence_boundary_checks": [
+    {
+      "alpha": -2.499,
+      "A": 0.7909907884113159,
+      "score": 2.857142857142857,
+      "passes": false,
+      "classification": "fails",
+      "conservative_score": 2.857142857142857,
+      "conservative_public_rate": 0.9165413892625822,
+      "conservative_high_cadence_rate": 3.48801538382425,
+      "optimistic_score": 2.857142857142857,
+      "optimistic_public_rate": 4.364232807007508,
+      "optimistic_high_cadence_rate": 4.282372464996346,
+      "D_med_Gpc": 1.389996045339251e-150
+    },
+    {
+      "alpha": -1.001,
+      "A": 0.004750716916529615,
+      "score": 1.1913297876735822,
+      "passes": false,
+      "classification": "fails",
+      "conservative_score": 1.1913297876735822,
+      "conservative_public_rate": 7.398806307414242,
+      "conservative_high_cadence_rate": 0.6753536409938462,
+      "optimistic_score": 1.1913297876735822,
+      "optimistic_public_rate": 7.403528605608806,
+      "optimistic_high_cadence_rate": 0.6753991841491312,
+      "D_med_Gpc": 3.610780800960135
+    }
+  ],
+  "method": "Analytic luminosity-distance and shared-phase moment integrals; segmented Gauss angular quadrature",
+  "cut_timing": "Rise/fade temporal exponents are selected at the peak, exactly as in the unchanged engine",
+  "coverage": 0.35,
+  "targets": {
+    "public": {
+      "rate": 2.0,
+      "distance": 3.67
+    },
+    "high_cadence": {
+      "rate": 2.5,
+      "distance": 3.88
+    }
+  },
+  "physics": {
+    "p": 2.2,
+    "nu_log10": 14.7,
+    "E_kiso_log10": 53.0,
+    "n0_log10": 0.0,
+    "epsilon_e_log10": -1.0,
+    "epsilon_B_log10": -4.0,
+    "theta_j_rad": 0.1,
+    "gamma0_log10": 2.5,
+    "D_euc_gpc": 4.55,
+    "rho_grb_log10": 2.4149733479708178
+  },
+  "selection": {
+    "q_min": 0.0,
+    "D_min_cm": 0.0,
+    "s_fade": 0.3,
+    "s_rise": 0.5,
+    "s_mode": "discrete",
+    "rise_random_start": true,
+    "fade_random_start": true
+  },
+  "source_sha256": {
+    "analysis\\lf_rate_medians.py": "a7c3376c14b98b624bd57b3bd59f90a7d5d0b82da94d4d78ef762a57c70d1738",
+    "analysis\\ztf_validation.py": "ed1f4a63ba327d6457d059d71aa999476a48d275cd6f0f39c925fc4c2fb0fa87",
+    "standalone_bridge.py": "8cb14530702effd8d256c2c546baecbd163fd1290335aa0ec149d7a787637162",
+    "grb_detect\\detection_rate.py": "b061ac000d97234b2f8a65cb0a51f1c6735aaa0aecaad580c0bff2b45d59a557",
+    "analysis\\simplified_luminosity_function\\ztf.py": "488f066d60ad9b6feea201af74fc5ff62dcde27cec884c1b0156852a976a4fd4"
+  }
+}

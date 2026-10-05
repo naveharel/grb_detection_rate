@@ -21,10 +21,12 @@ from grb_detect.core import (
     _rate,
     compute_surface,
     make_rate_model,
+    make_finite_cutoff_rate_model,
     maximize_log_surface_iterative,
     optical_survey_tcad_seconds,
 )
 from grb_detect.survey import exposure_time_s
+from grb_detect.detection_rate import LuminosityFunction, PowerLawLuminosityFunction
 
 # ── Optional wall-clock profiling (opt-in via GRB_PROFILE=1) ─────────────────
 # Zero overhead when the env var is unset: the context manager yields
@@ -89,7 +91,7 @@ def _nan_to_none(x):
         return None
     try:
         f = float(x)
-        return None if (f != f) else f  # nan != nan is True
+        return f if math.isfinite(f) else None
     except (TypeError, ValueError):
         return None
 
@@ -97,7 +99,7 @@ def _nan_to_none(x):
 def _array_to_list(arr) -> list:
     """Flatten numpy array to list, replacing NaN with None."""
     flat = np.asarray(arr, dtype=float).ravel()
-    return [None if (v != v) else float(v) for v in flat.tolist()]
+    return [float(v) if math.isfinite(v) else None for v in flat.tolist()]
 
 
 # ── Regime-id helper ────────────────────────────────────────────────────────
@@ -371,6 +373,32 @@ def _build_day_line_arrays(
     q_med_flat = np.empty((n_days, n_N), dtype=float)
     D_med_Gpc_flat = np.empty((n_days, n_N), dtype=float)
 
+    if isinstance(model_day.lf, PowerLawLuminosityFunction):
+        # The unbounded LF has one normalized population per cadence. Batch
+        # the day overlays so all their medians are inverted together, rather
+        # than repeating the rectangle solver in a Python loop for each day.
+        N_flat[:] = N_cols[None, :]
+        t_grid = np.broadcast_to(day_vals[:, None] * DAY_S, N_flat.shape)
+        selection = dict(q_min=q_min, D_min_cm=D_min_cm, s_fade=s_fade,
+                         s_rise=s_rise, s_mode=s_mode,
+                         rise_random_start=rise_random_start,
+                         fade_random_start=fade_random_start)
+        log_rate = _rate(model_day, int(i_det), N_flat, t_grid,
+                         full_integral, **selection)
+        good = (np.isfinite(N_flat) & np.isfinite(log_rate)
+                & (log_rate >= ZMIN_DISPLAY_LOG10))
+        q_med, D_med = model_day.compute_medians(
+            int(i_det), N_flat, t_grid, full_integral=full_integral, **selection)
+        rid = _regime_ids_1d(
+            model_day, int(i_det), N_flat.ravel(), t_grid.ravel(),
+            q_min=q_min, D_min_cm=D_min_cm, s_fade=s_fade,
+            s_rise=s_rise, s_mode=s_mode).reshape(N_flat.shape)
+        return (day_vals, N_flat, np.where(good, 10.0 ** log_rate, np.nan),
+                np.where(good, rid, np.nan),
+                np.where(good, model_day.t_exp_s(N_flat, t_grid), np.nan),
+                np.where(good, q_med, np.nan),
+                np.where(good, D_med / GPC_TO_CM, np.nan))
+
     for i, n in enumerate(n_vals):
         t_s = float(n) * float(DAY_S)
         log10R = _rate(
@@ -442,7 +470,7 @@ def _apply_F_dec_override(model, F_dec_Jy: float):
 
 # ── Shared model builder (used by compute_all, compute_nslice, compute_tslice)
 
-def _build_models(params) -> dict:
+def _build_models(params, *, finite_cutoff_lf: LuminosityFunction | None = None) -> dict:
     """Parse params and instantiate model_day / model_night plus derived scalars.
 
     Returns a state dict with every value the main and slice entry points need
@@ -473,15 +501,11 @@ def _build_models(params) -> dict:
     win_iminus1  = bool(params.get("win_iminus1", True))
     win_tp       = bool(params.get("win_tp", False))
 
-    # Intrinsic luminosity function (off by default = the single-L model).
-    # L bounds are log10 νL_ν(1 day) [erg/s]; the UI enforces L_min ≤ L_max
-    # via a dynamic slider floor, but guard anyway (swap-free clamp).
+    # The app LF is an event-rate density in L_nu(t_dec), not a normalized
+    # intrinsic population. The optional typed cutoff LF is for research only.
     lf_on    = bool(params.get("lf_on", False))
     lf_alpha = float(params.get("lf_alpha", -2.0))
-    lf_lmin  = float(params.get("lf_lmin", 42.5))
-    lf_lmax  = float(params.get("lf_lmax", 45.5))
-    if lf_lmin > lf_lmax:
-        lf_lmin = lf_lmax
+    lf_log10_A = float(params.get("lf_log10_A", 0.0))
 
     physics_kw = dict(
         p=float(params["p"]),
@@ -506,17 +530,23 @@ def _build_models(params) -> dict:
     # via a dynamic t_night floor, but we still guard against a zero denominator.
     f_live_night = f_live / max(f_night, 1e-12)
 
-    lf_kw = dict(lf_on=lf_on, lf_alpha=lf_alpha,
-                 lf_log10_L_min=lf_lmin, lf_log10_L_max=lf_lmax)
+    factory = make_rate_model
+    lf_kw = dict(lf_on=lf_on, lf_alpha=lf_alpha, lf_log10_A=lf_log10_A)
+    if finite_cutoff_lf is not None:
+        factory = make_finite_cutoff_rate_model
+        lf_on = True
+        lf_kw = dict(lf_on=True, lf_alpha=finite_cutoff_lf.alpha,
+                     lf_log10_L_min=finite_cutoff_lf.log10_L_min,
+                     lf_log10_L_max=finite_cutoff_lf.log10_L_max)
 
-    model_day = make_rate_model(
+    model_day = factory(
         A_log=A_log, f_live=f_live, t_overhead_s=t_oh_model,
         omega_exp_deg2=omega_exp, design=design,
         win_i_minus_one=win_iminus1, win_from_peak=win_tp,
         **lf_kw, **physics_kw,
     )
     model_night = (
-        make_rate_model(
+        factory(
             A_log=A_log, f_live=f_live_night, t_overhead_s=t_oh_model,
             omega_exp_deg2=omega_exp, design=design,
             win_i_minus_one=win_iminus1, win_from_peak=win_tp,
@@ -528,7 +558,7 @@ def _build_models(params) -> dict:
     # TEMP-FDEC-OVERRIDE — begin
     _fdec_ov = params.get("F_dec_override_Jy", None)   # absent or JS null → None
     fdec_override_applied = False
-    if _fdec_ov is not None:
+    if _fdec_ov is not None and not lf_on:
         _fdec_ov = float(_fdec_ov)
         if math.isfinite(_fdec_ov) and _fdec_ov > 0.0:
             model_day = _apply_F_dec_override(model_day, _fdec_ov)
@@ -756,9 +786,8 @@ def _compute_qdview_sweep(
     f_live_validity = f_live_night if is_subday_optical else f_live_val
     # win_from_peak has no closed dominant-term curves (q-dependent D_eff) —
     # the R(q)/R(D) views fall back to the full-integral branch for it.  Same
-    # under the luminosity function: the dominant rectangle curves describe a
-    # single burst, while the LF views need the mixture (the full-integral
-    # dR/dq, dR/dD are LF-aware and exact at a single strategy point).
+    # for the finite-cutoff reference mixture. The scale-free app LF returns
+    # its own mode-consistent population below before entering this fallback.
     use_full = (
         full_on
         or bool(getattr(model, "win_from_peak", False))
@@ -774,9 +803,8 @@ def _compute_qdview_sweep(
 
     N_q_view = 150
     N_D_view = 100
-    # Log-spaced view grids match the log x-axes in the renderer. The lower
-    # bounds are well below any physically relevant q / D, so cumulative
-    # endpoints at the leftmost grid point are R_total to ≤ 1e-4 relative error.
+    # Display ranges are finite. A scale-free LF can put substantial mass
+    # below either lower endpoint, so it returns independently evaluated totals.
     q_grid     = np.logspace(
         math.log10(max(q_nr_val / 200.0, 1e-3)),
         math.log10(q_nr_val),
@@ -807,6 +835,8 @@ def _compute_qdview_sweep(
             "qdview_Dmin_Gpc_sidebar":  D_min_cm / GPC_TO_CM,
             "qdview_total_rate_q":      None,
             "qdview_total_rate_D":      None,
+            "qdview_q_below_plot_fraction": None,
+            "qdview_D_below_plot_fraction": None,
             "qdview_regime_id":         None,
             "qdview_N_fix":             N_exp_fix,
             "qdview_t_cad_fix_s":       t_cad_fix_s,
@@ -817,6 +847,44 @@ def _compute_qdview_sweep(
     if approx_on and t_overhead_s > 0:
         if f_live_validity * t_cad_fix_s / N_exp_fix <= t_overhead_s:
             return _empty_payload()
+
+    if isinstance(model.lf, PowerLawLuminosityFunction):
+        if not (math.isfinite(N_exp_fix) and N_exp_fix > 0
+                and math.isfinite(t_cad_fix_s) and t_cad_fix_s > 0):
+            return _empty_payload()
+        distribution = model.lf_distributions(
+            i_det, N_exp_fix, t_cad_fix_s,
+            full_integral=full_on, q_values=q_grid, D_values_cm=D_grid_cm,
+            q_min=q_min, D_min_cm=D_min_cm,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+            rise_random_start=rise_random_start,
+            fade_random_start=fade_random_start,
+        )
+        total = float(distribution["total_rate"]) * f_night_mul
+        if not math.isfinite(total) or total <= 0:
+            return _empty_payload()
+        q_survival = np.asarray(distribution["q_survival"]) * f_night_mul
+        D_survival = np.asarray(distribution["D_survival"]) * f_night_mul
+        rid = model.regime_id_lf(
+            i_det, np.array([N_exp_fix]), np.array([t_cad_fix_s]),
+            q_min=q_min, D_min_cm=D_min_cm,
+            s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+        )
+        payload = _empty_payload()
+        payload.update({
+            "qdview_Rq_cum_flat": _array_to_list(q_survival),
+            "qdview_Rq_diff_flat": _array_to_list(
+                np.asarray(distribution["dR_dq"]) * f_night_mul),
+            "qdview_RD_cum_flat": _array_to_list(D_survival),
+            "qdview_RD_diff_flat": _array_to_list(
+                np.asarray(distribution["dR_dD_per_cm"]) * GPC_TO_CM * f_night_mul),
+            "qdview_total_rate_q": total,
+            "qdview_total_rate_D": total,
+            "qdview_q_below_plot_fraction": float(np.clip(1.0 - q_survival[0] / total, 0, 1)),
+            "qdview_D_below_plot_fraction": float(np.clip(1.0 - D_survival[0] / total, 0, 1)),
+            "qdview_regime_id": _nan_to_none(np.asarray(rid).ravel()[0]),
+        })
+        return payload
 
     # rate_log10 with return_components gives us the active regime + the scalars
     # needed for the dominant-term R(q)/R(D) closed forms (q_E, q_i, D_dec, D_i, fO).
@@ -1243,14 +1311,11 @@ def compute_all(params) -> dict:
         t_dec_s_val  = float(model_day.derived.t_dec_s)
         F_nu_tdec_Jy = float(model_day.derived.F_dec_Jy)
 
-        # ── Luminosity-function echoes ───────────────────────────────────────
-        # L0 = fiducial νL_ν(1 day) (shown as a derived row under the LF
-        # sliders); population median of φ when the LF is on.
-        L0_erg_s_val = float(model_day.L0_erg_s())
-        lf_L_med_pop = (
-            10.0 ** float(model_day.lf.median_log10_L())
-            if model_day.lf is not None else None
-        )
+        # An unbounded LF has no finite intrinsic total or population median.
+        # Do not expose the inactive single-burst amplitude as an LF parameter.
+        lf_applied = isinstance(model_day.lf, PowerLawLuminosityFunction)
+        if lf_applied:
+            R_int_yr = R_toward_day = F_nu_tdec_Jy = None
 
         zmax_log10 = float(np.nanmax(Z_plot)) if np.any(np.isfinite(Z_plot)) else 0.0
         R_surface_max = float(np.nanmax(R_lin)) if np.any(np.isfinite(R_lin)) else 0.0
@@ -1340,13 +1405,12 @@ def compute_all(params) -> dict:
             "D_med_Gpc_ztf_hc":   _nan_to_none(D_med_Gpc_ztf_hc),
             "zmax_log10":   zmax_log10,
             "R_surface_max": R_surface_max,
-            "R_int_yr":     float(R_int_yr),
-            "R_toward_day": float(R_toward_day),
+            "R_int_yr":     _nan_to_none(R_int_yr),
+            "R_toward_day": _nan_to_none(R_toward_day),
             "t_dec_s":      t_dec_s_val,
             "F_nu_tdec_Jy": F_nu_tdec_Jy,
             "lf_applied":   bool(state["lf_on"]),
-            "L0_erg_s":     L0_erg_s_val,
-            "lf_L_med_pop_erg_s": lf_L_med_pop,
+            "lf_L_ref_erg_s_Hz": model_day.lf.L_ref if lf_applied else None,
             "F_dec_override_applied": bool(state["fdec_override_applied"]),  # TEMP-FDEC-OVERRIDE
             "N_exp_max":    float(N_exp_max),
             "gap_lo_h":     _nan_to_none(gap_lo_h) if gap_lo_h is not None else None,

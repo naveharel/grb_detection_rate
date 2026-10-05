@@ -17,7 +17,7 @@ from functools import lru_cache
 import numpy as np
 
 from .constants import DAY_S, DEG2_TO_SR
-from .detection_rate import DetectionRateModel, LuminosityFunction
+from .detection_rate import DetectionRateModel, LuminosityFunction, PowerLawLuminosityFunction
 from .params import (
     AfterglowPhysicalParams,
     CM_TO_GPC,
@@ -58,8 +58,8 @@ def _make_rate_model_cached(
     win_from_peak: bool,
     lf_on: bool,
     lf_alpha: float,
-    lf_log10_L_min: float,
-    lf_log10_L_max: float,
+    lf_log10_A: float,
+    finite_bounds: tuple[float, float] | None,
 ) -> DetectionRateModel:
     """Cached model construction — called only when parameters change."""
     p_val      = float(p)
@@ -100,14 +100,12 @@ def _make_rate_model_cached(
         telescope=telescope,
         design=SurveyDesignParams(omega_survey_max_sr=float(omega_survey_max_sr)),
     )
-    lf = (
-        LuminosityFunction(
-            alpha=float(lf_alpha),
-            log10_L_min=float(lf_log10_L_min),
-            log10_L_max=float(lf_log10_L_max),
-        )
-        if lf_on else None
-    )
+    if not lf_on:
+        lf = None
+    elif finite_bounds is not None:
+        lf = LuminosityFunction(float(lf_alpha), *finite_bounds)
+    else:
+        lf = PowerLawLuminosityFunction(float(lf_alpha), float(lf_log10_A))
     return DetectionRateModel(
         phys=phys, instrument=instrument, micro=micro,
         win_i_minus_one=bool(win_i_minus_one),
@@ -116,7 +114,7 @@ def _make_rate_model_cached(
     )
 
 
-def make_rate_model(
+def _construct_rate_model(
     *,
     A_log: float,
     f_live: float,
@@ -137,12 +135,12 @@ def make_rate_model(
     # Detection-window settings (see DetectionRateModel docstring)
     win_i_minus_one: bool = False,
     win_from_peak: bool = False,
-    # Intrinsic luminosity function (see LuminosityFunction): off by default —
-    # the legacy single-luminosity model.  L bounds are log10 νL_ν(1 d) [erg/s].
+    # Unbounded luminosity-rate intensity, off by default. The explicit
+    # reference constructor supplies finite_bounds for historical analyses.
     lf_on: bool = False,
     lf_alpha: float = -2.0,
-    lf_log10_L_min: float = 42.5,
-    lf_log10_L_max: float = 45.5,
+    lf_log10_A: float = 0.0,
+    finite_bounds: tuple[float, float] | None = None,
 ) -> DetectionRateModel:
     """Construct a rate model from the survey parameters exposed in the UI.
 
@@ -181,9 +179,33 @@ def make_rate_model(
         bool(win_from_peak),
         bool(lf_on),
         _r(lf_alpha),
-        _r(lf_log10_L_min),
-        _r(lf_log10_L_max),
+        _r(lf_log10_A),
+        finite_bounds,
     )
+
+
+def make_rate_model(*, lf_on=False, lf_alpha=-2.0, lf_log10_A=0.0, **kwargs):
+    """Build the app model; LF on selects the unbounded luminosity-rate law.
+
+    A is independent of rho and refers to L_nu(t_dec)=1e32 erg/s/Hz.
+    Finite luminosity bounds belong only to make_finite_cutoff_rate_model.
+    """
+    if "finite_bounds" in kwargs:
+        raise TypeError("Use make_finite_cutoff_rate_model for bounded reference calculations")
+    return _construct_rate_model(lf_on=lf_on, lf_alpha=lf_alpha,
+                                 lf_log10_A=lf_log10_A, **kwargs)
+
+
+def make_finite_cutoff_rate_model(*, lf_on=True, lf_alpha=-2.0,
+                                 lf_log10_L_min=42.5, lf_log10_L_max=45.5, **kwargs):
+    """Explicit historical bounded-LF reference, L=nu L_nu(1 day) in erg/s.
+
+    Its normalized LF retains the original finite intrinsic rate rho. To
+    compare fixed differential amplitudes, convert spectral luminosity bounds
+    and set rho to the integral of the desired intensity over those bounds.
+    """
+    return _construct_rate_model(lf_on=lf_on, lf_alpha=lf_alpha,
+        finite_bounds=(float(lf_log10_L_min),float(lf_log10_L_max)), **kwargs)
 
 
 def _is_integer_day_multiple(t_s: np.ndarray, *, tol: float = 1e-12) -> np.ndarray:

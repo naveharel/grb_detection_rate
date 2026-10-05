@@ -1,0 +1,77 @@
+
+\subsection{Shared calibration and results}
+The scan contains 1,499 slopes from $-2.499$ to $-1.001$
+at spacing 0.001. Its best shared compromise is
+\begin{equation}
+\boxed{\alpha=-1.746,\qquad
+\mathcal A=22.27648\,\mathrm{Gpc^{-3}\,yr^{-1}}.}
+\end{equation}
+The minimized joint score is 0.741507, below the acceptance value one.
+The common median distance is $2.873356$ Gpc, respectively $21.71\%$
+and $25.94\%$ below the public and high-cadence proxies. Rate discrepancies
+remain as large as a factor $2.258$; passing the loose benchmark is not agreement
+with its central values.
+\begin{table}[H]\centering\small
+\renewcommand{\arraystretch}{1.15}
+\caption{Shared-LF rates. Raw rates include the optical-night convention; effective rates additionally include coverage 0.35. Rates are in $\mathrm{yr^{-1}}$.}
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+Survey & Window & Raw & Effective & Rate/target & $q_{\rm med}$ \\\midrule
+Public & Conservative & 6.576 & 2.302 & 1.151 & 1.4027 \\
+High cadence & Conservative & 3.163 & 1.107 & 0.443 & 1.2832 \\
+Public & Optimistic & 12.905 & 4.517 & 2.258 & 1.3144 \\
+High cadence & Optimistic & 3.444 & 1.206 & 0.482 & 1.2586 \\
+\bottomrule\end{tabular}\end{table}
+\begin{table}[H]\centering\small
+\renewcommand{\arraystretch}{1.15}
+\caption{Viewing-angle diagnostics of the same shared model. Physical angles are in degrees; geometrical on-axis means $q<1$.}
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+Survey & Window & $\theta_{\rm med}$ & $q<1$ & $q<1.5$ & $q>2$ \\\midrule
+Public & Conservative & 8.037 & 25.71\% & 56.52\% & 24.14\% \\
+High cadence & Conservative & 7.352 & 30.77\% & 64.38\% & 12.48\% \\
+Public & Optimistic & 7.531 & 29.11\% & 63.78\% & 15.11\% \\
+High cadence & Optimistic & 7.212 & 31.94\% & 66.10\% & 11.78\% \\
+\bottomrule\end{tabular}\end{table}
+\begin{table}[H]\centering\small
+\renewcommand{\arraystretch}{1.15}
+\caption{Detected luminosity medians, with the two luminosity definitions kept explicit.}
+\begin{tabular}{@{}llrr@{}}
+\toprule
+Survey & Window & $L_\nu(t_{\rm dec})$ [erg s$^{-1}$ Hz$^{-1}$] & $\nu L_\nu(1\,\mathrm{d})$ [erg s$^{-1}$] \\\midrule
+Public & Conservative & $1.13\times10^{34}$ & $2.95\times10^{45}$ \\
+High cadence & Conservative & $7.57\times10^{32}$ & $1.97\times10^{44}$ \\
+Public & Optimistic & $3.63\times10^{33}$ & $9.46\times10^{44}$ \\
+High cadence & Optimistic & $6.49\times10^{32}$ & $1.69\times10^{44}$ \\
+\bottomrule\end{tabular}\end{table}
+
+The public-mode luminosity median is substantially higher than the high-cadence
+one even though their distance medians are identical: the longer time between
+required public visits selects intrinsically brighter afterglows. These
+luminosity medians are predictions, not additional calibration targets.
+All four detected means diverge in the ideal model at the selected slope;
+the quoted medians remain finite.
+
+\subsection{Accepted slopes, endpoint alternatives, and coverage}
+At 0.001 resolution, shared calibrated slopes $-1.912\le\alpha\le-1.352$ pass both endpoints. Neighboring slopes $-1.913$ and $-1.351$ fail. This is a tolerance-defined feasible interval, not a confidence interval. The lower boundary follows the analytic distance constraint; the upper boundary comes from incompatible rate ratios. The $\alpha=-2$ model fails because its common median is only 2.275 Gpc, regardless of amplitude.
+\begin{table}[H]\centering\small
+\renewcommand{\arraystretch}{1.15}
+\caption{Endpoint-specific fits use their own shared two-survey amplitude; they are separate alternatives, not a replacement of the four-case calibration. $\mathcal A$ has units $\mathrm{Gpc^{-3}\,yr^{-1}}$.}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Calibration target & $\alpha$ & $\mathcal A$ & $D_{\rm med}$ [Gpc] & Target score \\\midrule
+Both endpoints & -1.746 & 22.2765 & 2.8734 & 0.74151 \\
+Conservative only & -1.613 & 18.8770 & 3.0784 & 0.59041 \\
+Optimistic only & -1.727 & 20.1998 & 2.9060 & 0.71723 \\
+\bottomrule\end{tabular}\end{table}
+\begin{table}[H]\centering\small
+\renewcommand{\arraystretch}{1.15}
+\caption{Coverage sensitivity at the selected, fixed $\mathcal A$ and $\alpha$. C/O denote conservative/optimistic windows; rates are effective $\mathrm{yr^{-1}}$.}
+\begin{tabular}{@{}rrrrrl@{}}
+\toprule
+Coverage & Public C & HC C & Public O & HC O & Passing endpoints \\\midrule
+0.2 & 1.315 & 0.633 & 2.581 & 0.689 & Neither \\
+0.35 & 2.302 & 1.107 & 4.517 & 1.206 & Both \\
+0.5 & 3.288 & 1.581 & 6.452 & 1.722 & Conservative \\
+\bottomrule\end{tabular}\end{table}
+

@@ -1,0 +1,122 @@
+{
+  "revision_date": "2026-10-04",
+  "created_utc": "2026-10-04T18:11:44.331089+00:00",
+  "scope": "User-requested pedagogical rewrite, with project physical-luminosity notation and general analytical exploration; numerical study retained as supporting files.",
+  "report": {
+    "path": "docs/simplified_luminosity_function.pdf",
+    "pages": 17,
+    "sha256": "5dc6f27a3116d78a60d230c419fa7c2023ac8526bc726c4eff55bd4d4d361b42",
+    "tables": 1,
+    "figures": 2
+  },
+  "notation": "Physical L_Euc(q), L_dec, L_j, L_nr, L_i, q_Euc and q_i from project/previous LF; no G, J_alpha, I_m or shortened exponents in exposition.",
+  "test_command": ".venv/Scripts/python.exe -B -m pytest analysis/simplified_luminosity_function/test_theory.py analysis/simplified_luminosity_function/test_ztf.py analysis/simplified_luminosity_function/test_pedagogical_equations.py -p no:cacheprovider -q",
+  "tests": {
+    "passed": 48,
+    "failed": 0,
+    "seconds": 1.9,
+    "log": "results/pedagogical_tests.txt",
+    "new_independent_groups": 5,
+    "coverage": [
+      "expanded physical-threshold angular equations and logarithmic limits",
+      "bounded-LF flux-response identity",
+      "conditional medians",
+      "global accessible-angle expression and CDF derivatives",
+      "global phase-III intermediate luminosity slope"
+    ]
+  },
+  "initial_collection_issue": "Directory-wide pytest collected the pre-existing UTF-16 results/tests.txt as a doctest. Explicit Python test paths avoid that unrelated console log. Original log preserved.",
+  "original_engine_verification": "The 2026-10-01 finite-cutoff engine results were retained, not recomputed; inputs and original result hashes were verified unchanged. See results/ztf_verification.json and results/validation.json.",
+  "protected_files": {
+    "count": 37,
+    "all_unchanged": true,
+    "sha256": {
+      "grb_detect\\afterglow_ism.py": "53185316152d8350a241f5589de62d627f3c7dfdee1cc13dbe654df25d48890c",
+      "grb_detect\\constants.py": "dbf92389837d51327d6f18ad0c818ac220eabc2e592c19240b291a2b4d48a1fd",
+      "grb_detect\\core.py": "49253a15324668e5b2b831945c2795c955317316c49f42ed6d6640e1d85f2b93",
+      "grb_detect\\detection_rate.py": "b061ac000d97234b2f8a65cb0a51f1c6735aaa0aecaad580c0bff2b45d59a557",
+      "grb_detect\\params.py": "a65a9f370c951e318a348e3ff4d3ba3d045587e9a390e2e5b83e0815b32fc416",
+      "grb_detect\\pls.py": "be97dff6f03e2d3f8b496dba120e9872571c74f8855faedc37a018841cb71b07",
+      "grb_detect\\survey.py": "47c95df6c7e744afe9ac9f4d5d6c921705685969b7359e9f1ba008c80869252a",
+      "grb_detect\\__init__.py": "581253f3bcb0883be127c4d586586cb45d99e5d56eac7c7c288674eb585c1b11",
+      "standalone_bridge.py": "8cb14530702effd8d256c2c546baecbd163fd1290335aa0ec149d7a787637162",
+      "build_standalone.py": "2c5590f94b238d56da807a2ec00027cd579a004fb8096cc0702861a60f6c265c",
+      "grb_detection_rate.html": "200b3c09ab7699db7bdc04e35f7128c1afd0fc00e4fb17ddef6e06047fe2d02f",
+      "web\\app.js": "ab6ce214f0e28b8ecbbd6fc32735700ebc7e1d852b7c74d306c9749f00a66f7d",
+      "web\\template.html": "c07c4199ed36b3c63994c3502f7a2ccf31692b690582fbf94ba81a77bb1990a0",
+      "web\\styles.css": "f529ade986af82673301ed4fb670b56dd70476dbcc4054cbf329e78612483c78",
+      "docs\\luminosity_function_derivation.tex": "58584ac49a9843fd2b46b2495f51b6ad6110ae45db31bcb39b2085ee46a7faf3",
+      "docs\\luminosity_function_derivation.pdf": "680baba70f437699a5fdaad508148b6cc3e229778bc010cab08ec405c8aab459",
+      "analysis\\simplified_luminosity_function\\build_figures.py": "9ee4bd9096104ccaba3edc5c46ada942ae3e0b944094e66e6c87391a43b08390",
+      "analysis\\simplified_luminosity_function\\build_tables.py": "f6f45f62af167ab760ba70eaed0872b922f7aa38eb980ef4797fe5c69b83b192",
+      "analysis\\simplified_luminosity_function\\render_report.py": "bff8ff829c14befd455e02309f77ea8d5f6aeeb804710edcb05dd482530088e9",
+      "analysis\\simplified_luminosity_function\\test_theory.py": "4a1b32149893d5b0c60897e7abe14320d4f83c27541755487ed9519a9a026fba",
+      "analysis\\simplified_luminosity_function\\test_ztf.py": "e3e8d79c794b008655818f6e2738d39df92163b83b06ccde7cfb7aa978efac8c",
+      "analysis\\simplified_luminosity_function\\theory.py": "b4c3a179cce20bd64cdf32eadf1bab35e122e8028e5427cdf7aedea74ea4f0bb",
+      "analysis\\simplified_luminosity_function\\theory_results.py": "9794572ff5b3d772dadcf1f418f719938abaffaaf9af3a22fe51d51fc5838082",
+      "analysis\\simplified_luminosity_function\\ztf.py": "488f066d60ad9b6feea201af74fc5ff62dcde27cec884c1b0156852a976a4fd4",
+      "analysis\\simplified_luminosity_function\\results\\theory_boundaries.csv": "2c373e5a08112638fe5b821cdc02f33f201fd7d058150e5bacb9d2e72c4cb2e2",
+      "analysis\\simplified_luminosity_function\\results\\theory_cases.csv": "0eba211ae57e2592482b09f549400af26295deddd6c0d93de3e892ccd066ed45",
+      "analysis\\simplified_luminosity_function\\results\\theory_resolution.csv": "d843f3f546fa4f887a07efbbc35e6334c01133c3bbb8a9c8d5ff6c427f7ba9a0",
+      "analysis\\simplified_luminosity_function\\results\\theory_truncation.csv": "f631065d98a63a1e4a7516c9e94e2dfca70b3d38a4e9e5fc5430b33f03911549",
+      "analysis\\simplified_luminosity_function\\results\\ztf_endpoint_scans.csv": "8eb39924fb2f10d72636394d8a51065b4a9cfdfd269e82060607f635233fb752",
+      "analysis\\simplified_luminosity_function\\results\\ztf_highlights.csv": "0a5619b6001edc3108373b5dd64855cfcbc5c7f1aae7f86c27eb9d1d9b9f598a",
+      "analysis\\simplified_luminosity_function\\results\\ztf_scan.csv": "5513c38bfbf6de8383be3b3e0ec8a37aef93844695151c51e5cb7af32bc77da7",
+      "analysis\\simplified_luminosity_function\\results\\figure_rendering.json": "09407eb9a75c84d2a2cc3e75f30d90424b2903f1278a8d7ded57d7647af996a0",
+      "analysis\\simplified_luminosity_function\\results\\theory.json": "46d91df36994c7bee28045d20298278c8c043fb384ab6879d413e4ad8009e943",
+      "analysis\\simplified_luminosity_function\\results\\validation.json": "e576e89bfbcba17b1151b55239f51482e32229d11cc31f9d8d32a7edea84a51e",
+      "analysis\\simplified_luminosity_function\\results\\ztf_highlights.json": "edc4dd043a096683dcbe5cbe40a26a5da80bcff65448527028ff5d0811614d4d",
+      "analysis\\simplified_luminosity_function\\results\\ztf_summary.json": "68c1d064267effe24395d23bb1ff9396bc5a9493a29542e41bcf2c5d313639d7",
+      "analysis\\simplified_luminosity_function\\results\\ztf_verification.json": "9c2afed2e0f22983930616d6bd7400ee79235b237e06879979f792861d81dbb8"
+    }
+  },
+  "source_and_figure_sha256": {
+    "docs/simplified_luminosity_function.tex": "bc9989b4f6de928e990660ab1bbe6ce133b77f56ccad6978c773f221e360525d",
+    "analysis/simplified_luminosity_function/build_pedagogical_figures.py": "3cc811cfa0274e8fd38205733fbb213c66a65ba42cded89edc20b966b8f13834",
+    "analysis/simplified_luminosity_function/test_pedagogical_equations.py": "da9c683776a27fdbc09f89908fca1b040c842dd90d28532145fade3b44a71bc7",
+    "analysis/simplified_luminosity_function/results/figures/pedagogical_distributions.pdf": "9e83e6053d68cfe36cae4c0c81597c912031b974cda98c46a5da025f60f7ca09",
+    "analysis/simplified_luminosity_function/results/figures/pedagogical_distributions.png": "7f5cd44a1bfb5f2173f1656b30b92f15d07240dc9e44239dfd40b088f83a5cea",
+    "analysis/simplified_luminosity_function/results/figures/pedagogical_cadence.pdf": "d080fc6c152e5da40459b47901ed450ee9ee5e8f66a3b0c6dbdaa21295d7fc2b",
+    "analysis/simplified_luminosity_function/results/figures/pedagogical_cadence.png": "d92cb94bb0dbe96badbd60397c685fe4282aad4635fac45c7dd78a912fcb856c"
+  },
+  "typesetting": {
+    "compiler": "Tectonic 0.17.0",
+    "renderer": "pypdfium2 5.13.0",
+    "figure_text": "LaTeX using installed MiKTeX latex and dvipng",
+    "overfull_boxes": 0,
+    "underfull_boxes": 0,
+    "undefined_references": 0,
+    "duplicate_destinations": 0,
+    "note": "Fontconfig emitted a default-config notice; complete rendered document and figures passed visual review."
+  },
+  "visual_inspection": {
+    "all_pages_pass": true,
+    "pages": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17
+    ],
+    "reviewers": {
+      "powerlaw_physics": "Pages 1-5 unchanged since earlier complete inspection; final pages 6-10 individually inspected",
+      "source_corner": "Final pages 11-17 individually inspected",
+      "root": "Contact sheets, final full-size pages 6,16,17, and both standalone figure PNGs",
+      "toolchain": "Both new figure PNGs individually inspected"
+    },
+    "all_figures_pass": true
+  },
+  "limitations": "No app integration, population calibration, or full repository test-suite run was performed for this report-only revision."
+}

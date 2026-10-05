@@ -1,4 +1,4 @@
-"""Engine tests for the intrinsic luminosity function (LF).
+"""Reference-only tests for the bounded intrinsic luminosity function (LF).
 
 The LF replaces the single-luminosity assumption with a truncated power law
 φ(L) ∝ L^α on [L_min, L_max], L ≡ νL_ν(1 day).  Everything below leans on the
@@ -25,7 +25,7 @@ import numpy as np
 import pytest
 
 import grb_detect.detection_rate as dr
-from grb_detect.core import make_rate_model
+from grb_detect.core import make_rate_model, make_finite_cutoff_rate_model
 from grb_detect.detection_rate import _pow_bracket
 
 BASE = dict(A_log=-4.68, f_live=0.1, t_overhead_s=0.0, omega_exp_deg2=47.0)
@@ -136,7 +136,7 @@ def test_lf_rate_matches_reference(full, alpha):
     """
     for lmin, lmax in [(42.5, 45.5), (41.0, 47.0)]:
         for kw in FILTER_CASES:
-            m_on = make_rate_model(**BASE, lf_on=True, lf_alpha=alpha,
+            m_on = make_finite_cutoff_rate_model(**BASE, lf_on=True, lf_alpha=alpha,
                                    lf_log10_L_min=lmin, lf_log10_L_max=lmax)
             m_off = make_rate_model(**BASE)
             lr = (m_on.rate_log10_full_integral(2, N_PTS, T_PTS, **kw) if full
@@ -152,7 +152,7 @@ def test_lf_rate_window_flags_match_reference():
     """win_i_minus_one / win_from_peak compose with the LF."""
     for flags in [dict(win_i_minus_one=True), dict(win_from_peak=True),
                   dict(win_i_minus_one=True, win_from_peak=True)]:
-        m_on = make_rate_model(**BASE, **flags, **LF_DEFAULT)
+        m_on = make_finite_cutoff_rate_model(**BASE, **flags, **LF_DEFAULT)
         m_off = make_rate_model(**BASE, **flags)
         # win_from_peak routes rate_log10 through the full integral internally.
         got = _lin(m_on.rate_log10(2, N_PTS, T_PTS, s_rise=0.3, s_fade=0.3))
@@ -167,7 +167,7 @@ def test_lf_hard_boundary_flags_match_reference():
     """rise/fade random-start=False variants stay exact under the LF."""
     kw = dict(s_rise=0.4, s_fade=0.4)
     for rs, fs in [(False, True), (True, False), (False, False)]:
-        m_on = make_rate_model(**BASE, **LF_DEFAULT)
+        m_on = make_finite_cutoff_rate_model(**BASE, **LF_DEFAULT)
         m_off = make_rate_model(**BASE)
         got = _lin(m_on.rate_log10_full_integral(
             2, N_PTS, T_PTS, rise_random_start=rs, fade_random_start=fs, **kw))
@@ -193,7 +193,7 @@ def test_degenerate_limit_reproduces_single_L(physics):
     """L_min = L_max = log10 L0 reproduces the legacy single-L rate exactly."""
     m_off = make_rate_model(**BASE, **physics)
     lL0 = np.log10(m_off.L0_erg_s())
-    m_deg = make_rate_model(**BASE, **physics, lf_on=True, lf_alpha=-2.0,
+    m_deg = make_finite_cutoff_rate_model(**BASE, **physics, lf_on=True, lf_alpha=-2.0,
                             lf_log10_L_min=lL0, lf_log10_L_max=lL0)
     for full in (False, True):
         for kw in [dict(), dict(s_fade=0.3, s_rise=0.3, q_min=1.5)]:
@@ -206,7 +206,7 @@ def test_degenerate_limit_reproduces_single_L(physics):
 def test_narrow_bracket_converges_to_single_L():
     m_off = make_rate_model(**BASE)
     lL0 = np.log10(m_off.L0_erg_s())
-    m_nar = make_rate_model(**BASE, lf_on=True, lf_alpha=-2.0,
+    m_nar = make_finite_cutoff_rate_model(**BASE, lf_on=True, lf_alpha=-2.0,
                             lf_log10_L_min=lL0 - 0.01, lf_log10_L_max=lL0 + 0.01)
     got = _lin(m_nar.rate_log10(2, N_PTS, T_PTS))
     want = _lin(m_off.rate_log10(2, N_PTS, T_PTS))
@@ -217,7 +217,7 @@ def test_fdec_override_is_noop_under_lf():
     """s-bounds are computed lazily from the derived scales, so a copy-on-write
     F_dec override rescales F_dec,0 and L0 together — the LF-on rate is
     invariant (per-burst flux depends on L alone)."""
-    m = make_rate_model(**BASE, **LF_DEFAULT)
+    m = make_finite_cutoff_rate_model(**BASE, **LF_DEFAULT)
     m_ov = m._lf_scaled_copy(7.3)          # the override mechanism, k = 7.3
     m_ov.lf = m.lf                          # keep the LF on the copy
     for full in (False, True):
@@ -235,14 +235,14 @@ def test_monotone_in_L_bounds():
     kwargs = dict(**BASE, lf_on=True, lf_alpha=-2.0)
     prev = None
     for lmax in (43.5, 45.5, 47.0):
-        m = make_rate_model(**kwargs, lf_log10_L_min=42.5, lf_log10_L_max=lmax)
+        m = make_finite_cutoff_rate_model(**kwargs, lf_log10_L_min=42.5, lf_log10_L_max=lmax)
         R = _lin(m.rate_log10(2, N_PTS, T_PTS))
         if prev is not None:
             assert np.all(R >= prev * (1 - 1e-12))
         prev = R
     prev = None
     for lmin in (41.0, 42.5, 44.0):
-        m = make_rate_model(**kwargs, lf_log10_L_min=lmin, lf_log10_L_max=45.5)
+        m = make_finite_cutoff_rate_model(**kwargs, lf_log10_L_min=lmin, lf_log10_L_max=45.5)
         R = _lin(m.rate_log10(2, N_PTS, T_PTS))
         if prev is not None:
             assert np.all(R >= prev * (1 - 1e-12))
@@ -280,7 +280,7 @@ def _median_from_pdf(x, pdf):
 @pytest.mark.parametrize("kw", [dict(), dict(s_fade=0.3, s_rise=0.3)],
                          ids=["plain", "cuts"])
 def test_lf_mixture_medians_match_stacked_reference(kw):
-    m_on = make_rate_model(**BASE, **LF_DEFAULT)
+    m_on = make_finite_cutoff_rate_model(**BASE, **LF_DEFAULT)
     m_off = make_rate_model(**BASE)
     for Nv, tv in [(585.0, 8.64e4), (100.0, 1e5), (585.0, 1e3)]:
         q_med, D_med_cm = m_on.compute_medians(
@@ -300,7 +300,7 @@ def test_lf_mixture_medians_match_stacked_reference(kw):
                          ids=["plain", "cuts"])
 def test_lf_dR_views_match_stacked_reference(kw):
     """dR/dq and dR/dD under the LF equal the φ-weighted stacked per-s views."""
-    m_on = make_rate_model(**BASE, **LF_DEFAULT)
+    m_on = make_finite_cutoff_rate_model(**BASE, **LF_DEFAULT)
     m_off = make_rate_model(**BASE)
     Nv, tv = 585.0, 8.64e4
     q_grid, dq_ref, D_grid, dd_ref = _ref_marginals(
@@ -321,7 +321,7 @@ def test_lf_dR_views_match_stacked_reference(kw):
 
 def test_lf_regime_ids_match_reference():
     """Dominant-contribution regime = argmax of per-s φ-weighted contributions."""
-    m_on = make_rate_model(**BASE, **LF_DEFAULT)
+    m_on = make_finite_cutoff_rate_model(**BASE, **LF_DEFAULT)
     m_off = make_rate_model(**BASE)
     L0 = m_off.L0_erg_s()
     s1, s2 = 10.0 ** 42.5 / L0, 10.0 ** 45.5 / L0
@@ -356,7 +356,7 @@ def test_lf_regime_ids_match_reference():
 @pytest.mark.parametrize("kw", [dict(), dict(s_rise=0.4, s_fade=0.3)],
                          ids=["plain", "rise"])
 def test_lf_chunked_equals_unchunked(kw, monkeypatch):
-    m = make_rate_model(**BASE, **LF_DEFAULT)
+    m = make_finite_cutoff_rate_model(**BASE, **LF_DEFAULT)
     big = m.rate_log10_full_integral(2, N_PTS, T_PTS, **kw)
     monkeypatch.setattr(dr, "_FULL_INTEGRAL_CHUNK_ELEMS", 64)
     small = m.rate_log10_full_integral(2, N_PTS, T_PTS, **kw)

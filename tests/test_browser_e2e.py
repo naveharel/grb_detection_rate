@@ -219,61 +219,63 @@ def test_toggling_exact_mode_never_shows_red_error(page, preset):
 
 
 def test_lf_toggle_end_to_end(page):
-    """The luminosity-function user flow: the toggle ships OFF; switching it
-    on reveals the (α, L_min, L_max) block, recomputes clean, populates the
-    L0/L_med derived rows and dims the rate-inert normalization controls;
-    pushing L_min above L_max clamps L_max via the dynamic floor; switching
-    back off recomputes clean and hides the block again."""
+    """Scale-free controls, real disabling, exact selection, and value restoration."""
     open_accordion(page, "Parameters")
-    box = page.locator("#lf-switch")
-    assert not box.is_checked(), "LF must ship unchecked (single-L default)"
+    assert not page.locator("#lf-switch").is_checked()
     assert not page.locator("#lf-block").is_visible()
+
+    saved_values = dict(rho_grb_log=123, nu_log=14.8, epse=-1.3, epsB=-3.5,
+                        fdec_log=-1.2)
+    for name, value in saved_values.items():
+        set_number_input(page, name, value)
+    before = {name: page.locator(f"#{name}_input").input_value()
+              for name in saved_values}
 
     toggle_switch(page, "lf-switch", checked=True)
-    assert not status_is_error(page), (
-        f"error after enabling the LF: {_status_text(page)}")
-    assert box.is_checked()
-    assert page.locator("#lf-block").is_visible()
-
-    # Derived rows populate from the payload echoes (L0 always; L_med when on).
-    assert "10^" in page.locator("#lf-l0-display").inner_text()
-    assert "10^" in page.locator("#lf-lmed-display").inner_text()
-
-    for selector in ('label[for="lf_lmin_slider"]',
-                     'label[for="lf_lmax_slider"]',
-                     '#lf-l0-display', '#lf-lmed-display'):
-        assert "(1 day)" in page.locator(selector).inner_text()
-
-    # Moving the jet break before one day updates the fiducial luminosity,
-    # while the user's absolute one-day LF cutoffs and median stay fixed.
-    l0_before = page.locator("#lf-l0-display").inner_text()
-    lmed_before = page.locator("#lf-lmed-display").inner_text()
-    set_number_input(page, "thetaj", 0.05)
     assert not status_is_error(page), _status_text(page)
-    assert page.locator("#lf-l0-display").inner_text() != l0_before
-    assert page.locator("#lf-lmed-display").inner_text() == lmed_before
-    assert float(page.locator("#lf_lmin_slider").input_value()) == 42.5
-    assert float(page.locator("#lf_lmax_slider").input_value()) == 45.5
-    set_number_input(page, "thetaj", 0.1)
-    assert page.locator("#lf-l0-display").inner_text() == l0_before
+    assert page.locator("#lf-block").is_visible()
+    for removed in ("lf_lmin_slider", "lf_lmax_slider", "lf-l0-display", "lf-lmed-display"):
+        assert page.locator(f"#{removed}").count() == 0
+    for name, lower, upper, step, default in (
+            ("lf_alpha", -2.49, -1.01, 0.001, -2),
+            ("lf_norm_log", -3, 3, 0.05, 0)):
+        slider = page.locator(f"#{name}_slider")
+        assert float(slider.get_attribute("min")) == lower
+        assert float(slider.get_attribute("max")) == upper
+        assert float(slider.get_attribute("step")) == step
+        assert float(slider.input_value()) == default
+        assert slider.is_enabled()
+    for block in ("rho-grb-block", "nu-block", "epse-block", "epsB-block",
+                  "fdec-override-block"):
+        assert "lf-inert" in (page.locator(f"#{block}").get_attribute("class") or "")
+    for name in saved_values:
+        assert page.locator(f"#{name}_slider").is_disabled()
+        assert page.locator(f"#{name}_input").is_disabled()
+    assert not page.locator("#grb-intrinsic-counts").is_visible()
+    assert page.locator("#full-integral-switch").is_enabled()
 
-    # Pure-normalization controls are rate-inert while the LF is on.
-    for bid in ("epse-block", "epsB-block", "fdec-override-block"):
-        assert "lf-inert" in (page.locator(f"#{bid}").get_attribute("class") or ""), bid
+    set_number_input(page, "lf_alpha", -2.49)
+    set_number_input(page, "lf_norm_log", 0.5)
+    assert not status_is_error(page), _status_text(page)
+    toggle_switch(page, "full-integral-switch", checked=True)
+    assert not status_is_error(page), _status_text(page)
+    toggle_switch(page, "full-integral-switch", checked=False)
+    assert not status_is_error(page), _status_text(page)
 
-    # Dynamic floor: raise L_min above the current L_max → L_max clamps up.
-    set_number_input(page, "lf_lmin", 46.0)
-    assert not status_is_error(page), (
-        f"error after raising L_min: {_status_text(page)}")
-    lmax_val = float(page.locator("#lf_lmax_slider").input_value())
-    assert lmax_val >= 46.0 - 1e-9, f"L_max not clamped up (got {lmax_val})"
+    # Survey presets preserve the active LF and the saved single-L values.
+    select_preset(page, "ztf_public")
+    assert not status_is_error(page), _status_text(page)
+    assert page.locator("#lf-switch").is_checked()
+    assert float(page.locator("#lf_alpha_input").input_value()) == -2.49
+    assert float(page.locator("#lf_norm_log_input").input_value()) == 0.5
 
     toggle_switch(page, "lf-switch", checked=False)
-    assert not status_is_error(page), (
-        f"error after disabling the LF: {_status_text(page)}")
+    assert not status_is_error(page), _status_text(page)
     assert not page.locator("#lf-block").is_visible()
-    for bid in ("epse-block", "epsB-block", "fdec-override-block"):
-        assert "lf-inert" not in (page.locator(f"#{bid}").get_attribute("class") or ""), bid
+    for name, value in before.items():
+        assert page.locator(f"#{name}_slider").is_enabled()
+        assert page.locator(f"#{name}_input").is_enabled()
+        assert float(page.locator(f"#{name}_input").input_value()) == float(value), name
 
 
 # --------------------------------------------------------------------------- #

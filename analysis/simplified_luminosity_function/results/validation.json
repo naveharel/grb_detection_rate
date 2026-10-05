@@ -1,0 +1,153 @@
+{
+  "created_utc": "2026-10-01T18:06:03.016803+00:00",
+  "report": {
+    "path": "docs\\simplified_luminosity_function.pdf",
+    "pages": 19,
+    "sha256": "f3a7d3fdf97d320c35fbaa74e317ec6414380e80c9db5d93b38f23097ee7c661",
+    "latex_source_sha256": "34b45b4fb06f582be840d8468135fb2c50f89370c9df0c128f316f3927b5abcd"
+  },
+  "tests": {
+    "new_study": {
+      "command": ".venv/Scripts/python.exe -B -m pytest analysis/simplified_luminosity_function -p no:cacheprovider -q",
+      "passed": 43,
+      "failed": 0,
+      "seconds": 1.61,
+      "log": "results/tests.txt"
+    },
+    "existing_luminosity_function": {
+      "command": ".venv/Scripts/python.exe -B -m pytest tests/test_luminosity_function.py -p no:cacheprovider -q",
+      "passed": 38,
+      "failed": 0,
+      "seconds": 67.11
+    },
+    "full_repository_suite_run": false
+  },
+  "theory": {
+    "test_groups_run": 13,
+    "failures": 0,
+    "errors": 0,
+    "passed": true,
+    "all_resolution_checks_pass": true,
+    "maximum_rate_resolution_error": 1.1102230246251565e-14,
+    "maximum_L_median_resolution_error": 2.289279876777073e-13,
+    "maximum_q_median_resolution_error": 4.973799150320701e-14,
+    "extreme_quantiles": [
+      {
+        "alpha": -1.001,
+        "prescription": "continuous",
+        "log10_L_median_over_Ldec": 309.5692077748393,
+        "ordinary_float_result": "positive_infinity",
+        "interpretation": "Finite mathematical median exceeds floating-point range; use logarithm"
+      },
+      {
+        "alpha": -1.001,
+        "prescription": "random_phase",
+        "log10_L_median_over_Ldec": 309.66263285868786,
+        "ordinary_float_result": "positive_infinity",
+        "interpretation": "Finite mathematical median exceeds floating-point range; use logarithm"
+      }
+    ],
+    "single_visit_limit": {
+      "alpha": -2,
+      "one_day_phase_over_continuous": 0.0015882722767167935,
+      "cadence_1e_minus_4_s_phase_over_continuous": 0.9999971519484654,
+      "independent_two_dimensional_check_passed": true
+    }
+  },
+  "ztf": {
+    "resolution_checks": 24,
+    "all_resolution_checks_pass": true,
+    "maximum_resolution_errors": {
+      "rate": 8.881784197001252e-16,
+      "q_median": 1.1487487227901383e-05,
+      "L_median": 2.175802520376635e-07,
+      "D_median": 0.0,
+      "independent_moment": 2.220446049250313e-16
+    },
+    "finite_cutoff_engine_checks": 16,
+    "all_engine_checks_pass": true,
+    "maximum_engine_errors": {
+      "rate": 0.0004191843961631747,
+      "D_median": 0.00024351885048568,
+      "D_90": 2.70578089744955e-05,
+      "q_median": 0.00022994916487739658,
+      "luminosity_median_cdf": 0.00011782721935638119,
+      "frac_q_lt_1": 8.064730839901779e-05,
+      "frac_q_lt_1p5": 0.00017499798227005314,
+      "frac_q_gt_2": 0.0003290465107648466
+    },
+    "maximum_engine_resolution_change": {
+      "rate": 0.0008073014589078387,
+      "D_median": 0.000250312876833636,
+      "q_median": 0.0006213454438184218
+    },
+    "error_conventions": "Rates, distances and luminosity resolution errors are relative. q differences and luminosity-median CDF/angular-fraction errors are absolute."
+  },
+  "protected_files": {
+    "count": 15,
+    "all_sha256_unchanged": true,
+    "verified_sha256": {
+      "grb_detect/afterglow_ism.py": "53185316152d8350a241f5589de62d627f3c7dfdee1cc13dbe654df25d48890c",
+      "grb_detect/constants.py": "dbf92389837d51327d6f18ad0c818ac220eabc2e592c19240b291a2b4d48a1fd",
+      "grb_detect/core.py": "49253a15324668e5b2b831945c2795c955317316c49f42ed6d6640e1d85f2b93",
+      "grb_detect/detection_rate.py": "b061ac000d97234b2f8a65cb0a51f1c6735aaa0aecaad580c0bff2b45d59a557",
+      "grb_detect/params.py": "a65a9f370c951e318a348e3ff4d3ba3d045587e9a390e2e5b83e0815b32fc416",
+      "grb_detect/pls.py": "be97dff6f03e2d3f8b496dba120e9872571c74f8855faedc37a018841cb71b07",
+      "grb_detect/survey.py": "47c95df6c7e744afe9ac9f4d5d6c921705685969b7359e9f1ba008c80869252a",
+      "grb_detect/__init__.py": "581253f3bcb0883be127c4d586586cb45d99e5d56eac7c7c288674eb585c1b11",
+      "standalone_bridge.py": "8cb14530702effd8d256c2c546baecbd163fd1290335aa0ec149d7a787637162",
+      "build_standalone.py": "2c5590f94b238d56da807a2ec00027cd579a004fb8096cc0702861a60f6c265c",
+      "grb_detection_rate.html": "200b3c09ab7699db7bdc04e35f7128c1afd0fc00e4fb17ddef6e06047fe2d02f",
+      "web/app.js": "ab6ce214f0e28b8ecbbd6fc32735700ebc7e1d852b7c74d306c9749f00a66f7d",
+      "web/template.html": "c07c4199ed36b3c63994c3502f7a2ccf31692b690582fbf94ba81a77bb1990a0",
+      "web/styles.css": "f529ade986af82673301ed4fb670b56dd70476dbcc4054cbf329e78612483c78",
+      "docs/luminosity_function_derivation.tex": "58584ac49a9843fd2b46b2495f51b6ad6110ae45db31bcb39b2085ee46a7faf3"
+    }
+  },
+  "typesetting": {
+    "compiler": "Tectonic 0.17.0",
+    "renderer": "pypdfium2 5.13.0",
+    "plot_renderer": "Matplotlib 3.10.9 STIX mathtext fallback; latex/dvipng absent",
+    "overfull_boxes": 0,
+    "undefined_references": 0,
+    "duplicate_destinations": 0,
+    "underfull_boxes": 3,
+    "warning_review": "Three underfull-box notices and a Fontconfig default-config notice; final rendered pages are legible and free of clipping or overlap."
+  },
+  "visual_inspection": {
+    "all_pages_pass": true,
+    "pages_inspected": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19
+    ],
+    "reviewers": {
+      "powerlaw_physics": "Full-size pages 1-10",
+      "source_corner": "Full-size pages 11-19",
+      "root": "Contact sheets, selected full-size pages, all three final figures; full-size page 10 rechecked after final prose correction"
+    },
+    "final_revision_scope": "Only page 10 text changed after full-document review. Page count remained 19; all other page text was unchanged.",
+    "figure_files": [
+      "contribution_distributions.pdf",
+      "cadence_comparison.pdf",
+      "ztf_comparison.pdf"
+    ],
+    "all_figures_pass": true
+  }
+}

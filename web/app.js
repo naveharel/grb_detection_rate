@@ -135,7 +135,7 @@ document.querySelectorAll('.view-btn').forEach(btn => {
 const SLIDER_IDS = [
   'i','flive','Alog','omegaexp','toh','omega_srv','qmin','Dmin','sfade','srise','tnight',
   'p','nu_log','Ekiso_log','n0_log','gamma0_log','thetaj','epse','epsB','deuc','rho_grb_log',
-  'lf_alpha','lf_lmin','lf_lmax',
+  'lf_alpha','lf_norm_log',
   'fdec_log', // TEMP-FDEC-OVERRIDE
 ];
 
@@ -173,13 +173,13 @@ function updateSliderVisual(sl) {
 function syncFromSlider(id) {
   const sl = document.getElementById(id + '_slider');
   const inp = document.getElementById(id + '_input');
+  if (sl.disabled) return;
   if (inp) inp.value = sl.value;
   updateSliderVisual(sl);
   if (id === 'deuc' || id === 'thetaj' || id === 'rho_grb_log') updateGrbCounts();
   if (id === 'Alog') updateMagDisplay();
   if (id === 'flive') _updateTnightFloor();
   if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
-  if (id === 'lf_lmin') _updateLfLmaxFloor();
   if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
   if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
   _checkPresetDrift();
@@ -189,7 +189,7 @@ function syncFromSlider(id) {
 function syncFromInput(id) {
   const inp = document.getElementById(id + '_input');
   const sl = document.getElementById(id + '_slider');
-  if (!inp || !sl) return;
+  if (!inp || !sl || sl.disabled || inp.disabled) return;
   const raw = inp.value;
   const v = parseFloat(raw);
   // NaN / empty: revert to current slider value, do nothing
@@ -208,7 +208,6 @@ function syncFromInput(id) {
   if (id === 'Alog') updateMagDisplay();
   if (id === 'flive') _updateTnightFloor();
   if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
-  if (id === 'lf_lmin') _updateLfLmaxFloor();
   if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
   if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
   _checkPresetDrift();
@@ -265,12 +264,14 @@ function _initCustomSliders() {
       return Math.min(mx, Math.max(floor, v));
     }
     function applyVal(v) {
+      if (sl.disabled) return;
       sl.value = v;
       sl.dispatchEvent(new Event('input', { bubbles: true }));
     }
 
     let dragging = false;
     area.addEventListener('mousedown', e => {
+      if (sl.disabled) return;
       dragging = true; wrap.classList.add('cs-dragging');
       applyVal(valFromX(e.clientX)); e.preventDefault();
     });
@@ -278,6 +279,7 @@ function _initCustomSliders() {
     window.addEventListener('mouseup',   () => { dragging = false; wrap.classList.remove('cs-dragging'); });
 
     area.addEventListener('touchstart', e => {
+      if (sl.disabled) return;
       dragging = true; wrap.classList.add('cs-dragging');
       applyVal(valFromX(e.touches[0].clientX)); e.preventDefault();
     }, { passive: false });
@@ -287,6 +289,7 @@ function _initCustomSliders() {
     window.addEventListener('touchend', () => { dragging = false; wrap.classList.remove('cs-dragging'); });
 
     if (thumb) thumb.addEventListener('keydown', e => {
+      if (sl.disabled) return;
       const mn = _effMin(sl), mx = parseFloat(sl.max), st = parseFloat(sl.step) || 1;
       let v = parseFloat(sl.value);
       if (discreteValues && discreteValues.length) {
@@ -336,17 +339,47 @@ document.getElementById('optical-switch').addEventListener('change', function() 
   document.getElementById(id).addEventListener('change', triggerUpdate);
 });
 
-// Luminosity-function switch: shows/hides the (α, L_min, L_max) slider block.
-// While on, the pure-normalization controls (ε_e, ε_B, the F_dec override)
-// are rate-inert — the absolute LF replaces the fiducial normalization — so
-// they are dimmed and locked (the toggle hint explains why).
+// The LF intensity supplies its own normalization at the selected band.
+// Save inactive controls so returning to the single-L model restores them.
+const LF_INACTIVE_IDS = ['rho_grb_log', 'nu_log', 'epse', 'epsB', 'fdec_log'];
+const LF_INACTIVE_BLOCKS = ['rho-grb-block', 'nu-block', 'epse-block', 'epsB-block', 'fdec-override-block'];
+let _lfInactiveState = null;
 function _syncLfBlock() {
   const on = document.getElementById('lf-switch').checked;
+  if (on && !_lfInactiveState) {
+    _lfInactiveState = {values: {}, fdecOverride: _fdecOverride};
+    LF_INACTIVE_IDS.forEach(id => {
+      _lfInactiveState.values[id] = {
+        slider: document.getElementById(id + '_slider').value,
+        input: document.getElementById(id + '_input').value,
+      };
+    });
+  } else if (!on && _lfInactiveState) {
+    LF_INACTIVE_IDS.forEach(id => {
+      const sl = document.getElementById(id + '_slider');
+      sl.value = _lfInactiveState.values[id].slider;
+      document.getElementById(id + '_input').value = _lfInactiveState.values[id].input;
+      updateSliderVisual(sl);
+    });
+    _fdecOverride = _lfInactiveState.fdecOverride;
+    _lfInactiveState = null;
+  }
   document.getElementById('lf-block').style.display = on ? 'block' : 'none';
-  ['epse-block','epsB-block','fdec-override-block'].forEach(bid => {
+  LF_INACTIVE_BLOCKS.forEach(bid => {
     const el = document.getElementById(bid);
-    if (el) el.classList.toggle('lf-inert', on);
+    if (!el) return;
+    el.classList.toggle('lf-inert', on);
+    el.inert = on;
+    el.querySelectorAll('input').forEach(input => { input.disabled = on; });
+    el.querySelectorAll('.cs-thumb').forEach(thumb => {
+      thumb.tabIndex = on ? -1 : 0;
+      thumb.setAttribute('aria-disabled', String(on));
+    });
   });
+  document.getElementById('grb-intrinsic-counts').hidden = on;
+  document.getElementById('fnu-tdec-display').hidden = on;
+  _updateFdecNote();
+  updateGrbCounts();
 }
 document.getElementById('lf-switch').addEventListener('change', function() {
   _syncLfBlock();
@@ -569,7 +602,7 @@ function readParams() {
     theta_j_rad:     v('thetaj_slider'),
     gamma0_log10:    v('gamma0_log_slider'),
     D_euc_gpc:       v('deuc_slider'),
-    rho_grb_log10:   v('rho_grb_log_slider'),
+    rho_grb_log10:   Math.log10(v('rho_grb_log_slider')), // UI is linear; retain the bridge's log10 contract.
     optical_survey:  b('optical-switch'),
     color_regimes:   b('regime-color-switch'),
     full_integral:   exactOn,
@@ -583,16 +616,15 @@ function readParams() {
     toh_approx:      b('toh-approx-switch'),
     win_iminus1:     !b('win-i-switch'),
     win_tp:          exactOn && b('win-tp-switch'),
-    // Intrinsic luminosity function φ(L) ∝ L^α on [L_min, L_max].
+    // dℛ/dL = 𝒜/L_ref (L/L_ref)^α, L = L_nu(t_dec).
     lf_on:           b('lf-switch'),
     lf_alpha:        v('lf_alpha_slider'),
-    lf_lmin:         v('lf_lmin_slider'),
-    lf_lmax:         v('lf_lmax_slider'),
+    lf_log10_A:      v('lf_norm_log_slider'),
     nslice_tfix_log: v('nslice-tfix-slider'),
     tslice_nfix_log: v('tslice-nfix-slider'),
     qdview_nfix_log: v('qdview-nfix-slider'),
     qdview_tfix_log: v('qdview-tfix-slider'),
-    F_dec_override_Jy: _fdecOverride ? Math.pow(10, v('fdec_log_slider')) : null,  // TEMP-FDEC-OVERRIDE
+    F_dec_override_Jy: _fdecOverride && !b('lf-switch') ? Math.pow(10, v('fdec_log_slider')) : null,  // TEMP-FDEC-OVERRIDE
     nx: 120, ny: 150,
   };
 }
@@ -704,41 +736,6 @@ function _updateTnightFloor() {
   _updateTnightFloorNote();
 }
 
-// Dynamic L_max lower bound: enforce L_min ≤ L_max on the luminosity-function
-// sliders. Sets data-min-floor on the lf_lmax .cs-wrap (read by _effMin) and
-// clamps the current value up if it falls below the new floor — same
-// mechanism as the t_night floor.
-function _updateLfLmaxFloor() {
-  const sl = document.getElementById('lf_lmax_slider');
-  if (!sl) return;
-  const wrap = sl.closest('.cs-wrap');
-  if (!wrap) return;
-  const lmin = parseFloat(document.getElementById('lf_lmin_slider').value);
-  const structuralMin = parseFloat(sl.min);
-  const maxV = parseFloat(sl.max);
-  const step = parseFloat(sl.step) || 0.05;
-  const rawFloor = Math.min(maxV, Math.max(structuralMin, isFinite(lmin) ? lmin : structuralMin));
-  // Snap up to the step grid (both sliders share the 0.05 grid on integers).
-  const floor = Math.min(maxV, Math.ceil(rawFloor / step - 1e-9) * step);
-  wrap.dataset.minFloor = String(floor);
-  const pctFloor = (floor - structuralMin) / (maxV - structuralMin);
-  wrap.querySelectorAll('.cs-tick').forEach(t => {
-    const tp = parseFloat(t.dataset.pct);
-    t.classList.toggle('below-floor', isFinite(tp) && tp < pctFloor - 1e-6);
-  });
-  wrap.querySelectorAll('.cs-mark').forEach(m => {
-    const mp = parseFloat(m.style.getPropertyValue('--mpct'));
-    m.classList.toggle('below-floor', isFinite(mp) && mp < pctFloor - 1e-6);
-  });
-  const cur = parseFloat(sl.value);
-  if (isFinite(cur) && cur < floor - 1e-9) {
-    sl.value = floor;
-    const inp = document.getElementById('lf_lmax_input');
-    if (inp) inp.value = sl.value;
-    updateSliderVisual(sl);
-  }
-}
-
 function _updateTnightFloorNote() {
   const el = document.getElementById('tnight-floor-note');
   if (!el) return;
@@ -762,7 +759,7 @@ function _updateTnightFloorNote() {
 // TEMP-FDEC-OVERRIDE — begin
 function _updateFdecNote() {
   const el = document.getElementById('fdec-override-note');
-  if (el) el.style.display = _fdecOverride ? 'block' : 'none';
+  if (el) el.style.display = _fdecOverride && !document.getElementById('lf-switch').checked ? 'block' : 'none';
 }
 function _clearFdecOverride() {
   if (!_fdecOverride) return;
@@ -782,7 +779,8 @@ function _clearFdecOverride() {
 
 // ── Derived GRB count display (instant, no Python needed) ─────────────────
 function updateGrbCounts() {
-  const rho = Math.pow(10, parseFloat(document.getElementById('rho_grb_log_slider').value));
+  if (document.getElementById('lf-switch').checked) return;
+  const rho = parseFloat(document.getElementById('rho_grb_log_slider').value);
   const D   = parseFloat(document.getElementById('deuc_slider').value);
   const tj  = parseFloat(document.getElementById('thetaj_slider').value);
   const V   = (4/3) * Math.PI * D * D * D;
@@ -803,7 +801,6 @@ function updateMagDisplay() {
 }
 updateMagDisplay();
 _updateTnightFloor();
-_updateLfLmaxFloor();
 
 // ── Debounced update trigger ───────────────────────────────────────────────
 function triggerUpdate() {
@@ -2027,7 +2024,7 @@ function _renderQDPlot(opts) {
   const shapes = [];
   const annotations = [];
   (opts.guides || []).forEach((g, idx) => {
-    if (g.x == null || !isFinite(g.x)) return;
+    if (g.x == null || !isFinite(g.x) || g.x <= 0) return;
     shapes.push({
       type: 'line', yref: 'paper', y0: 0, y1: 1,
       xref: 'x', x0: g.x, x1: g.x,
@@ -2035,8 +2032,10 @@ function _renderQDPlot(opts) {
     });
     annotations.push({
       text: g.label, xref: 'x', yref: 'paper',
-      x: g.x, y: 0.95 - 0.05 * idx,
-      xanchor: 'left', yanchor: 'top', showarrow: false,
+      // Plotly annotations use log coordinates on log axes; shapes use data coordinates.
+      x: Math.log10(g.x), y: 0.95 - 0.05 * idx,
+      xanchor: opts.xRange && g.x > 0.95 * opts.xRange[1] ? 'right' : 'left',
+      yanchor: 'top', showarrow: false,
       font: {size: 10, color: annotCol()},
     });
   });
@@ -2051,7 +2050,7 @@ function _renderQDPlot(opts) {
     });
     annotations.push({
       text: opts.accentMarker.label, xref: 'x', yref: 'paper',
-      x: opts.accentMarker.x, y: 0.04,
+      x: Math.log10(opts.accentMarker.x), y: 0.04,
       xanchor: 'left', yanchor: 'bottom', showarrow: false,
       font: {size: 10, color: accent},
     });
@@ -2069,16 +2068,25 @@ function _renderQDPlot(opts) {
   annotations.push({
     text: opts.panelTitle + ' slice  |  N<sub>exp</sub> = ' + nStr +
           ', t<sub>cad</sub> = ' + tCadStr,
-    xref: 'paper', yref: 'paper', x: 0.01, y: 1.0,
-    showarrow: false, xanchor: 'left', yanchor: 'top',
+    xref: 'paper', yref: 'paper', x: 0.01, y: 1.0, yshift: 2,
+    showarrow: false, xanchor: 'left', yanchor: 'bottom',
     font: {size: 12, color: annotCol()},
   });
   annotations.push({
     text: modeLabel,
-    xref: 'paper', yref: 'paper', x: 0.99, y: 1.0,
-    showarrow: false, xanchor: 'right', yanchor: 'top',
+    xref: 'paper', yref: 'paper', x: 0.99, y: 1.0, yshift: 2,
+    showarrow: false, xanchor: 'right', yanchor: 'bottom',
     font: {size: 11, color: annotCol()},
   });
+  const belowFraction = opts.belowPlotFraction;
+  if (belowFraction != null && isFinite(belowFraction) && belowFraction >= 0.01) {
+    annotations.push({
+      text: (100 * belowFraction).toFixed(1) + '% of detections lie below the plotted ' + innerSym + ' range',
+      xref: 'paper', yref: 'paper', x: 0.01, y: 1.0, yshift: 20,
+      showarrow: false, xanchor: 'left', yanchor: 'bottom',
+      font: {size: 11, color: annotCol()},
+    });
+  }
 
   // y-axis range from data.
   let yRange = null;
@@ -2140,6 +2148,7 @@ function renderQView(data) {
     nFix: nFix,
     tCadH: tCadH,
     totalRate: data.qdview_total_rate_q,
+    belowPlotFraction: data.qdview_q_below_plot_fraction,
     guides: guides,
     accentMarker: accentMarker,
     panelTitle: 'R(q)',
@@ -2177,6 +2186,7 @@ function renderDView(data) {
     nFix: nFix,
     tCadH: tCadH,
     totalRate: data.qdview_total_rate_D,
+    belowPlotFraction: data.qdview_D_below_plot_fraction,
     guides: guides,
     accentMarker: accentMarker,
     panelTitle: 'R(D)',
@@ -2231,9 +2241,12 @@ function updateMetricsBar(data) {
 // ── Derived display update ─────────────────────────────────────────────────
 function updateDerivedDisplays(data) {
   if (!data) return;
+  const lfOn = document.getElementById('lf-switch').checked;
   const fmt = x => x >= 1e6 ? (x/1e6).toFixed(1)+'M' : x >= 1e3 ? (x/1e3).toFixed(1)+'k' : x.toFixed(1);
-  document.getElementById('grb-ntotal-display').innerHTML  = 'R<sub>int</sub> = ' + fmt(data.R_int_yr) + ' yr⁻¹';
-  document.getElementById('grb-ntoward-display').innerHTML = 'f<sub>b</sub>R<sub>int</sub> = ' + fmt(data.R_toward_day) + ' day⁻¹';
+  if (!lfOn && data.R_int_yr != null && data.R_toward_day != null) {
+    document.getElementById('grb-ntotal-display').innerHTML  = 'R<sub>int</sub> = ' + fmt(data.R_int_yr) + ' yr⁻¹';
+    document.getElementById('grb-ntoward-display').innerHTML = 'f<sub>b</sub>R<sub>int</sub> = ' + fmt(data.R_toward_day) + ' day⁻¹';
+  }
 
   if (data.t_dec_s != null && isFinite(data.t_dec_s)) {
     const t = data.t_dec_s;
@@ -2246,7 +2259,7 @@ function updateDerivedDisplays(data) {
       't<sub>dec</sub> = ' + val.toPrecision(3) + ' ' + unit;
   }
 
-  if (data.F_nu_tdec_Jy != null && isFinite(data.F_nu_tdec_Jy)) {
+  if (!lfOn && data.F_nu_tdec_Jy != null && isFinite(data.F_nu_tdec_Jy)) {
     const Fj = data.F_nu_tdec_Jy;
     let val, unit;
     if      (Fj >= 1)    { val = Fj;       unit = 'Jy';  }
@@ -2271,20 +2284,7 @@ function updateDerivedDisplays(data) {
     // TEMP-FDEC-OVERRIDE — end
   }
 
-  // Luminosity-function derived rows: fiducial L0 = νL_ν(1 d) and the
-  // population median of φ (pre-formatted as 10^x to match the log sliders).
-  const l0El = document.getElementById('lf-l0-display');
-  if (l0El && data.L0_erg_s != null && isFinite(data.L0_erg_s) && data.L0_erg_s > 0) {
-    l0El.innerHTML =
-      'L<sub>0</sub>(1 day) = 10^' + Math.log10(data.L0_erg_s).toFixed(2) + ' erg/s';
-  }
-  const lmedEl = document.getElementById('lf-lmed-display');
-  if (lmedEl) {
-    const lm = data.lf_L_med_pop_erg_s;
-    lmedEl.innerHTML = (lm != null && isFinite(lm) && lm > 0)
-      ? 'L<sub>med</sub>(1 day) = 10^' + Math.log10(lm).toFixed(2) + ' erg/s'
-      : 'L<sub>med</sub>(1 day) = —';
-  }
+
 }
 
 // ── CSV export ─────────────────────────────────────────────────────────────

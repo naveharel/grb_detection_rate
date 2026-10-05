@@ -1,0 +1,17 @@
+{
+  "grb_detect/afterglow_ism.py": "53185316152d8350a241f5589de62d627f3c7dfdee1cc13dbe654df25d48890c",
+  "grb_detect/constants.py": "dbf92389837d51327d6f18ad0c818ac220eabc2e592c19240b291a2b4d48a1fd",
+  "grb_detect/core.py": "49253a15324668e5b2b831945c2795c955317316c49f42ed6d6640e1d85f2b93",
+  "grb_detect/detection_rate.py": "b061ac000d97234b2f8a65cb0a51f1c6735aaa0aecaad580c0bff2b45d59a557",
+  "grb_detect/params.py": "a65a9f370c951e318a348e3ff4d3ba3d045587e9a390e2e5b83e0815b32fc416",
+  "grb_detect/pls.py": "be97dff6f03e2d3f8b496dba120e9872571c74f8855faedc37a018841cb71b07",
+  "grb_detect/survey.py": "47c95df6c7e744afe9ac9f4d5d6c921705685969b7359e9f1ba008c80869252a",
+  "grb_detect/__init__.py": "581253f3bcb0883be127c4d586586cb45d99e5d56eac7c7c288674eb585c1b11",
+  "standalone_bridge.py": "8cb14530702effd8d256c2c546baecbd163fd1290335aa0ec149d7a787637162",
+  "build_standalone.py": "2c5590f94b238d56da807a2ec00027cd579a004fb8096cc0702861a60f6c265c",
+  "grb_detection_rate.html": "200b3c09ab7699db7bdc04e35f7128c1afd0fc00e4fb17ddef6e06047fe2d02f",
+  "web/app.js": "ab6ce214f0e28b8ecbbd6fc32735700ebc7e1d852b7c74d306c9749f00a66f7d",
+  "web/template.html": "c07c4199ed36b3c63994c3502f7a2ccf31692b690582fbf94ba81a77bb1990a0",
+  "web/styles.css": "f529ade986af82673301ed4fb670b56dd70476dbcc4054cbf329e78612483c78",
+  "docs/luminosity_function_derivation.tex": "58584ac49a9843fd2b46b2495f51b6ad6110ae45db31bcb39b2085ee46a7faf3"
+}

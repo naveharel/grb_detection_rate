@@ -195,49 +195,50 @@ optical single-detection gap TODO.
   full-integral views are appropriate for this corner. There is no universal
   full-versus-dominant ordering under every option.
 
-## Luminosity function and paper notation
+## Luminosity function and paper notation (updated 2026-10-04)
 
-`LuminosityFunction` in `detection_rate.py` is a normalized truncated power law
-\(\phi(L)\propto L^\alpha\). App defaults are \(\alpha=-2\),
-`log10_L_min=42.5`, `log10_L_max=45.5`, with **\(L=\nu L_\nu(1\,{\rm day})\)**
-in erg/s; the feature is off unless enabled.
+The app LF setting now uses `PowerLawLuminosityFunction`, with
+`dR/dL = A/L_ref (L/L_ref)^alpha` for all positive luminosities,
+**L = L_nu(t_dec)** in erg/s/Hz, fixed L_ref = 1e32, and defaults A = 1
+Gpc^-3 yr^-1 and alpha = -2. The strict convergence interval is
+-2.5 < alpha < -1. A is the rate density per natural-log luminosity at
+L_ref; this intensity has no finite intrinsic total or population median.
+The bridge parameters are `lf_on`, `lf_alpha`, and `lf_log10_A`.
 
-The [LF manuscript](luminosity_function_derivation.tex) instead defines
-**\(L=L_\nu(t_{\rm dec})\)** in erg/s/Hz, using physical thresholds
-\(L_{\rm dec},L_j,L_{\rm nr},L_i\). At fixed shape,
+The current derivation is [Simplified Luminosity Function](simplified_luminosity_function.tex).
+Keep physical luminosities and explicit thesis notation in paper-facing text.
+The earlier standalone bounded-LF manuscript remains a separate reference.
+`make_finite_cutoff_rate_model` is the explicit Python reference constructor
+for bounded comparisons; its luminosity remains nu L_nu(1 day), so convert
+bounds and differential normalization before comparing it with the app model.
+The app exposes no bounded-LF controls.
 
-\[
-L_{\rm app}=\nu\,\widetilde F_\nu(1\,{\rm day})\,L_{\rm paper}.
-\]
+The new `scale_free_lf.py` kernels integrate luminosity analytically from
+zero to infinity. Exact mode also integrates distance analytically and uses
+adaptive, breakpoint-aware angle integration. Existing light curves and
+peak-window/joint rise-fade selection semantics are retained. Approximate
+mode integrates dominant rectangles and keeps each base interval's selected
+angular/on-axis branch fixed for distribution queries. All app rates,
+medians, slices and q/D views follow the selected mode; never average
+component medians. A requested peak-time-dependent window keeps the full
+integral fallback. Regime color means the dominant integrated contribution.
 
-Rescale bounds and density normalization consistently; alpha is unchanged.
-Do not paste app luminosity numbers into the paper's definition. The user
-prefers explicit equations in thesis notation, using physical luminosities
-instead of the implementation's shorthand \(s\), and keeping app machinery out
-of paper continuations unless requested.
+For full-mode detections with D_min = 0,
+`P(D < d) = (d/D_Euc)^(2alpha+5)` and
+`D_med = D_Euc * 2^(-1/(2alpha+5))`. For nonzero D_min use the corresponding
+power difference. Slopes near -2.5 can yield extremely small medians; do not
+use a coarse linear-distance histogram or normalize by a displayed grid's
+first point. q/D plot totals cover the entire selected population; the UI
+indicates appreciable probability below the plotting range.
 
-The gray scaling \(s=L/L_0\) multiplies brightness by \(s\) and distances by
-\(\sqrt{s}\), while times/shape and intrinsic rate stay fixed. At fixed absolute LF, pure
-normalization parameters cancel; the UI dims/locks epsilon-e/epsilon-B.
-Energy, density, geometry, frequency, and p can still affect shape/times.
-
-Dominant LF rates integrate piecewise powers analytically. Full rates take the
-LF expectation of capped/weighted volume **before** numerical q integration.
-Never cap the fiducial horizon at the Euclidean wall before luminosity scaling.
-Stable brackets handle logarithmic limits (alpha=-1, -2.5, etc.).
-Tests cover LF-off parity and collapsed bounds. Regime colors use the largest
-LF-integrated dominant contribution.
-
-Full integrals are chunked for Pyodide memory; neighboring q chunks share an
-endpoint. Applicable LF paths use a 1024-point log interpolation table
-(documented typical relative error around \(3\times10^{-4}\)); q integration
-defaults to 500 points. Some median paths use quadrature/histograms.
-“Exact” therefore retains numerical approximations.
-
-The draft's qualitative result is a change from single-burst
-\(F_{\rm lim}^{-3/2}\) to approximately \(F_{\rm lim}^{\alpha+1}\) when a broad
-LF concentrates detections near its moving knee. Its parameter ranges and
-cadence comparison need the review below.
+The LF switch remains in Settings and alpha/log A controls in Parameters.
+Rho, frequency, epsilon_e, epsilon_B and the deceleration-flux override are
+inactive (and disabled) while LF is enabled. Luminosity is defined at the
+current band, so the PLS-G frequency amplitude cancels. Intrinsic counters
+and the single-burst brightness readout are hidden; their controls restore
+on LF exit. Exact remains selectable. Pure-amplitude and sensitivity
+invariance of normalized distributions permits reuse across exposure counts
+at fixed cadence.
 
 ## Build, browser, and figure contracts
 

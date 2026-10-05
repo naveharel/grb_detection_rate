@@ -37,6 +37,8 @@ from .constants import DAY_S
 from .params import AfterglowPhysicalParams, MicrophysicsParams, SurveyInstrumentParams, SurveyStrategy
 from .pls import PLSG, PLSModel
 from .survey import N_exp_max, exposure_time_s, is_strategy_physical, limiting_flux_Jy, sky_fraction
+from .scale_free_lf import PowerLawLuminosityFunction
+from . import scale_free_lf as _scale_free
 
 # Tolerance used to make boundary cases robust (e.g. N_exp = N_exp_max exactly)
 _REGION_BOUNDARY_EPS: float = 1e-12
@@ -175,7 +177,7 @@ class DetectionRateModel:
         *,
         win_i_minus_one: bool = False,
         win_from_peak: bool = False,
-        lf: LuminosityFunction | None = None,
+        lf: LuminosityFunction | PowerLawLuminosityFunction | None = None,
     ):
         self.phys = phys
         self.instrument = instrument
@@ -1342,6 +1344,13 @@ class DetectionRateModel:
         approximate classification.
         """
 
+        if isinstance(self.lf, PowerLawLuminosityFunction) and not return_components:
+            return _scale_free.log_rate(_scale_free.rate(self, i_det, N_exp, t_cad_s,
+                full_integral=self.win_from_peak, q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start))
+
         if self.win_from_peak and not return_components:
             return self.rate_log10_full_integral(
                 i_det, N_exp, t_cad_s,
@@ -1516,7 +1525,7 @@ class DetectionRateModel:
                 fade_random_start=fade_random_start,
             )
         elif self.lf is not None:
-            logR = _safe_log10(self._rate_lf_dominant(
+            logR = (_scale_free.log_rate if isinstance(self.lf, PowerLawLuminosityFunction) else _safe_log10)(self._rate_lf_dominant(
                 i_det, N_exp, t_cad_s,
                 q_min=q_min, D_min_cm=D_min_cm,
                 s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
@@ -1627,6 +1636,11 @@ class DetectionRateModel:
         also the dominant-contribution regime id grid (argmax of the
         per-regime LF-integrated contributions, NaN where the total is 0).
         """
+        if isinstance(self.lf, PowerLawLuminosityFunction):
+            return _scale_free.rate(self, i_det, N_exp, t_cad_s,
+                full_integral=False, return_regime=return_regime,
+                q_min=q_min, D_min_cm=D_min_cm, s_fade=s_fade,
+                s_rise=s_rise, s_mode=s_mode)
         s1, s2, alpha = self._lf_s_bounds()
 
         N_exp = np.asarray(N_exp, dtype=float)
@@ -1967,6 +1981,13 @@ class DetectionRateModel:
         grid-shaped arrays is irreducible.
         """
 
+        if isinstance(self.lf, PowerLawLuminosityFunction):
+            return _scale_free.log_rate(_scale_free.rate(self, i_det, N_exp, t_cad_s,
+                full_integral=True, q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start))
+
         N_exp   = np.asarray(N_exp,   dtype=float)
         t_cad_s = np.asarray(t_cad_s, dtype=float)
         shape   = np.broadcast(N_exp, t_cad_s).shape
@@ -2272,6 +2293,13 @@ class DetectionRateModel:
         q_med     : ndarray
         D_med_cm  : ndarray [cm]
         """
+        if isinstance(self.lf, PowerLawLuminosityFunction):
+            return _scale_free.medians(self, i_det, N_exp, t_cad_s,
+                full_integral=True, q_min=q_min, D_min_cm=D_min_cm,
+                s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start)
+
         N_exp   = np.asarray(N_exp,   dtype=float)
         t_cad_s = np.asarray(t_cad_s, dtype=float)
         shape   = np.broadcast(N_exp, t_cad_s).shape
@@ -2709,6 +2737,16 @@ class DetectionRateModel:
         with V_w the joint fade+rise weighted D-volume (see
         `_weighted_D_volume`; = max(D̃_eff³ − D̃_min³, 0)·P_fade at s_rise = 0).
         """
+        if isinstance(self.lf, PowerLawLuminosityFunction):
+            q_values = np.linspace(0., float(self.derived.q_nr), int(N_q)+1)
+            result = self.lf_distributions(i_det, float(N_exp), float(t_cad_s),
+                full_integral=True, q_values=q_values,
+                q_min=q_min, D_min_cm=D_min_cm, s_fade=s_fade,
+                s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start)
+            return q_values, result["dR_dq"]
+
         q_vals, D_eff_norm, D_tilde_max, g_unc, prefactor, t_exp = self._D_eff_q_profile_scalar(
             i_det, N_exp, t_cad_s, N_q
         )
@@ -2786,6 +2824,16 @@ class DetectionRateModel:
         (Q(D̃)² − q_min²)/2 with Q = max{q : D_eff(q) ≥ D̃}.
         Values for D < D_min_cm are zeroed out.
         """
+        if isinstance(self.lf, PowerLawLuminosityFunction):
+            D_values = np.linspace(0., float(self.phys.D_euc_cm), int(N_D)+1)
+            result = self.lf_distributions(i_det, float(N_exp), float(t_cad_s),
+                full_integral=True, D_values_cm=D_values,
+                q_min=q_min, D_min_cm=D_min_cm, s_fade=s_fade,
+                s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start)
+            return D_values, result["dR_dD_per_cm"]
+
         D_Euc = self.phys.D_euc_cm
         D_grid_cm = np.linspace(0.0, D_Euc, N_D)
 
@@ -2871,17 +2919,24 @@ class DetectionRateModel:
         rise_random_start: bool = True,
         fade_random_start: bool = True,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Return (q_med, D_med_cm) using analytic (normal) or numerical (full-integral) formula.
+        """Return (q_med, D_med_cm) for the selected calculation mode.
 
-        Under `win_from_peak` the analytic per-regime constants no longer
-        describe the rate (D_eff is q-dependent), so the numerical path is
-        used regardless of `full_integral`.  The same holds under the
-        luminosity function: mixture medians must come from the LF-weighted
-        distributions (never from averaging per-luminosity medians), which
-        only the numerical path provides.  The `*_random_start` flags apply
-        only on the numerical path (the analytic path is the hard-boundary
-        dominant-term treatment already).
+        An unbounded LF uses its fixed rectangle mixture when full_integral
+        is false, and the full selected population when true. The bounded
+        reference LF retains its historical full-integral median behavior.
+
+        Under `win_from_peak`, the q-dependent window selects full integration.
+        The bounded reference LF also retains numerical mixture medians rather
+        than averages of component medians. Random-start flags are applied by
+        the full-integral selection; approximate rectangles use hard cuts.
         """
+        if isinstance(self.lf, PowerLawLuminosityFunction):
+            return _scale_free.medians(self, i_det, N_exp, t_cad_s,
+                full_integral=bool(full_integral or self.win_from_peak),
+                q_min=q_min, D_min_cm=D_min_cm, s_fade=s_fade,
+                s_rise=s_rise, s_mode=s_mode,
+                rise_random_start=rise_random_start,
+                fade_random_start=fade_random_start)
         if full_integral or self.win_from_peak or self.lf is not None:
             # Dominant mode + LF pays for the numerical path only here — use a
             # reduced q-grid (medians are hover extras, ≪ the 5% budget).
@@ -2899,6 +2954,20 @@ class DetectionRateModel:
             q_min=q_min, D_min_cm=D_min_cm,
             s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
         )
+
+    def lf_distributions(self, i_det, N_exp, t_cad_s, *, full_integral=False,
+                         q_values=None, D_values_cm=None, **selection):
+        """Selected scale-free LF population: scalar-strategy CDFs and densities.
+
+        Approximate-mode queries intersect the fixed base rectangle selection;
+        exact-mode queries use the full angular integral. Densities are per
+        unit q and per cm, and survival functions include both sidebar cuts.
+        """
+        if not isinstance(self.lf, PowerLawLuminosityFunction):
+            raise ValueError("lf_distributions requires the unbounded power-law LF")
+        return _scale_free.distributions(self, i_det, N_exp, t_cad_s,
+            full_integral=bool(full_integral or self.win_from_peak),
+            q_values=q_values, D_values_cm=D_values_cm, **selection)
 
     # ---------- Analytic optimal strategy (from  ) ----------
     def analytic_optimum(self, i_det: int) -> Dict[str, float]:
