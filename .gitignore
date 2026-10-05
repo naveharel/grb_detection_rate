@@ -46,3 +46,13 @@ docs/ui_reference.md
 
 # Stray home-directory paths accidentally tracked
 ~/.claude/
+
+# Local tools, caches, and reproducible research outputs
+/tmp/
+/analysis/lf_rate_medians_results/
+/analysis/simplified_luminosity_function/results/
+/docs/*.pdf
+/docs/*.aux
+/docs/*.log
+/docs/*.out
+/docs/*.toc

@@ -8,8 +8,10 @@ intensity, not a normalized intrinsic luminosity PDF:
 The all-luminosity detected rate exists for `-2.5 < alpha < -1` with zero
 distance floor, finite angular cap and a luminosity-independent light-curve shape.
 
-The final report is [the PDF](../../docs/simplified_luminosity_function.pdf),
-with [LaTeX source](../../docs/simplified_luminosity_function.tex).
+The final report has tracked [LaTeX source](../../docs/simplified_luminosity_function.tex).
+The compiled PDF at `docs/simplified_luminosity_function.pdf` and the generated
+`results/` directory are local, Git-ignored artifacts. Recreate the numerical
+outputs with the commands below and compile the report using [the toolchain guide](toolchain.md).
 The [approved plan](plan.md) records the original study scope and acceptance criteria.
 
 The report was rewritten on 2026-10-04 at the user's request: explicit project
