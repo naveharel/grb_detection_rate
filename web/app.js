@@ -32,18 +32,18 @@ const PLASMA_SCALE = [
   [1.0,                'rgb(240, 249, 33)'],
 ];
 
-// Presets — each one only touches: i, f_live, A_log, omega_exp, t_oh, optical.
+// Presets set survey controls; ZTF also sets the effective observing window.
 // Constraints (omega_srv, s_fade, s_rise) and physics sliders are left alone,
 // same as any other field not listed in PRESET_MAP — no special-casing needed.
 // The two ZTF entries are the survey's two real observing modes (Ho et al.
 // 2022; Andreoni et al. 2021):
-//   public   — ~15,000 deg² every 2 nights; detected events have i ≈ 2;
-//              f_live = 0.08 gives t_exp ≈ 30 s at (N = 319, t_cad = 2 d).
-//   high-cad — ~2,500 deg² partnership/ZUDS, 6 visits/night; f_live = 0.17
-//              gives t_exp ≈ 30 s at (N = 53, t_cad = t_night/6).
+//   public   — alternating 7,500 deg² halves of a 15,000 deg² footprint;
+//              2 visits in 4 h, t_cad = 0.98 * 4 h / 2 = 1.96 h.
+//   high-cad — ~2,500 deg², 6 visits in 6 h, t_cad = 0.98 h.
+// Both use f_live = 0.166 and give t_exp ≈ 29 s with 15 s overhead.
 const PRESETS = {
-  ztf_public: {i:2, f_live:0.08, A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
-  ztf_hc:     {i:6, f_live:0.17, A_log:-4.68, omega_exp:47,  t_oh:15, optical:true},
+  ztf_public: {i:2, f_live:0.166, A_log:-4.68, omega_exp:47,  t_oh:15, t_night:4, optical:true},
+  ztf_hc:     {i:2, f_live:0.166, A_log:-4.68, omega_exp:47,  t_oh:15, t_night:6, optical:true},
   rubin:      {i:2, f_live:0.7,  A_log:-7.0,  omega_exp:9.6, t_oh:30, optical:true},
 };
 // Map preset keys to DOM slider/switch IDs.
@@ -53,6 +53,7 @@ const PRESET_MAP = {
   A_log:     'Alog_slider',
   omega_exp: 'omegaexp_slider',
   t_oh:      'toh_slider',
+  t_night:   'tnight_slider',
 };
 let _activePresetKey = null;     // which preset is currently active (drift detection)
 let _presetApplying  = false;    // suppress drift detection while we apply a preset
@@ -327,7 +328,6 @@ SLIDER_IDS.forEach(id => {
 // Optical switch shows/hides t_night
 document.getElementById('optical-switch').addEventListener('change', function() {
   document.getElementById('tnight-block').style.display = this.checked ? 'block' : 'none';
-  updateSubnightLimitDisplay();
   _updateTnightFloorNote();
   _checkPresetDrift();
   triggerUpdate();
@@ -414,10 +414,6 @@ document.getElementById('omegaexp_slider').addEventListener('input', updateNexpM
 document.getElementById('omegaexp_input').addEventListener('change', updateNexpMaxDisplay);
 document.getElementById('omega_srv_slider').addEventListener('input', updateNexpMaxDisplay);
 document.getElementById('omega_srv_input').addEventListener('change', updateNexpMaxDisplay);
-document.getElementById('i_slider').addEventListener('input', updateSubnightLimitDisplay);
-document.getElementById('i_input').addEventListener('change', updateSubnightLimitDisplay);
-document.getElementById('tnight_slider').addEventListener('input', updateSubnightLimitDisplay);
-document.getElementById('tnight_input').addEventListener('change', updateSubnightLimitDisplay);
 
 // Slice-position sliders: live label + debounced partial recompute
 function triggerSliceUpdate(which) {
@@ -434,27 +430,28 @@ async function runSliceUpdate(which) {
   if (_sliceComputing[which]) { _sliceQueued[which] = true; return; }
   _sliceComputing[which] = true;
   _sliceQueued[which] = false;
-  setStatus('Computing…', true);
+  setStatus('Calculating…', true);
   try {
     const params = readParams();
     const pyParams = pyodide.toPy(params);
     let pyResult;
     if (which === 'nslice') {
-      const t_cad_fix_s = Math.pow(10, parseFloat(document.getElementById('nslice-tfix-slider').value));
+      const t_cad_fix_s = _sliceValue('nslice-tfix-slider');
       pyResult = fn(pyParams, t_cad_fix_s);
     } else if (which === 'tslice') {
-      const N_fix = Math.pow(10, parseFloat(document.getElementById('tslice-nfix-slider').value));
+      const N_fix = _sliceValue('tslice-nfix-slider');
       pyResult = fn(pyParams, N_fix);
     } else {  // qdview: shared (N_exp, t_cad) drive both R(q) and R(D)
-      const N_fix       = Math.pow(10, parseFloat(document.getElementById('qdview-nfix-slider').value));
-      const t_cad_fix_s = Math.pow(10, parseFloat(document.getElementById('qdview-tfix-slider').value));
+      const N_fix       = _sliceValue('qdview-nfix-slider');
+      const t_cad_fix_s = _sliceValue('qdview-tfix-slider');
       pyResult = fn(pyParams, N_fix, t_cad_fix_s);
     }
     const payload = pyResult.toJs({ dict_converter: Object.fromEntries });
     pyResult.destroy();
     pyParams.destroy();
     if (payload.error) {
-      setStatus('Slice error: ' + String(payload.error).slice(0, 200), false, true);
+      setStatus('Could not update this plot.', false, true);
+      console.error(payload.error);
     } else {
       // Merge slice payload into _lastData so renderers use fresh values.
       Object.assign(_lastData, payload);
@@ -465,7 +462,7 @@ async function runSliceUpdate(which) {
       setStatus('');
     }
   } catch (e) {
-    setStatus('Slice compute failed: ' + e.message, false, true);
+    setStatus('Could not update this plot.', false, true);
     console.error(e);
   }
   _sliceComputing[which] = false;
@@ -509,7 +506,7 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
 });
 
 // ── Preset loader ──────────────────────────────────────────────────────────
-// Only 7 controls are touched.
+// Only controls explicitly supplied by the selected preset are touched.
 function _setSliderValue(id, val) {
   const sl  = document.getElementById(id);
   const inp = document.getElementById(id.replace(/_slider$/, '_input'));
@@ -523,6 +520,7 @@ document.getElementById('preset-select').addEventListener('change', function() {
   const p = PRESETS[key];
   _presetApplying = true;
   for (const [k, domId] of Object.entries(PRESET_MAP)) {
+    if (p[k] === undefined) continue;
     _setSliderValue(domId, p[k]);
   }
   // Optical toggle: drives t_night visibility
@@ -541,18 +539,20 @@ document.getElementById('preset-select').addEventListener('change', function() {
 });
 
 // True when the current sidebar matches this preset on the parameters that
-// actually define/affect the ZTF marker: i, f_live, log A, Ω_exp, t_OH.
-// Ω_srv,max, the optical-survey toggle and the physics sliders are intentionally
+// actually define/affect the ZTF marker, including its observing window.
+// Ω_srv,max and the physics sliders are intentionally
 // ignored — the marker hard-codes ZTF's footprint, and physics is the shared GRB
 // population rather than a survey property. The rise/fade identification cuts
 // (s_rise, s_fade) are also excluded: they are free user knobs, not part of a
 // survey's identity, so toggling them does not gray the marker. Used to gray the
 // ZTF metrics/markers when the current configuration is no longer that survey.
-const PRESET_MATCH_KEYS = ['i', 'f_live', 'A_log', 'omega_exp', 't_oh'];
+const PRESET_MATCH_KEYS = ['i', 'f_live', 'A_log', 'omega_exp', 't_oh', 't_night'];
 function paramsMatchPreset(key) {
   const p = PRESETS[key];
   if (!p) return false;
+  if (document.getElementById('optical-switch').checked !== !!p.optical) return false;
   for (const k of PRESET_MATCH_KEYS) {
+    if (p[k] === undefined) continue;
     const cur = parseFloat(document.getElementById(PRESET_MAP[k]).value);
     if (Math.abs(cur - p[k]) > 1e-9) return false;
   }
@@ -567,6 +567,7 @@ function _checkPresetDrift() {
   const sel = document.getElementById('preset-select');
   const opticalSwitch = document.getElementById('optical-switch');
   for (const [k, domId] of Object.entries(PRESET_MAP)) {
+    if (p[k] === undefined) continue;
     const cur = parseFloat(document.getElementById(domId).value);
     if (Math.abs(cur - p[k]) > 1e-9) {
       _activePresetKey = null;
@@ -630,6 +631,11 @@ function readParams() {
 }
 
 // ── Slice-position helpers ────────────────────────────────────────────────
+function _sliceValue(id) {
+  // Every selectable anchor is a whole second or field count. Remove log/exp
+  // roundoff so labels and incremental updates use exactly the selected value.
+  return Math.round(Math.pow(10, parseFloat(document.getElementById(id).value)));
+}
 function _fmtTcad(t_cad_s) {
   if (!isFinite(t_cad_s) || t_cad_s <= 0) return '—';
   if (t_cad_s < 60)        return t_cad_s.toFixed(0) + ' s';
@@ -652,22 +658,22 @@ function _fmtNexp(n) {
 function updateNsliceTfixDisplay() {
   const sl = document.getElementById('nslice-tfix-slider');
   const el = document.getElementById('nslice-tfix-value');
-  if (sl && el) el.textContent = _fmtTcad(Math.pow(10, parseFloat(sl.value)));
+  if (sl && el) el.textContent = _fmtTcad(_sliceValue(sl.id));
 }
 function updateTsliceNfixDisplay() {
   const sl = document.getElementById('tslice-nfix-slider');
   const el = document.getElementById('tslice-nfix-value');
-  if (sl && el) el.textContent = _fmtNexp(Math.pow(10, parseFloat(sl.value)));
+  if (sl && el) el.textContent = _fmtNexp(_sliceValue(sl.id));
 }
 function updateQdviewNfixDisplay() {
   const sl = document.getElementById('qdview-nfix-slider');
   const el = document.getElementById('qdview-nfix-value');
-  if (sl && el) el.textContent = _fmtNexp(Math.pow(10, parseFloat(sl.value)));
+  if (sl && el) el.textContent = _fmtNexp(_sliceValue(sl.id));
 }
 function updateQdviewTfixDisplay() {
   const sl = document.getElementById('qdview-tfix-slider');
   const el = document.getElementById('qdview-tfix-value');
-  if (sl && el) el.textContent = _fmtTcad(Math.pow(10, parseFloat(sl.value)));
+  if (sl && el) el.textContent = _fmtTcad(_sliceValue(sl.id));
 }
 
 // ── Derived sidebar displays (instant, no Python needed) ──────────────────
@@ -684,18 +690,6 @@ function updateNexpMaxDisplay() {
   const nmax = Math.floor(os / oe);
   el.innerHTML = '<span class="derived-info">Max N<sub>exp</sub>: ' + nmax + '</span>';
 }
-function updateSubnightLimitDisplay() {
-  const el = document.getElementById('subnight-limit-display');
-  if (!el) return;
-  const optical = document.getElementById('optical-switch').checked;
-  const i_val   = parseFloat(document.getElementById('i_slider').value);
-  const tnight  = parseFloat(document.getElementById('tnight_slider').value);
-  if (!optical || !isFinite(i_val) || !isFinite(tnight) || i_val <= 0) { el.innerHTML = ''; return; }
-  const limit_h = tnight / i_val;
-  el.innerHTML = '<span class="derived-info">Sub-night limit: '
-               + limit_h.toFixed(2) + ' hr  (t<sub>night</sub> / i)</span>';
-}
-
 // Dynamic t_night lower bound: enforces f_night ≥ f_live so that the
 // continuous (sub-night) f_live_eff = f_live / f_night stays ≤ 1.
 // Sets data-min-floor on the t_night .cs-wrap (read by _effMin) and clamps
@@ -709,7 +703,8 @@ function _updateTnightFloor() {
   const structuralMin = parseFloat(tn.min);
   const max_h = parseFloat(tn.max);
   const step = parseFloat(tn.step) || 0.25;
-  const rawFloor = Math.min(max_h, Math.max(structuralMin, isFinite(flive) ? 24 * flive : structuralMin));
+  const rawFloor = Math.min(max_h, Math.max(structuralMin,
+    isFinite(flive) ? 24 * flive : structuralMin));
   // Snap up to the nearest step multiple so the floor lands on the slider grid.
   const floor = Math.min(max_h, Math.ceil(rawFloor / step - 1e-9) * step);
   wrap.dataset.minFloor = String(floor);
@@ -731,7 +726,6 @@ function _updateTnightFloor() {
     const inp = document.getElementById('tnight_input');
     if (inp) inp.value = floor;
     updateSliderVisual(tn);
-    updateSubnightLimitDisplay();
   }
   _updateTnightFloorNote();
 }
@@ -750,7 +744,7 @@ function _updateTnightFloorNote() {
   if (Math.abs(cur - floor) <= 1e-6 && floor > structuralMin + 1e-9) {
     const flive = parseFloat(document.getElementById('flive_slider').value);
     el.innerHTML = '<span class="derived-info">f<sub>night</sub> must be bigger than ' +
-      'f<sub>live</sub> = ' + flive.toFixed(2) + '</span>';
+      'f<sub>live</sub> = ' + flive.toFixed(3) + '</span>';
   } else {
     el.innerHTML = '';
   }
@@ -817,7 +811,7 @@ async function runUpdate() {
   const params = readParams();
   _computing = true;
   _pendingUpdate = false;
-  setStatus('Computing…', true);
+  setStatus('Calculating…', true);
 
   let data;
   try {
@@ -827,13 +821,15 @@ async function runUpdate() {
     pyResult.destroy();
     pyParams.destroy();
   } catch (e) {
-    setStatus('Error: ' + e.message, false, true);
+    setStatus('Could not calculate the detection rate.', false, true);
+    console.error(e);
     _computing = false;
     return;
   }
 
   if (data.error) {
-    setStatus('Python error: ' + String(data.error).slice(0, 300), false, true);
+    setStatus('Could not calculate the detection rate.', false, true);
+    console.error(data.error);
     _computing = false;
     return;
   }
@@ -1377,8 +1373,8 @@ function render3DSurface(data, params) {
       marker: {size: 9, color: ztfMatch ? CORAL : GRAY_DIM, symbol: 'circle',
                opacity: ztfMatch ? 1.0 : 0.45},
       text: ['ZTF public'], textposition: 'top center',
-      name: 'ZTF public (15k deg², 2-night)',
-      hovertemplate: markerHover3D('ZTF public (2-night)', data.t_exp_ztf_s, data.q_med_ztf, data.D_med_Gpc_ztf),
+      name: 'ZTF public',
+      hovertemplate: markerHover3D('ZTF public', data.t_exp_ztf_s, data.q_med_ztf, data.D_med_Gpc_ztf),
     });
   }
   if (data.R_ztf_hc != null && isFinite(data.R_ztf_hc)) {
@@ -1389,8 +1385,8 @@ function render3DSurface(data, params) {
       marker: {size: 9, color: hcMatch ? VIOLET : GRAY_DIM, symbol: 'square',
                opacity: hcMatch ? 1.0 : 0.45},
       text: ['ZTF HC'], textposition: 'top center',
-      name: 'ZTF high-cadence (2.5k deg², 6/night)',
-      hovertemplate: markerHover3D('ZTF high-cadence (6/night)', data.t_exp_ztf_hc_s, data.q_med_ztf_hc, data.D_med_Gpc_ztf_hc),
+      name: 'ZTF high-cadence',
+      hovertemplate: markerHover3D('ZTF high-cadence', data.t_exp_ztf_hc_s, data.q_med_ztf_hc, data.D_med_Gpc_ztf_hc),
     });
   }
 
@@ -1412,7 +1408,7 @@ function render3DSurface(data, params) {
   const hasSurface = traces.some(t => t.type === 'surface');
   const annotText = dark ? '#8ba0c0' : '#4b6080';
   const layoutAnnotations = hasSurface ? [] : [{
-    text: 'No detections above 0.01/yr — adjust filters',
+    text: 'No continuous surface to display.',
     xref: 'paper', yref: 'paper', x: 0.5, y: 0.5,
     showarrow: false, xanchor: 'center', yanchor: 'middle',
     font: {size: 14, color: annotText},
@@ -1505,7 +1501,7 @@ function renderNSlice(data) {
     Plotly.react('plot-nslice', traces, {
       template: dark ? 'plotly_dark' : 'plotly_white',
       paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
-      annotations: [{text: 'No valid data in N-slice', xref: 'paper', yref: 'paper',
+      annotations: [{text: 'No positive detection rates for this cadence.', xref: 'paper', yref: 'paper',
                      x: 0.5, y: 0.5, showarrow: false,
                      font: {size: 14, color: annotCol()}}],
     }, {responsive: true});
@@ -1593,7 +1589,7 @@ function renderNSlice(data) {
       font: {size: 11, color: ztfLineCol},
     });
   }
-  if (data.N_ztf != null && isFinite(data.N_ztf)) {
+  if (data.R_ztf != null && isFinite(data.R_ztf) && data.N_ztf != null && isFinite(data.N_ztf)) {
     shapes.push({
       type: 'line', yref: 'paper', y0: 0, y1: 1,
       xref: 'x', x0: data.N_ztf, x1: data.N_ztf,
@@ -1734,7 +1730,7 @@ function renderTSlice(data) {
     Plotly.react('plot-tslice', traces, {
       template: dark ? 'plotly_dark' : 'plotly_white',
       paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
-      annotations: [{text: 'No valid data in t-slice', xref: 'paper', yref: 'paper',
+      annotations: [{text: 'No positive detection rates for this field count.', xref: 'paper', yref: 'paper',
                      x: 0.5, y: 0.5, showarrow: false,
                      font: {size: 14, color: annotCol()}}],
     }, {responsive: true});
@@ -1871,7 +1867,7 @@ function renderTSlice(data) {
       fillcolor: gapCol, line: {width: 0}, layer: 'below',
     });
     annotations.push({
-      text: 'gap',
+      text: 'Excluded cadences',
       xref: 'x', yref: 'paper',
       x: Math.sqrt(gapLo * gapHi), y: 0.99,
       xanchor: 'center', yanchor: 'top', showarrow: false,
@@ -1896,7 +1892,7 @@ function renderTSlice(data) {
   }
 
   const tZtfH = data.t_cad_ztf_h;
-  if (tZtfH != null && isFinite(tZtfH)) {
+  if (data.R_ztf != null && isFinite(data.R_ztf) && tZtfH != null && isFinite(tZtfH)) {
     shapes.push({
       type: 'line', yref: 'paper', y0: 0, y1: 1,
       xref: 'x', x0: tZtfH, x1: tZtfH,
@@ -2002,7 +1998,7 @@ function _renderQDPlot(opts) {
       template: dark ? 'plotly_dark' : 'plotly_white',
       paper_bgcolor: plotBg(), plot_bgcolor: plotBg(),
       annotations: [{
-        text: 'No valid data — strategy may be t<sub>OH</sub>-invalid',
+        text: 'No positive detection rates for these settings.',
         xref: 'paper', yref: 'paper', x: 0.5, y: 0.5, showarrow: false,
         font: {size: 13, color: annotCol()},
       }],
@@ -2289,7 +2285,7 @@ function updateDerivedDisplays(data) {
 
 // ── CSV export ─────────────────────────────────────────────────────────────
 document.getElementById('export-btn').addEventListener('click', () => {
-  if (!_lastData || !_lastData.X_flat) { alert('No data yet — run a computation first.'); return; }
+  if (!_lastData || !_lastData.X_flat) { alert('No results to export yet.'); return; }
   const d = _lastData;
   const [ny, nx] = d.shape;
   const n = ny * nx;
@@ -2316,29 +2312,29 @@ document.getElementById('export-btn').addEventListener('click', () => {
 // ── Pyodide initialization ─────────────────────────────────────────────────
 async function initPyodide() {
   try {
-    setStatus('Loading Pyodide runtime…', true);
+    setStatus('Loading model…', true);
     pyodide = await loadPyodide({
       indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.27.0/full/',
     });
     window.pyodide = pyodide;
 
-    setStatus('Installing NumPy…', true);
+    setStatus('Loading model…', true);
     await pyodide.loadPackage(['numpy']);
 
-    setStatus('Unpacking physics engine…', true);
+    setStatus('Loading model…', true);
     const b64 = document.getElementById('physics-zip').textContent.trim();
     const bin = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
     await pyodide.unpackArchive(bin, 'zip');
 
-    setStatus('Importing bridge module…', true);
+    setStatus('Loading model…', true);
     await pyodide.runPythonAsync('import standalone_bridge');
 
     // Warm-up call primes the LRU cache with default parameters
-    setStatus('Warming up model cache…', true);
+    setStatus('Preparing model…', true);
     await pyodide.runPythonAsync(`
 import standalone_bridge as _b
 _b.compute_all({
-    'i_det':2,'A_log':-4.68,'f_live':0.2,'t_overhead_s':0.0,
+    'i_det':2,'A_log':-4.68,'f_live':0.166,'t_overhead_s':0.0,
     'omega_exp_deg2':47.0,'omega_srv_deg2':27500.0,'t_night_h':10.0,
     'p':2.2,'nu_log10':14.7,'E_kiso_log10':53.0,'n0_log10':0.0,
     'epsilon_e_log10':-1.0,'epsilon_B_log10':-4.0,'theta_j_rad':0.1,
@@ -2356,10 +2352,9 @@ print('Bridge ready')
     pyComputeNslice = _sbMod.compute_nslice;
     pyComputeTslice = _sbMod.compute_tslice;
     pyComputeQdview = _sbMod.compute_qdview;
-    setStatus('Ready — rendering initial surface…', true);
+    setStatus('Calculating…', true);
     updateGrbCounts();
     updateNexpMaxDisplay();
-    updateSubnightLimitDisplay();
     updateNsliceTfixDisplay();
     updateTsliceNfixDisplay();
     updateQdviewNfixDisplay();
@@ -2367,7 +2362,7 @@ print('Bridge ready')
     runUpdate();
 
   } catch (e) {
-    setStatus('Initialization failed: ' + e.message, false, true);
+    setStatus('Could not load the model. Reload to try again.', false, true);
     console.error(e);
   }
 }

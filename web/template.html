@@ -22,8 +22,8 @@
   <div class="navbar-right">
     <select class="preset-select" id="preset-select" title="Load preset parameters">
       <option value="none" disabled selected>— Presets —</option>
-      <option value="ztf_public">ZTF public (2-night)</option>
-      <option value="ztf_hc">ZTF high-cadence (6/night)</option>
+      <option value="ztf_public">ZTF public</option>
+      <option value="ztf_hc">ZTF high-cadence</option>
       <option value="rubin">Rubin LSST</option>
     </select>
     <button class="nav-btn" id="export-btn" title="Download surface as CSV">⬇ CSV</button>
@@ -48,7 +48,7 @@
     <div class="metric-badge"><span class="metric-label">t<sub>exp</sub></span><span class="metric-value metric-muted" id="m-texp-opt">—</span></div>
   </div>
   <div class="metric-sep-prominent"></div>
-  <div class="metric-group" id="mg-ztf" title="ZTF public all-sky mode: ~15,000 deg² every 2 nights, evaluated with your current strategy &amp; physics. Dimmed when those differ from the ZTF public preset.">
+  <div class="metric-group" id="mg-ztf" title="Reference strategy: about 7,500 deg² per night, with two visits and alternate-night coverage. Uses the current model settings.">
     <span class="metric-group-label mg-ztf">ZTF public</span>
     <div class="metric-badge"><span class="metric-label">R<sub>det</sub></span><span class="metric-value metric-coral" id="m-R-ztf">—</span></div>
     <div class="metric-badge"><span class="metric-label">t<sub>cad</sub></span><span class="metric-value metric-muted" id="m-tcad-ztf">—</span></div>
@@ -56,14 +56,14 @@
     <div class="metric-badge"><span class="metric-label">t<sub>exp</sub></span><span class="metric-value metric-muted" id="m-texp-ztf">—</span></div>
   </div>
   <div class="metric-sep-prominent"></div>
-  <div class="metric-group" id="mg-hc" title="ZTF high-cadence mode: ~2,500 deg², 6 visits/night, evaluated with your current strategy &amp; physics. Dimmed when those differ from the ZTF high-cadence preset.">
+  <div class="metric-group" id="mg-hc" title="Reference strategy: about 2,500 deg² per night, with six visits. Uses the current model settings.">
     <span class="metric-group-label mg-hc">ZTF HC</span>
     <div class="metric-badge"><span class="metric-label">R<sub>det</sub></span><span class="metric-value metric-violet" id="m-R-hc">—</span></div>
     <div class="metric-badge"><span class="metric-label">t<sub>cad</sub></span><span class="metric-value metric-muted" id="m-tcad-hc">—</span></div>
     <div class="metric-badge"><span class="metric-label">N<sub>exp</sub></span><span class="metric-value metric-muted" id="m-N-hc">—</span></div>
     <div class="metric-badge"><span class="metric-label">t<sub>exp</sub></span><span class="metric-value metric-muted" id="m-texp-hc">—</span></div>
   </div>
-  <span class="metric-preset-note" id="metric-preset-note" hidden title="The ZTF metrics and plot markers use ZTF's fixed footprint but your current strategy &amp; physics, so they only represent the real survey when your parameters match the preset. Dimmed ones differ — load the matching preset to compare directly."></span>
+  <span class="metric-preset-note" id="metric-preset-note" hidden title="Dimmed references use settings that differ from their presets."></span>
   <div class="metric-status" id="metric-status"></div>
 </div>
 
@@ -80,15 +80,15 @@
 <div class="acc-body">
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="i_slider" title="Number of detections required per GRB to count as a detection event. ZTF reference: ~2 epochs in the public 2-night survey, ~6 visits/night in the high-cadence mode.">i</label>
-      <input type="number" id="i_input" class="param-input" min="2" max="100" step="1" value="2">
+      <label class="param-label" for="i_slider" title="Number of detections required to count an afterglow.">i</label>
+      <input type="number" id="i_input" class="param-input" min="2" max="30" step="1" value="2">
     </div>
     %%SLIDER_I%%
   </div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="flive_slider" title="Fraction of total time the telescope is actually observing (0=never, 1=always)">f<sub>live</sub></label>
-      <input type="number" id="flive_input" class="param-input" min="0.01" max="1" step="0.01" value="0.2">
+      <label class="param-label" for="flive_slider" title="Fraction of total time available for observing.">f<sub>live</sub></label>
+      <input type="number" id="flive_input" class="param-input" min="0.01" max="1" step="0.001" value="0.166">
     </div>
     %%SLIDER_FLIVE%%
   </div>
@@ -101,12 +101,12 @@
 <div class="acc-body">
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="Alog_slider" title="log₁₀ of reference limiting flux in Jansky at t_exp_ref = 30 s">log A [Jy at t<sub>exp</sub> = 30 s]</label>
+      <label class="param-label" for="Alog_slider" title="Base-10 logarithm of the limiting flux density in Jy for a 30-second exposure.">log A [Jy at t<sub>exp</sub> = 30 s]</label>
       <input type="number" id="Alog_input" class="param-input" min="-12" max="-2" step="0.01" value="-4.68">
     </div>
     %%SLIDER_ALOG%%
     <div class="param-row grb-derived-row">
-      <span id="mag-ab-display" class="grb-derived-val" title="AB limiting magnitude implied by A at the reference 30 s exposure: m_AB = -2.5·log10(A/3631 Jy)">m<sub>AB</sub> = —</span>
+      <span id="mag-ab-display" class="grb-derived-val" title="AB limiting magnitude for a 30-second exposure: m_AB = −2.5 log10(A / 3631 Jy).">m<sub>AB</sub> = —</span>
     </div>
   </div>
   <div class="param-block">
@@ -132,7 +132,7 @@
 <div class="acc-body">
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="omega_srv_slider" title="Maximum surveyable sky area per cadence cycle in square degrees">Ω<sub>srv,max</sub> [deg²]</label>
+      <label class="param-label" for="omega_srv_slider" title="Maximum sky area covered by the survey.">Ω<sub>srv,max</sub> [deg²]</label>
       <input type="number" id="omega_srv_input" class="param-input" min="100" max="41253" step="100" value="41253">
     </div>
     %%SLIDER_OMEGA_SRV%%
@@ -140,40 +140,40 @@
   </div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="qmin_slider" title="Minimum viewing-angle parameter q for detections counted in the rate. q=0 → no filter. q≈1 → outside relativistic beaming cone (jet edge). q=2 → jet break. Larger q → deeper off-axis. Values ≥ q_nr (≈√2/θ_j) yield no detections.">q<sub>min</sub></label>
+      <label class="param-label" for="qmin_slider" title="Minimum viewing-angle parameter included in the rate. Zero applies no viewing-angle cut.">q<sub>min</sub></label>
       <input type="number" id="qmin_input" class="param-input" min="0" max="14.5" step="0.01" value="0">
     </div>
     %%SLIDER_QMIN%%
   </div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="Dmin_slider" title="Minimum detection distance in Gpc. 0 = no filter. Sources closer than D_min are excluded from the detection rate. Values ≥ D_Euc yield no detections.">D<sub>min</sub> [Gpc]</label>
+      <label class="param-label" for="Dmin_slider" title="Minimum source distance included in the rate. Zero applies no distance cut.">D<sub>min</sub> [Gpc]</label>
       <input type="number" id="Dmin_input" class="param-input" min="0" max="12" step="0.01" value="0">
     </div>
     %%SLIDER_DMIN%%
   </div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="sfade_slider" title="Survey alert-stream candidate filter: minimum required magnitude-decline (fading) rate in mag/day. 0 = no filter. 0.3 mag/day matches typical ZTF-style cuts; 1 mag/day is stricter. By default the cut is a best-case viewing-angle cap (first detection at the light-curve peak). In Exact rate mode with its 'Fade cut: random start time' refinement on, it is instead applied as a survival probability for a uniformly random observation start within one cadence of the peak — a soft weight under which long cadences suppress even on-axis bursts.">s<sub>fade</sub> [mag/day]</label>
+      <label class="param-label" for="sfade_slider" title="Minimum fading rate between detections, in magnitudes per day. Zero disables this cut.">s<sub>fade</sub> [mag/day]</label>
       <input type="number" id="sfade_input" class="param-input" min="0" max="2" step="0.05" value="0">
     </div>
     %%SLIDER_SFADE%%
   </div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="srise_slider" title="Survey alert-stream candidate filter: minimum implied rise rate in mag/day from the previous visit's non-detection at the limiting magnitude, (m_lim - m_first)/t_cad >= s_rise — equivalent to requiring the first detection be a factor 10^(s_rise·t_cad/2.5 d) brighter than the limit. 0 = no filter. Applies even at i = 1 (needs only the previous visit + first detection); grows exponentially stricter with cadence. By default it shifts the flux-limited boundaries to the raised limit (best-case start at the peak). In Exact rate mode with its 'Rise cut: random start time' refinement on, it is applied as the uniform-start survival weight jointly with s_fade (over the same random start time).">s<sub>rise</sub> [mag/day]</label>
+      <label class="param-label" for="srise_slider" title="Minimum rise rate inferred from the preceding non-detection at the flux limit and the first detection. Zero disables this cut.">s<sub>rise</sub> [mag/day]</label>
       <input type="number" id="srise_input" class="param-input" min="0" max="2" step="0.05" value="0">
     </div>
     %%SLIDER_SRISE%%
   </div>
   <div class="param-block" id="tnight-block" style="display:none">
     <div class="param-row">
-      <label class="param-label" for="tnight_slider" title="Length of the observable astronomical night in hours">t<sub>night</sub> [hr]</label>
+      <label class="param-label" for="tnight_slider" title="Duration of the observing window within each night.">t<sub>night</sub> [hr]</label>
       <input type="number" id="tnight_input" class="param-input" min="1" max="24" step="0.25" value="10">
     </div>
     %%SLIDER_TNIGHT%%
     <div id="tnight-floor-note"></div>
-    <div id="subnight-limit-display"></div>
+    <div id="subnight-limit-display" hidden></div>
   </div>
 </div>
 </details>
@@ -185,86 +185,86 @@
   <div class="param-group-label">Physical model</div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="p_slider" title="Electron power-law index (must be > 2). Exponentially amplified in flux; strongly affects spectral slope and all detection ranges.">p</label>
+      <label class="param-label" for="p_slider" title="Electron energy-distribution index; must exceed 2.">p</label>
       <input type="number" id="p_input" class="param-input" min="2.01" max="3" step="0.01" value="2.2">
     </div>
     %%SLIDER_P%%
   </div>
   <div class="param-block" id="nu-block">
     <div class="param-row">
-      <label class="param-label" for="nu_log_slider" title="log₁₀ of observing frequency in Hz. Optical/near-IR window: 10^14.3 Hz (~1 µm, J-band) to 10^15.1 Hz (~80 nm, near-UV). Default 5×10¹⁴ Hz = optical V-band (550 nm).">log ν [Hz]</label>
+      <label class="param-label" for="nu_log_slider" title="Base-10 logarithm of the observing frequency in Hz.">log ν [Hz]</label>
       <input type="number" id="nu_log_input" class="param-input" min="14.3" max="15.1" step="0.01" value="14.7">
     </div>
     %%SLIDER_NU_LOG%%
   </div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="Ekiso_log_slider" title="log₁₀ of isotropic-equivalent kinetic energy in erg. Scales flux as E^{(p+3)/4} and deceleration time as E^{1/3}.">log E<sub>k,iso</sub> [erg]</label>
+      <label class="param-label" for="Ekiso_log_slider" title="Base-10 logarithm of the isotropic-equivalent kinetic energy in erg.">log E<sub>k,iso</sub> [erg]</label>
       <input type="number" id="Ekiso_log_input" class="param-input" min="51" max="55" step="0.1" value="53">
     </div>
     %%SLIDER_EKISO_LOG%%
   </div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="n0_log_slider" title="log₁₀ of ISM number density in cm⁻³. Affects flux (∝ n^{1/2}) and deceleration time (∝ n^{-1/3}).">log n<sub>0</sub> [cm⁻³]</label>
+      <label class="param-label" for="n0_log_slider" title="Base-10 logarithm of the ambient number density in cm⁻³.">log n<sub>0</sub> [cm⁻³]</label>
       <input type="number" id="n0_log_input" class="param-input" min="-3" max="2" step="0.1" value="0">
     </div>
     %%SLIDER_N0_LOG%%
   </div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="gamma0_log_slider" title="log₁₀ of initial bulk Lorentz factor. Affects deceleration time (∝ Γ₀^{-8/3}) and the on-axis beaming cone angle.">log Γ<sub>0</sub></label>
+      <label class="param-label" for="gamma0_log_slider" title="Base-10 logarithm of the initial bulk Lorentz factor.">log Γ<sub>0</sub></label>
       <input type="number" id="gamma0_log_input" class="param-input" min="2" max="3.5" step="0.05" value="2.5">
     </div>
     %%SLIDER_GAMMA0_LOG%%
   </div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="thetaj_slider" title="Jet half-opening angle in radians. Sets the jet-break time and the beaming fraction f_b = θ_j²/2.">θ<sub>j</sub> [rad]</label>
+      <label class="param-label" for="thetaj_slider" title="Jet half-opening angle in radians.">θ<sub>j</sub> [rad]</label>
       <input type="number" id="thetaj_input" class="param-input" min="0.01" max="0.5" step="0.01" value="0.1">
     </div>
     %%SLIDER_THETAJ%%
   </div>
   <div class="param-block" id="epse-block">
     <div class="param-row">
-      <label class="param-label" for="epse_slider" title="log₁₀ of electron energy fraction. Enters flux as (ε_e·(p−2)/(p−1))^{p−1}.">log ε<sub>e</sub></label>
+      <label class="param-label" for="epse_slider" title="Base-10 logarithm of the fraction of post-shock energy in electrons.">log ε<sub>e</sub></label>
       <input type="number" id="epse_input" class="param-input" min="-2" max="-0.3" step="0.05" value="-1">
     </div>
     %%SLIDER_EPSE%%
   </div>
   <div class="param-block" id="epsB-block">
     <div class="param-row">
-      <label class="param-label" for="epsB_slider" title="log₁₀ of magnetic energy fraction. Enters flux as ε_B^{(p+1)/4}. Default −4: below the naive value (−3.4) that would put the light curve through the median ZTF-detected νL_ν(1 day) ≈ 1.9e44 erg/s (Ho et al. 2022 Table 5), since that observed median is itself selection-biased toward brighter detected events. Consistent with broadband afterglow modelling (ε_B ~ 1e-5–1e-2, Santana et al. 2014). The old 1e-2 default gave a bright-tail light curve ~55× above this default.">log ε<sub>B</sub></label>
+      <label class="param-label" for="epsB_slider" title="Base-10 logarithm of the fraction of post-shock energy in magnetic fields.">log ε<sub>B</sub></label>
       <input type="number" id="epsB_input" class="param-input" min="-5" max="-1" step="0.05" value="-4">
     </div>
     %%SLIDER_EPSB%%
   </div>
   <div class="param-row grb-derived-row">
-    <span id="tdec-display" class="grb-derived-val" title="Deceleration time t_dec from the user's E_k,iso, n₀, Γ₀ (Euclidean ζ=1/3 branch)">t<sub>dec</sub> = —</span>
-    <span id="fnu-tdec-display" class="grb-derived-val" title="On-axis spectral flux density at t_dec, viewed from D_Euc at observing frequency ν (PLS G, Eq. 24)">F<sub>ν</sub>(t<sub>dec</sub>,D<sub>Euc</sub>) = —</span>
+    <span id="tdec-display" class="grb-derived-val" title="Deceleration time calculated from the physical parameters.">t<sub>dec</sub> = —</span>
+    <span id="fnu-tdec-display" class="grb-derived-val" title="On-axis flux density at t_dec, evaluated at D_Euc and the selected observing frequency.">F<sub>ν</sub>(t<sub>dec</sub>,D<sub>Euc</sub>) = —</span>
   </div>
   <!-- TEMP-FDEC-OVERRIDE — begin (delete whole block on removal) -->
   <div class="param-block" id="fdec-override-block">
     <div class="param-row">
-      <label class="param-label" for="fdec_log_slider" title="TEMPORARY dev control: log10 of the flux normalization F_nu(t_dec, D_Euc) in Jy. Follows the physics-derived value; drag or type to override. Changing any upstream physics parameter (p, nu, E_k,iso, n0, Gamma0, eps_e, eps_B, D_Euc) clears the override.">log F<sub>ν</sub>(t<sub>dec</sub>,D<sub>Euc</sub>) [Jy]</label>
+      <label class="param-label" for="fdec_log_slider" title="Base-10 logarithm of the on-axis flux density at t_dec and D_Euc, in Jy. Editing this value overrides the calculated normalization; changing a parameter that determines it resets the override.">log F<sub>ν</sub>(t<sub>dec</sub>,D<sub>Euc</sub>) [Jy]</label>
       <input type="number" id="fdec_log_input" class="param-input" min="-6" max="6" step="0.01" value="-2.05">
     </div>
     %%SLIDER_FDEC_LOG%%
-    <div id="fdec-override-note" style="display:none"><span class="derived-info warning">override active — <a href="#" id="fdec-override-reset">reset to physics</a></span></div>
+    <div id="fdec-override-note" style="display:none"><span class="derived-info warning">Flux override active — <a href="#" id="fdec-override-reset">reset</a></span></div>
   </div>
   <!-- TEMP-FDEC-OVERRIDE — end -->
   <div class="param-group-label" style="margin-top:10px">Cosmological model</div>
   <div class="param-block">
     <div class="param-row">
-      <label class="param-label" for="deuc_slider" title="Euclidean calibration distance in Gpc. Sets the volume for the rate integral. Default 4.55 Gpc chosen so that with ρ = 260 Gpc⁻³ yr⁻¹ the all-sky on-axis LGRB rate is ≈511 yr⁻¹ as observed (Ho et al. 2022 §4.1); 5.28 Gpc ≈ z = 2 in flat ΛCDM.">D<sub>Euc</sub> [Gpc]</label>
-      <input type="number" id="deuc_input" class="param-input" min="1" max="12" step="0.01" value="4.55">
+      <label class="param-label" for="deuc_slider" title="Outer distance of the Euclidean volume used to calculate the rate.">D<sub>Euc</sub> [Gpc]</label>
+      <input type="number" id="deuc_input" class="param-input" min="1" max="12" step="0.01" value="8.66">
     </div>
     %%SLIDER_DEUC%%
   </div>
   <div class="param-block" id="rho-grb-block">
     <div class="param-row">
       <label class="param-label" for="rho_grb_log_slider" title="GRB volumetric rate density. Scales the total detection rate linearly.">ℛ [Gpc⁻³ yr⁻¹]</label>
-      <input type="number" id="rho_grb_log_input" class="param-input" min="10" max="500" step="1" value="260">
+      <input type="number" id="rho_grb_log_input" class="param-input" min="10" max="500" step="1" value="138">
     </div>
     %%SLIDER_RHO_GRB_LOG%%
   </div>
@@ -276,14 +276,14 @@
     <div class="param-group-label" style="margin-top:10px">Luminosity function</div>
     <div class="param-block">
       <div class="param-row">
-        <label class="param-label" for="lf_alpha_slider" title="Slope per unit luminosity: dℛ/dL ∝ L^α. A finite detected rate requires −2.5 < α < −1; the distribution per logarithmic luminosity has slope α+1.">α</label>
+        <label class="param-label" for="lf_alpha_slider" title="Power-law slope per unit luminosity: dℛ/dL ∝ L^α. A finite detected rate requires −2.5 < α < −1.">α</label>
         <input type="number" id="lf_alpha_input" class="param-input" min="-2.49" max="-1.01" step="0.001" value="-2">
       </div>
       %%SLIDER_LF_ALPHA%%
     </div>
     <div class="param-block">
       <div class="param-row">
-        <label class="param-label" for="lf_norm_log_slider" title="log10 of 𝒜, the rate density per natural-log luminosity at L_ref = 10^32 erg/s/Hz. The density per dex at L_ref is ln(10)𝒜. Detection rates scale linearly with 𝒜.">log 𝒜 [Gpc⁻³ yr⁻¹]</label>
+        <label class="param-label" for="lf_norm_log_slider" title="Base-10 logarithm of 𝒜, the rate density per natural-log luminosity at L_ref. Detection rates scale linearly with 𝒜.">log 𝒜 [Gpc⁻³ yr⁻¹]</label>
         <input type="number" id="lf_norm_log_input" class="param-input" min="-3" max="3" step="0.05" value="0">
       </div>
       %%SLIDER_LF_NORM_LOG%%
@@ -304,7 +304,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('optical-switch').click()">Optical survey mode</span>
   </div>
-  <p class="toggle-hint">Requires ≥ i detections in one night (intra-night) or a single detection per night across nights (inter-night). Activates t<sub>night</sub> and defines f<sub>night</sub> = t<sub>night</sub>/24 h; sub-night (intra-night) cadences are rescaled by f<sub>night</sub>, per-day (inter-night) cadences are unchanged. Requires f<sub>night</sub> ≥ f<sub>live</sub>.</p>
+  <p class="toggle-hint">Within-night cadences require a detection window ≤ t<sub>night</sub>. Longer cadences must be whole days. The observing budget requires f<sub>live</sub> ≤ f<sub>night</sub> = t<sub>night</sub>/24 h.</p>
   <div class="param-switch-row">
     <label class="toggle-switch" for="regime-color-switch">
       <input type="checkbox" id="regime-color-switch">
@@ -312,7 +312,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('regime-color-switch').click()">Color by detection regime</span>
   </div>
-  <p class="toggle-hint">Tints the surface by dominant regime: warm = flux-limited (D<sub>Euc</sub>), cool = cadence-limited (D<sub>i</sub>), gray = singly-limited (D<sub>dec</sub>). Brighter = higher range.</p>
+  <p class="toggle-hint">Colors identify the dominant detection regime shown in the legend.</p>
   <div class="param-switch-row">
     <label class="toggle-switch" for="full-integral-switch">
       <input type="checkbox" id="full-integral-switch">
@@ -320,16 +320,16 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('full-integral-switch').click()">Exact rate mode</span>
   </div>
-  <p class="toggle-hint">Integrates R<sub>det</sub> over all viewing angles q ∈ [0, q<sub>nr</sub>] (thesis Eq. 39) instead of the dominant-term approximation — slower, but exact. Unlocks the refinements below; the first time it is switched on they all turn on together, and each can then be toggled independently.</p>
+  <p class="toggle-hint">Integrates the rate over viewing angle. With this off, the rate uses the dominant-term approximation.</p>
   <div class="sub-toggle-group" id="exact-mode-subs">
     <div class="param-switch-row">
       <label class="toggle-switch" for="win-tp-switch">
         <input type="checkbox" id="win-tp-switch">
         <span class="toggle-track"><span class="toggle-thumb"></span></span>
       </label>
-      <span class="switch-label" onclick="document.getElementById('win-tp-switch').click()">Include t<sub>−</sub> ≈ t<sub>on</sub></span>
+      <span class="switch-label" onclick="document.getElementById('win-tp-switch').click()">Measure detection window from the peak</span>
     </div>
-    <p class="toggle-hint">Measures the detectability window from the light-curve turn-on t<sub>on</sub> ≈ t<sub>p</sub> (window start t<sub>−</sub> ≈ t<sub>on</sub>) instead of from the burst: t<sub>+</sub> ≥ t<sub>p</sub> + i·t<sub>cad</sub>, so off-axis events must stay above the limit for the full duration <em>after</em> they peak (the legacy criterion credits detections to the pre-peak interval, where the off-axis flux is negligible). Suppresses the marginal off-axis population and moves the detected q-median on-axis. By default (“Detection window spans i·t<sub>cad</sub>” off) gives the corrected criterion t<sub>+</sub> − t<sub>p</sub> ≥ (i−1)·t<sub>cad</sub>; with that toggle also on, instead gives t<sub>+</sub> − t<sub>p</sub> ≥ i·t<sub>cad</sub>.</p>
+    <p class="toggle-hint">Requires the selected detection window after the peak: t<sub>+</sub> − t<sub>p</sub> ≥ (i−1)·t<sub>cad</sub>, or ≥ i·t<sub>cad</sub> when that window is selected.</p>
     <div class="param-switch-row">
       <label class="toggle-switch" for="rise-rs-switch">
         <input type="checkbox" id="rise-rs-switch">
@@ -337,7 +337,7 @@
       </label>
       <span class="switch-label" onclick="document.getElementById('rise-rs-switch').click()">Rise cut (s<sub>rise</sub>): random start time</span>
     </div>
-    <p class="toggle-hint">Applies the s<sub>rise</sub> cut as a uniform random observation-start survival weight (only a fraction of bursts pass, depending on when the survey happens to catch them). Off: the best-case hard boundary (first detection assumed at the peak, as in the dominant-term mode), which raises the rate. No effect when s<sub>rise</sub> = 0.</p>
+    <p class="toggle-hint">Averages the rise cut over a first observation uniformly distributed within one cadence after the peak. When off, the first observation is placed at the peak. No effect when s<sub>rise</sub> = 0.</p>
     <div class="param-switch-row">
       <label class="toggle-switch" for="fade-rs-switch">
         <input type="checkbox" id="fade-rs-switch">
@@ -345,7 +345,7 @@
       </label>
       <span class="switch-label" onclick="document.getElementById('fade-rs-switch').click()">Fade cut (s<sub>fade</sub>): random start time</span>
     </div>
-    <p class="toggle-hint">Applies the s<sub>fade</sub> cut as a uniform random observation-start survival weight. Off: the best-case hard boundary, which raises the rate. No effect when s<sub>fade</sub> = 0.</p>
+    <p class="toggle-hint">Averages the fading cut over a first observation uniformly distributed within one cadence after the peak. When off, the first observation is placed at the peak. No effect when s<sub>fade</sub> = 0.</p>
   </div>
   <div class="param-switch-row">
     <label class="toggle-switch" for="toh-approx-switch">
@@ -354,7 +354,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('toh-approx-switch').click()">t<sub>OH</sub> approximation</span>
   </div>
-  <p class="toggle-hint">Drops t<sub>OH</sub> from the exposure formula to enable closed-form optimal strategies, while still enforcing t<sub>exp</sub> &gt; t<sub>OH</sub> as the validity boundary.</p>
+  <p class="toggle-hint">Neglects overhead in the exposure-time calculation while retaining t<sub>exp</sub> &gt; t<sub>OH</sub> as a validity condition.</p>
   <div class="param-switch-row">
     <label class="toggle-switch" for="win-i-switch">
       <input type="checkbox" id="win-i-switch">
@@ -362,7 +362,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('win-i-switch').click()">Detection window spans i·t<sub>cad</sub></span>
   </div>
-  <p class="toggle-hint">Adds one extra waiting gap: counts the required detectability duration as i·t<sub>cad</sub> instead of the i−1 gaps between the i detections (default, off). Enters wherever a hard window is used: q<sub>i</sub>, D<sub>i</sub>.</p>
+  <p class="toggle-hint">Uses i·t<sub>cad</sub> for the required detection window instead of the (i−1)·t<sub>cad</sub> between i detections. In optical mode, this window must fit within t<sub>night</sub>.</p>
   <div class="param-switch-row">
     <label class="toggle-switch" for="lf-switch">
       <input type="checkbox" id="lf-switch">
@@ -370,7 +370,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('lf-switch').click()">Luminosity function</span>
   </div>
-  <p class="toggle-hint">Uses dℛ/dL = (𝒜/L<sub>ref</sub>)(L/L<sub>ref</sub>)<sup>α</sup> for every L &gt; 0, with L ≡ L<sub>ν</sub>(t<sub>dec</sub>). 𝒜 sets the rate density per natural-log luminosity at L<sub>ref</sub>. The detected rate is finite for −5/2 &lt; α &lt; −1, although the total intrinsic rate and population median are undefined. 𝒜 replaces ℛ; ν, ε<sub>e</sub>, ε<sub>B</sub>, and the flux override are inactive because the LF specifies the spectral luminosity at the selected band. Exact rate mode selects full angular integration; with it off, the rate uses the most-contributing-region approximation.</p>
+  <p class="toggle-hint">Uses dℛ/dL = (𝒜/L<sub>ref</sub>)(L/L<sub>ref</sub>)<sup>α</sup> for L &gt; 0, where L ≡ L<sub>ν</sub>(t<sub>dec</sub>). The detected rate is finite for −5/2 &lt; α &lt; −1; the total intrinsic rate and population median are undefined. 𝒜 replaces ℛ. The frequency, electron and magnetic energy fractions, and flux override are inactive because the luminosity function specifies the spectral luminosity.</p>
 </div>
 </details>
 

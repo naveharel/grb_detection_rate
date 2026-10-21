@@ -25,29 +25,39 @@ class SurveyPreset:
     A_log: float             # log10(F_lim_ref / Jy)
     omega_exp_deg2: float    # single-exposure field of view [deg^2]
     t_overhead_s: float      # per-exposure overhead [s]
-    omega_srv_deg2: float    # total survey footprint [deg^2]
+    omega_srv_deg2: float    # footprint per observing window [deg^2]
     optical: bool            # optical-survey mode (sub-night cadence) in the app
     s_fade: float = 0.0      # identification cut: min fading rate [mag/day]
     s_rise: float = 0.0      # identification cut: min rise rate [mag/day]
+    t_night_h: float | None = None  # effective window set by the ZTF presets
+    visits_per_night: int | None = None
 
 
-# Values verified against web/app.js PRESETS (2026-07 — split into the two
-# real ZTF observing modes; i_det, f_live and footprints match the detected
-# samples of Ho et al. 2022 / Andreoni et al. 2021). The rise/fade identification
-# cuts default off (s_fade = s_rise = 0): they are free user knobs in the app, not
-# part of a preset's identity.
+# Observing-block defaults (2026-10-21), mirrored from web/app.js. Both require
+# two detections. Public alternates halves of its full 15,000 deg^2 footprint;
+# no additional alternate-night multiplier is applied to its 7,500 deg^2 area.
+# Rise/fade cuts remain free user choices rather than preset identity fields.
 ZTF_PUBLIC = SurveyPreset(
-    key="ztf_public", label="ZTF public", i_det=2, f_live=0.08, A_log=-4.68,
-    omega_exp_deg2=47.0, t_overhead_s=15.0, omega_srv_deg2=15000.0, optical=True,
+    key="ztf_public", label="ZTF public", i_det=2, f_live=0.166, A_log=-4.68,
+    omega_exp_deg2=47.0, t_overhead_s=15.0, omega_srv_deg2=7500.0, optical=True,
+    t_night_h=4.0, visits_per_night=2,
 )
 
 ZTF_HC = SurveyPreset(
-    key="ztf_hc", label="ZTF high-cadence", i_det=6, f_live=0.17, A_log=-4.68,
+    key="ztf_hc", label="ZTF high-cadence", i_det=2, f_live=0.166, A_log=-4.68,
     omega_exp_deg2=47.0, t_overhead_s=15.0, omega_srv_deg2=2500.0, optical=True,
+    t_night_h=6.0, visits_per_night=6,
 )
 
-# Backwards-compatible alias: existing figures that referenced the single
-# "ZTF" preset now get the public all-sky mode.
+# Historical two-day configuration for existing paper figures. Keep it explicit
+# so updating app presets cannot silently change their scientific setup.
+ZTF_PUBLIC_LEGACY = SurveyPreset(
+    key="ztf_public_legacy", label="ZTF public (legacy)", i_det=2, f_live=0.08,
+    A_log=-4.68, omega_exp_deg2=47.0, t_overhead_s=15.0,
+    omega_srv_deg2=15000.0, optical=True,
+)
+
+# Alias for the current public preset; historical figures use the named legacy.
 ZTF = ZTF_PUBLIC
 
 RUBIN = SurveyPreset(

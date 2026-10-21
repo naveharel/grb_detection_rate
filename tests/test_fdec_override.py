@@ -50,7 +50,7 @@ def _rebuilt_with_A(a_log):
     )
 
 
-_N_EXP, _T_CAD_S, _I_DET = models.ztf_strategy_point(_ztf_model(), i_det=presets.ZTF.i_det)
+_N_EXP, _T_CAD_S, _I_DET = models.ztf_strategy_point(_ztf_model(), i_det=presets.ZTF_PUBLIC_LEGACY.i_det)
 
 
 # k spans cadence-limited, flux-limited and the q_nr-capped regimes.

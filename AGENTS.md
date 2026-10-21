@@ -30,6 +30,9 @@ back unless asked. (Details: [docs/architecture.md](docs/architecture.md).)
 - Ask before large architectural decisions.
 - The Dash app on `dash-legacy` is frozen — never propose changes there unless explicitly asked.
 
+## App-facing copy
+Before adding or changing user-visible app text—including labels, tooltips, hints, warnings, plot text, and status messages—show the user the exact proposed wording and explicitly ask for approval. Obtain approval before applying it. Write for someone arriving from the paper: explain the current model and controls without referring to conversation history, previous versions, or implementation changes. Prefer short, clear explanations; include more detail when needed for scientific understanding. Preserve the project’s notation rules.
+
 ## Hard Constraints (easy to violate — always apply)
 - **Subscript notation**: in all user-visible text (HTML + Plotly strings) use `<sub>…</sub>` tags, **never** plain underscores (`t_OH`, `N_exp`, `t_cad`, …). HTML `title=""` tooltips are the only exception. Full element list: [docs/ui_reference.md](docs/ui_reference.md#subscript-notation-rule).
 - **Frozen-dataclass `R_int_yr`**: baked in at class-load time with default rho/D_euc. When constructing with custom `rho_grb_gpc3_yr` or `D_euc_cm`, compute `R_int_yr` manually and pass it explicitly. Details: [docs/physics_model.md](docs/physics_model.md#frozen-dataclass-warning--r_int_yr).

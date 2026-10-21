@@ -28,9 +28,9 @@ def build_model_from_preset(preset, *, toh_approx: bool = False, **physics_overr
     epsilon_B_log10, theta_j_rad, gamma0_log10, nu_log10, D_euc_gpc, rho_grb_log10``).
 
     Returns the *day* model. This is correct for strategy points at cadence >= 1 day
-    (e.g. the ZTF 2-day reference) and for strategy-surface figures. The app's sub-day
+    (e.g. ZTF_PUBLIC_LEGACY's 2-day reference) and for strategy-surface figures. The app's sub-day
     optical branch (a separate night model + ``f_night`` factor) is intentionally not
-    reproduced here; add a dedicated builder if a figure needs it.
+    reproduced here; use standalone_bridge for the current ZTF observing blocks.
     """
     design = SurveyDesignParams(omega_survey_max_sr=preset.omega_srv_deg2 * DEG2_TO_SR)
     t_oh = 0.0 if toh_approx else preset.t_overhead_s
@@ -49,10 +49,10 @@ def n_exp_max(model) -> float:
     return model.instrument.omega_survey_max_sr / model.instrument.omega_exp_sr
 
 
-def ztf_strategy_point(model, *, i_det: int = _presets.ZTF.i_det):
-    """(N_exp, t_cad_s, i_det) for the ZTF reference point, matching the bridge.
+def ztf_strategy_point(model, *, i_det: int = _presets.ZTF_PUBLIC_LEGACY.i_det):
+    """(N_exp, t_cad_s, i_det) for the historical two-day ZTF reference.
 
-    The bridge uses ``N_ztf = min(omega_srv/omega_exp, N_exp_max)`` (which equals
-    ``N_exp_max`` for the ZTF footprint) and a fixed cadence of 2 days.
+    Existing paper figures use ZTF_PUBLIC_LEGACY with this day-model helper.
+    Current public/HC references use observing blocks in standalone_bridge.
     """
     return (n_exp_max(model), 2.0 * DAY_S, int(i_det))

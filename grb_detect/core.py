@@ -220,15 +220,16 @@ def optical_survey_tcad_seconds(
     *,
     i_det: int,
     t_night_s: float,
+    win_i_minus_one: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Optical-survey cadence validity without rounding.
 
     Physical/operational constraints:
-      1) Sub-night sampling must allow i_det visits in a single night:
-            i_det * t_cad < t_night
+      1) The selected detection window must fit in a single night:
+            (i_det - 1) * t_cad <= t_night, or i_det * t_cad <= t_night.
          This defines the continuous, allowed region.
 
-      2) Between t_night/i_det and 1 day, we disallow cadences:
+      2) Above that inclusive boundary and below 1 day, disallow cadences:
          you cannot obtain i_det detections within one night, but cadence is still
          shorter than the day-night cycle. Those points are invalid (gap).
 
@@ -249,20 +250,8 @@ def optical_survey_tcad_seconds(
 
     valid = np.isfinite(t_eff) & (t_eff > 0.0)
 
-    t_cont_max = float(t_night_s) / float(i_det)
-
-    # Continuous allowed region (strict inequality)
-    cont = valid & (t_eff < t_cont_max)
-    if np.any(cont):
-        valid[cont] &= (float(i_det) * t_eff[cont] < float(t_night_s))
-
-    # Gap region: (t_night/i_det) <= t < 1 day is invalid for i_det >= 2.
-    # Note: for i_det = 1, this gap should not apply (cadences up to 1 day are valid
-    # since a single detection fits in any sub-day window). Fix this when i_det = 1
-    # support is added.
-    gap = valid & (t_eff >= t_cont_max) & (t_eff < float(DAY_S))
-    if np.any(gap):
-        valid[gap] = False
+    t_cont_max = optical_continuous_limit_s(i_det, t_night_s, win_i_minus_one)
+    valid &= (t_eff >= DAY_S) | (t_eff <= t_cont_max)
 
     # Discrete day multiples region: t >= 1 day and t is an integer number of days
     ge_day = valid & (t_eff >= float(DAY_S))
@@ -270,6 +259,37 @@ def optical_survey_tcad_seconds(
         valid[ge_day] &= _is_integer_day_multiple(t_eff[ge_day])
 
     return t_eff, valid
+
+
+def optical_continuous_limit_s(i_det: int, t_night_s: float,
+                               win_i_minus_one: bool = False) -> float:
+    """Inclusive cadence limit for the selected detection-window convention."""
+    i_eff = int(i_det) - int(win_i_minus_one)
+    return float(t_night_s) / i_eff if i_eff > 0 else math.inf
+
+
+def build_N_exp_grid(N_min: float, N_max: float, n: int) -> np.ndarray:
+    """Integer fields: log coverage plus dense, round survey-scale counts."""
+    lo, hi = max(1, math.ceil(N_min - 1e-9)), math.floor(N_max + 1e-9)
+    if hi < lo:
+        return np.array([], dtype=float)
+    base = np.rint(np.geomspace(lo, hi, max(2, n)))
+    anchors = np.concatenate((np.arange(1, 21), np.arange(25, 201, 5),
+                              np.array([250, 300, 400, 500, 750, 1000])))
+    return np.unique(np.concatenate((base, anchors[(anchors >= lo) & (anchors <= hi)])))
+
+
+def build_tcad_grid(t_min_s: float, t_max_s: float, n: int) -> np.ndarray:
+    """Log coverage with exact seconds and five-minute samples through 3 h."""
+    if t_max_s < t_min_s:
+        return np.array([], dtype=float)
+    base = np.geomspace(t_min_s, t_max_s, max(2, n))
+    # geomspace endpoints and anchors remain exact physical values, not rounded logs.
+    anchors = np.concatenate((np.array([1, 5, 10, 15, 30, 60, 100, 120, 200]),
+                              np.arange(1, 37) * 300.0,
+                              np.arange(13, 25) * 900.0,
+                              np.array([8, 12, 18, 24]) * 3600.0))
+    return np.unique(np.concatenate((base, anchors[(anchors >= t_min_s) & (anchors <= t_max_s)])))
 
 
 def _build_optical_tcad_grid(
@@ -280,29 +300,27 @@ def _build_optical_tcad_grid(
     t_max_s: float,
     ny: int,
     n_days: int | None = None,
+    win_i_minus_one: bool = False,
 ) -> np.ndarray:
     """Piecewise cadence grid for optical surveys.
 
-    Below t_night/i_det: continuous (log-spaced).
-    Between t_night/i_det and 1 day: include a sparse log-spaced set, but it will be invalid and plot as a gap.
+    Through the selected detection-window boundary: continuous, with anchors.
+    Above the boundary and below 1 day: masked samples preserve the plotted gap.
     Above 1 day: only integer multiples of a day (n*DAY_S), sampled via log-spacing in n (still exact integers).
     """
     t_min_s = float(t_min_s)
     t_max_s = float(t_max_s)
 
-    t_cont_max = float(t_night_s) / float(i_det)
+    t_cont_max = optical_continuous_limit_s(i_det, t_night_s, win_i_minus_one)
 
     # Allocate rows: prioritize continuous part + day-multiples part, keep a small "gap" band
     n_gap = max(10, int(_OPTICAL_GRID_FRAC_GAP * ny))
     n_cont = max(40, int(_OPTICAL_GRID_FRAC_CONT * ny))
     n_disc = max(40, ny - n_cont - n_gap)
 
-    # Continuous part (cap at t_cont_max, and ensure strictly below it)
-    t_cont_hi = min(t_cont_max * 0.999, t_max_s)
-    if t_cont_hi <= t_min_s:
-        t_cont = np.array([t_min_s], dtype=float)
-    else:
-        t_cont = np.logspace(np.log10(t_min_s), np.log10(t_cont_hi), n_cont)
+    # The boundary is admissible; only the day/night dispatch remains exclusive.
+    t_cont_hi = min(t_cont_max, t_max_s, np.nextafter(float(DAY_S), 0.0))
+    t_cont = build_tcad_grid(t_min_s, t_cont_hi, n_cont)
 
     # Gap sampling (will be invalid, but creates a clean "hole" in the surface)
     # Only include if there is a gap interval in range.
@@ -370,6 +388,7 @@ def _build_adaptive_N_exp_grid(
     x_max: float,
     f_live: float,
     t_overhead_s: float,
+    base_grid: np.ndarray,
 ) -> np.ndarray:
     """Return 2D N_exp array (ny × nx) with per-row refinement near the t_OH validity boundary.
 
@@ -383,7 +402,9 @@ def _build_adaptive_N_exp_grid(
     N_max = 10 ** x_max
     N_boundary = f_live * np.asarray(t_cad_1d, dtype=float) / t_overhead_s  # (ny,)
 
-    nx_refine = max(nx // 5, 15)  # columns allocated to near-boundary refinement
+    if nx <= 2:
+        return np.tile(base_grid, (ny, 1))
+    nx_refine = min(nx - 2, max(nx // 5, 15))
     nx_base   = nx - nx_refine    # columns for the main surface region
     f_split   = 0.5               # refinement zone starts at f_split × N_boundary
 
@@ -392,7 +413,7 @@ def _build_adaptive_N_exp_grid(
     for i, N_b in enumerate(N_boundary):
         if N_b >= N_max:
             # Boundary outside grid: standard uniform log-spacing
-            result[i] = 10 ** np.linspace(x_min, x_max, nx)
+            result[i] = base_grid
         else:
             N_b_eff      = N_b * 0.999                         # stay just inside boundary
             refine_start = max(N_min * 1.001, f_split * N_b_eff)
@@ -405,7 +426,8 @@ def _build_adaptive_N_exp_grid(
 
             result[i] = 10 ** np.concatenate([logN_base, logN_refine])
 
-    return result
+    # Whole fields only, including rows refined at the overhead boundary.
+    return np.clip(np.rint(result), math.ceil(N_min), math.floor(N_max))
 
 
 def _rate(
@@ -485,8 +507,8 @@ def compute_surface(
     t_min_s = 1.0
     t_max_s = 1e8
 
-    logN = np.linspace(x_min, x_max, nx)
-    N_exp_1d = 10 ** logN
+    N_exp_1d = build_N_exp_grid(1.0, N_exp_max, nx)
+    nx = len(N_exp_1d)
 
     if optical_survey:
         t_cad_1d = _build_optical_tcad_grid(
@@ -495,18 +517,18 @@ def compute_surface(
             t_min_s=t_min_s,
             t_max_s=t_max_s,
             ny=ny,
+            win_i_minus_one=model_day.win_i_minus_one,
         )
         # Meshgrid with "xy" style (rows correspond to cadence, cols to N_exp)
         N_exp, t_cad_s = np.meshgrid(N_exp_1d, t_cad_1d)
     else:
-        logtcad  = np.linspace(np.log10(t_min_s), np.log10(t_max_s), ny)
-        t_cad_1d = 10 ** logtcad
+        t_cad_1d = build_tcad_grid(t_min_s, t_max_s, ny)
         t_oh = model_day.instrument.t_overhead_s
         f    = model_day.instrument.f_live
         if t_oh > 0:
             # Adaptive 2D N_exp grid: rows near the t_OH validity boundary get denser
             # N_exp sampling to show the smooth R_det → 0 decline (not a physics change).
-            N_exp   = _build_adaptive_N_exp_grid(t_cad_1d, nx, x_min, x_max, f, t_oh)
+            N_exp   = _build_adaptive_N_exp_grid(t_cad_1d, nx, x_min, x_max, f, t_oh, N_exp_1d)
             t_cad_s = np.tile(t_cad_1d[:, np.newaxis], (1, nx))
         else:
             N_exp, t_cad_s = np.meshgrid(N_exp_1d, t_cad_1d)
@@ -516,6 +538,7 @@ def compute_surface(
             t_cad_s,
             i_det=int(i_det),
             t_night_s=float(t_night_s),
+            win_i_minus_one=model_day.win_i_minus_one,
         )
         is_subday = t_cad_eff < float(DAY_S)
 
@@ -643,6 +666,12 @@ def compute_surface(
             fade_random_start=fade_random_start,
         )
     D_med_Gpc_grid  = D_med_cm_grid / GPC_TO_CM
+    if optical_survey:
+        t_exp_grid = np.where(valid, t_exp_grid, np.nan)
+        q_med_grid = np.where(valid, q_med_grid, np.nan)
+        D_med_Gpc_grid = np.where(valid, D_med_Gpc_grid, np.nan)
+        if regime_id is not None:
+            regime_id = np.where(valid, regime_id, np.nan)
 
     # Return linear coordinates for true log axes
     X_lin = N_exp
@@ -695,7 +724,7 @@ def maximize_log_surface_iterative(
     """Iteratively maximise the log-rate on a rectangular log-grid.
 
     For optical surveys:
-      - Search the continuous region t_cad < t_night/i_det with standard refinement.
+      - Search through the inclusive selected detection-window boundary.
       - Separately search the discrete region t_cad = n*DAY_S (n integer), and take the best.
 
     Parameters
@@ -716,16 +745,18 @@ def maximize_log_surface_iterative(
     """
 
     def eval_grid_continuous(x0: float, x1: float, y0: float, y1: float, nx: int, ny: int):
-        xs = np.linspace(x0, x1, nx)
-        ys = np.linspace(y0, y1, ny)
-        X, Y = np.meshgrid(xs, ys)
-        N = 10 ** X
-        t = 10 ** Y
+        Ns = build_N_exp_grid(10 ** x0, 10 ** x1, nx)
+        ts = build_tcad_grid(10 ** y0, min(10 ** y1, t_cont_max), ny)
+        if not Ns.size or not ts.size:
+            return None
+        N, t = np.meshgrid(Ns, ts)
+        X, Y = np.log10(N), np.log10(t)
 
         t_eff, valid = optical_survey_tcad_seconds(
             t,
             i_det=int(i_det),
             t_night_s=float(t_night_s),
+            win_i_minus_one=model_day.win_i_minus_one,
         )
         if model_night is None:
             return None
@@ -786,8 +817,10 @@ def maximize_log_surface_iterative(
         )
         t_days = n_vals.astype(float) * float(DAY_S)
 
-        xs = np.linspace(x0, x1, nx)
-        N = 10 ** xs  # (nx,)
+        N = build_N_exp_grid(10 ** x0, 10 ** x1, nx)
+        if not N.size:
+            return None
+        xs = np.log10(N)
         # Meshgrid over (t_days, N)
         N2, t2 = np.meshgrid(N, t_days)
 
@@ -808,11 +841,12 @@ def maximize_log_surface_iterative(
     if not optical_survey:
         # Original behaviour for non-optical surveys
         def eval_grid_generic(x0: float, x1: float, y0: float, y1: float, nx: int, ny: int):
-            xs = np.linspace(x0, x1, nx)
-            ys = np.linspace(y0, y1, ny)
-            X, Y = np.meshgrid(xs, ys)
-            N = 10 ** X
-            t = 10 ** Y
+            Ns = build_N_exp_grid(10 ** x0, 10 ** x1, nx)
+            ts = build_tcad_grid(10 ** y0, 10 ** y1, ny)
+            if not Ns.size or not ts.size:
+                return None
+            N, t = np.meshgrid(Ns, ts)
+            X, Y = np.log10(N), np.log10(t)
             Z = _rate(model_day, i_det, N, t, full_integral,
                       q_min=q_min, D_min_cm=D_min_cm,
                       s_fade=s_fade, s_rise=s_rise, s_mode=s_mode,
@@ -845,11 +879,12 @@ def maximize_log_surface_iterative(
             x_min, x_max, y_min, y_max = xa0, xa1, ya0, ya1
 
         _warn_if_invalid(validity_fn, x0, y0)
-        return 10 ** x0, 10 ** y0, z0
+        return float(round(10 ** x0)), 10 ** y0, z0
 
-    # Optical survey: continuous search region is bounded above by log10(t_night/i_det)
-    t_cont_max = float(t_night_s) / float(i_det)
-    y_cont_max = np.log10(max(1.0, t_cont_max * 0.999))
+    # Use the same inclusive boundary as the displayed grid and point evaluator.
+    t_cont_max = min(optical_continuous_limit_s(i_det, t_night_s, model_day.win_i_minus_one),
+                     np.nextafter(float(DAY_S), 0.0))
+    y_cont_max = np.log10(max(1.0, t_cont_max))
     y0_min = y_min
     y0_max = min(y_max, y_cont_max)
 
@@ -885,15 +920,20 @@ def maximize_log_surface_iterative(
     if len(candidates) == 0:
         return np.nan, np.nan, np.nan
 
-    x0, y0, z0 = max(candidates, key=lambda t: t[2])
+    best = max(candidates, key=lambda t: t[2])
+    x0, y0, z0 = best
     _warn_if_invalid(validity_fn, x0, y0)
-    N_ret = 10.0 ** x0
+    N_ret = float(round(10.0 ** x0))
     t_ret = 10.0 ** y0
+    if best is best_cont:
+        t_ret = min(t_ret, t_cont_max)
+        if math.isclose(t_ret, t_cont_max, rel_tol=1e-14):
+            t_ret = t_cont_max
     # Snap to exact integer-day multiple if within floating-point tolerance.
     # 10**log10(n*DAY_S) can underestimate by ~1e-11, causing t_ret < DAY_S for
     # a 1-day cadence and triggering the wrong model dispatch in _eval_point.
     ratio = t_ret / float(DAY_S)
     nearest_n = round(ratio)
-    if nearest_n >= 1 and abs(ratio - nearest_n) < 1e-9:
+    if best is best_disc and nearest_n >= 1 and abs(ratio - nearest_n) < 1e-9:
         t_ret = float(nearest_n) * float(DAY_S)
     return N_ret, t_ret, z0

@@ -18,6 +18,9 @@ from grb_detect.constants import DAY_S, DEG2_TO_SR
 from grb_detect.params import GPC_TO_CM, SurveyDesignParams, SurveyStrategy
 from grb_detect.core import (
     ZMIN_DISPLAY_LOG10,
+    build_N_exp_grid,
+    build_tcad_grid,
+    optical_continuous_limit_s,
     _rate,
     compute_surface,
     make_rate_model,
@@ -53,10 +56,12 @@ ZTF_OMEGA_EXP_DEG2: float = 47.0
 
 # The two real ZTF observing modes used as reference points on the surface
 # (Ho et al. 2022; Andreoni et al. 2021):
-#   public all-sky  — ~15,000 deg² every 2 nights (g+r),
-#   high-cadence    — ~2,500 deg² partnership/ZUDS, 6 visits per night.
-ZTF_PUBLIC_OMEGA_SRV_DEG2: float = 15000.0
-ZTF_PUBLIC_T_CAD_S: float = 2.0 * DAY_S
+#   public — 7,500 deg² nightly, alternating halves of the 15,000 deg²
+#            footprint; 2 visits in the preset's 4-hour observing window.
+#   HC     — 2,500 deg² nightly; 6 visits in the preset's 6-hour window.
+# The public nightly area already includes the alternate-night coverage factor.
+ZTF_PUBLIC_OMEGA_SRV_DEG2: float = 7500.0
+ZTF_PUBLIC_VISITS_PER_NIGHT: int = 2
 ZTF_HC_OMEGA_SRV_DEG2: float = 2500.0
 ZTF_HC_VISITS_PER_NIGHT: int = 6
 
@@ -212,6 +217,14 @@ def _compute_rate(
         q_med     = np.where(_inv, np.nan, q_med)
         D_med_Gpc = np.where(_inv, np.nan, D_med_Gpc)
 
+    if optical_on:
+        _, valid = optical_survey_tcad_seconds(
+            t_arr, i_det=i_det, t_night_s=f_night_val * DAY_S,
+            win_i_minus_one=model.win_i_minus_one,
+        )
+        R, t_exp, q_med, D_med_Gpc, rid = (
+            np.where(valid, values, np.nan)
+            for values in (R, t_exp, q_med, D_med_Gpc, rid))
     return R, t_exp, q_med, D_med_Gpc, rid
 
 
@@ -242,6 +255,14 @@ def _eval_point(
     _nan4 = (math.nan, math.nan, math.nan, math.nan)
     if not (math.isfinite(N_exp) and math.isfinite(t_cad_s) and N_exp > 0 and t_cad_s > 0):
         return _nan4
+
+    if optical_on:
+        _, valid = optical_survey_tcad_seconds(
+            np.array([t_cad_s]), i_det=i_det, t_night_s=f_night * DAY_S,
+            win_i_minus_one=model_day.win_i_minus_one,
+        )
+        if not bool(valid[0]):
+            return _nan4
 
     # Model dispatch — mirrors compute_surface logic
     if optical_on and model_night is not None and t_cad_s < DAY_S:
@@ -620,6 +641,13 @@ def _cr_kwargs_from_state(state: dict) -> dict:
     )
 
 
+def _canonical_cadence_s(value: float) -> float:
+    """Remove log/exp roundoff at exact second anchors, including integer days."""
+    if math.isfinite(value) and math.isclose(value, round(value), rel_tol=1e-14, abs_tol=1e-10):
+        return float(round(value))
+    return value
+
+
 def _compute_nslice_sweep(state: dict, t_cad_fix_s: float) -> dict:
     """N-slice 1-D sweep at user-chosen t_cad. Returns flat payload for JS."""
     i_det        = state["i_det"]
@@ -628,7 +656,8 @@ def _compute_nslice_sweep(state: dict, t_cad_fix_s: float) -> dict:
     model_night  = state["model_night"]
     optical_on   = state["optical_on"]
 
-    N_sweep = np.logspace(0.0, math.log10(N_exp_max), 800)
+    t_cad_fix_s = _canonical_cadence_s(t_cad_fix_s)
+    N_sweep = build_N_exp_grid(1.0, N_exp_max, 800)
     t_fixed = np.full_like(N_sweep, float(t_cad_fix_s))
     # Optical sub-day cadences use the night model; everything else uses day.
     if optical_on and model_night is not None and t_cad_fix_s < DAY_S:
@@ -675,16 +704,13 @@ def _compute_tslice_sweep(state: dict, N_fix: float) -> dict:
     t_disc_D_med_Gpc_flat: list  = []
     t_disc_regime_flat: list     = []
 
-    N_fix = float(N_fix)
+    N_fix = float(round(N_fix))
 
     if optical_on and model_night is not None:
         # Continuous region (sub-night; force f_night scaling via t_cad_scalar=0.0)
-        t_cont_max_s = t_night_s / float(i_det)
-        t_cont = np.logspace(
-            math.log10(max(10.0, 1.0)),
-            math.log10(max(11.0, t_cont_max_s * 0.999)),
-            600,
-        )
+        t_cont_max_s = min(optical_continuous_limit_s(i_det, t_night_s, model_day.win_i_minus_one),
+                           np.nextafter(float(DAY_S), 0.0))
+        t_cont = build_tcad_grid(10.0, t_cont_max_s, 600)
         N_cont = np.full_like(t_cont, N_fix)
         R_c, t_exp_c, q_med_c, D_med_Gpc_c, rid_c = _compute_rate(
             model_night, i_det, N_cont, t_cont,
@@ -715,7 +741,7 @@ def _compute_tslice_sweep(state: dict, N_fix: float) -> dict:
         t_disc_regime_flat    = _array_to_list(rid_d)
     else:
         # Non-optical: single logspace sweep, 1500 points, no f_night scaling.
-        t_sweep = np.logspace(0.0, 8.0, 1500)
+        t_sweep = build_tcad_grid(1.0, 1e8, 1500)
         N_fixed = np.full_like(t_sweep, N_fix)
         R_s, t_exp_s, q_med_s, D_med_Gpc_s, rid_s = _compute_rate(
             model_day, i_det, N_fixed, t_sweep,
@@ -775,8 +801,8 @@ def _compute_qdview_sweep(
     rise_random_start = bool(state["rise_random_start"])
     fade_random_start = bool(state["fade_random_start"])
 
-    N_exp_fix   = float(N_exp_fix)
-    t_cad_fix_s = float(t_cad_fix_s)
+    N_exp_fix   = float(round(N_exp_fix))
+    t_cad_fix_s = _canonical_cadence_s(float(t_cad_fix_s))
 
     is_subday_optical = (
         optical_on and model_night is not None and t_cad_fix_s < DAY_S
@@ -842,6 +868,14 @@ def _compute_qdview_sweep(
             "qdview_t_cad_fix_s":       t_cad_fix_s,
             "qdview_t_cad_fix_h":       t_cad_fix_s / 3600.0,
         }
+
+    if optical_on:
+        _, valid = optical_survey_tcad_seconds(
+            np.array([t_cad_fix_s]), i_det=i_det, t_night_s=state["t_night_s"],
+            win_i_minus_one=model.win_i_minus_one,
+        )
+        if not bool(valid[0]):
+            return _empty_payload()
 
     # t_OH approximation validity — same predicate as in _compute_rate.
     if approx_on and t_overhead_s > 0:
@@ -1223,9 +1257,10 @@ def compute_all(params) -> dict:
         )
 
         # ── ZTF reference points (the two real observing modes) ─────────────
-        # Mode A — public all-sky: ~15,000 deg² every 2 nights.
-        N_ztf = min(ZTF_PUBLIC_OMEGA_SRV_DEG2 / ZTF_OMEGA_EXP_DEG2, N_exp_max)
-        t_cad_ztf_s = ZTF_PUBLIC_T_CAD_S
+        # Mode A — public: two visits to the night's 7,500 deg² footprint.
+        # Use the sidebar window so the point stays on the displayed surface.
+        N_ztf = float(min(round(ZTF_PUBLIC_OMEGA_SRV_DEG2 / ZTF_OMEGA_EXP_DEG2), math.floor(N_exp_max)))
+        t_cad_ztf_s = 0.98 * t_night_s / float(ZTF_PUBLIC_VISITS_PER_NIGHT)
         R_ztf, t_exp_ztf_s, q_med_ztf, D_med_Gpc_ztf = _eval_point(
             N_ztf, t_cad_ztf_s, i_det, model_day, model_night,
             f_live, f_live_night, f_night, optical_on, toh_approx, t_overhead_s,
@@ -1236,9 +1271,9 @@ def compute_all(params) -> dict:
         )
 
         # Mode B — high-cadence partnership/ZUDS: ~2,500 deg², 6 visits/night.
-        # t_cad sits just inside the sub-night continuous region so the point
-        # stays valid in optical-survey mode (i·t_cad < t_night needs i ≤ 6).
-        N_ztf_hc = min(ZTF_HC_OMEGA_SRV_DEG2 / ZTF_OMEGA_EXP_DEG2, N_exp_max)
+        # Reference footprints are represented by the nearest whole field count.
+        # Admissibility follows the selected detection-window convention.
+        N_ztf_hc = float(min(round(ZTF_HC_OMEGA_SRV_DEG2 / ZTF_OMEGA_EXP_DEG2), math.floor(N_exp_max)))
         t_cad_ztf_hc_s = 0.98 * t_night_s / float(ZTF_HC_VISITS_PER_NIGHT)
         R_ztf_hc, t_exp_ztf_hc_s, q_med_ztf_hc, D_med_Gpc_ztf_hc = _eval_point(
             N_ztf_hc, t_cad_ztf_hc_s, i_det, model_day, model_night,
@@ -1248,14 +1283,6 @@ def compute_all(params) -> dict:
             rise_random_start=rise_random_start,
             fade_random_start=fade_random_start,
         )
-        if optical_on:
-            _, _hc_valid = optical_survey_tcad_seconds(
-                np.array([t_cad_ztf_hc_s]), i_det=i_det, t_night_s=t_night_s,
-            )
-            if not bool(_hc_valid[0]):
-                # Infeasible schedule (can't fit i visits in one night) — hide.
-                R_ztf_hc = math.nan
-
         # Display-floor gate (same invariant as compute_surface's "good" mask):
         # the surface masks cells with log10 R below ZMIN_DISPLAY_LOG10, so a
         # marker there would float over a hole in the surface — hide the whole
@@ -1321,8 +1348,9 @@ def compute_all(params) -> dict:
         R_surface_max = float(np.nanmax(R_lin)) if np.any(np.isfinite(R_lin)) else 0.0
 
         # ── Gap times (optical t-slice) ──────────────────────────────────────
-        if optical_on:
-            gap_lo_h = (t_night_s / 3600.0) / float(i_det)
+        limit_s = optical_continuous_limit_s(i_det, t_night_s, model_day.win_i_minus_one)
+        if optical_on and limit_s < DAY_S:
+            gap_lo_h = limit_s / 3600.0
             gap_hi_h = 24.0
         else:
             gap_lo_h = None

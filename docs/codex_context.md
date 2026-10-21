@@ -145,7 +145,7 @@ Thesis fiducials use \(p=2.5\), \(\epsilon_B=10^{-2}\), about 5.28 Gpc,
 and \(F_{\rm dec}\simeq2.3\) Jy. State parameter sets in comparisons.
 
 Library survey defaults include `f_live=0.1` and a 27,500 square-degree maximum;
-UI defaults use `f_live=0.2` and approximately the full sky. Presets change
+UI defaults use `f_live=0.166` and approximately the full sky. Presets change
 instrument/count settings, not every scientific parameter or user constraint.
 
 **Frozen-dataclass trap:** direct construction with custom `rho_grb_gpc3_yr` or
@@ -163,16 +163,21 @@ overhead feasibility for the surface and optimizer.
 Optical mode dispatches between day and night models. Subday cadence uses
 \(f_{\rm live}/f_{\rm night}\) internally and multiplies rates by
 \(f_{\rm night}=t_{\rm night}/{\rm day}\). It permits
-\(t_{\rm cad}<t_{\rm night}/i\), excludes the gap up to one day, and permits
-only integer-day multiples above it. Arbitrary cadences are not rounded to days.
-The UI enforces \(f_{\rm night}\ge f_{\rm live}\). This is not the separate
-branch's unified night-schedule model.
+\(T_{\rm req}\le t_{\rm night}\), using the selected detection window
+\(T_{\rm req}=(i-1)t_{\rm cad}\) or \(i t_{\rm cad}\), excludes longer
+subday cadences, and permits only integer-day multiples above it. Arbitrary
+cadences are not rounded to days. The UI enforces
+\(f_{\rm night}\ge f_{\rm live}\) without a control-precision allowance.
+The live-fraction control step is 0.001; its default 0.166 permits an exact
+four-hour window. Setting 0.167 raises that window to 4.25 hours, the next
+allowed quarter-hour value. This is not the separate branch's unified
+night-schedule model.
 
 “Exact rate mode” is numerical full q integration within these assumptions,
 not exact astrophysics or automatic use of the full thesis probability
 \(P_{\ge i}(\tau)=\operatorname{clip}(\tau-(i-1),0,1)\).
-The thesis treats single detections separately; `main` has an unresolved
-optical single-detection gap TODO.
+The thesis treats single detections separately; the UI starts at two. A zero
+required duration under the i-minus-one convention has no subday gap.
 
 - Engine defaults: `win_i_minus_one=False`, `win_from_peak=False`.
   Bridge default: `win_iminus1=True`. The UI checkbox “Detection window spans
@@ -252,11 +257,33 @@ mean fully offline with an empty browser cache.
 flattened payloads, converting nonfinite values to `None`. Display floor is
 0.01/year; raw surface values are retained for export. Markers, hover fields,
 metrics, slices, and surfaces must share model/filters and optical dispatch.
-Markers below the floor are hidden. ZTF reference points use sidebar physics,
-not a hidden preset model: public 15,000/47 pointings at two days; HC 2,500/47
-at 0.98 times the night length divided by six. Pointings are clipped to the
-allowed maximum; current i can make HC infeasible.
+Markers below the floor are hidden. ZTF reference points use the shared sidebar
+model, not a hidden preset model. Updated 2026-10-21: public uses 160 whole
+pointings (nearest integer to 7,500/47) and 0.98 times the observing window
+divided by two; HC uses 53 whole pointings (nearest integer to 2,500/47)
+and the window divided by six, also with the 0.98 margin. Public's
+nightly area represents alternating halves of a 15,000 deg² footprint, with no
+additional factor of one half. Both presets set i=2 and f_live=0.166; public
+loads a 4-hour effective window and HC loads 6 hours. Cadences are 1.96/0.98 h
+and exposures are 28.9236/29.1998490566 s, using 160/53 whole fields. At the
+current UI physics defaults, single luminosity, two detections, and no cuts,
+approximate public/HC rates are 41.2181330870/42.8391115775 per year; Exact
+with peak correction gives 42.0311531062/44.3718513870 per year. The window
+participates in preset matching and drift detection. Pointings remain clipped
+to the allowed maximum; invalid
+optical references are hidden together with their exposure and median values.
 
+Calculation grids and optimizer candidates use integer field counts, with extra
+round counts at survey scales. Cadence grids include exact minute/hour anchors
+(five-minute spacing through three hours, fifteen-minute spacing through six)
+and the inclusive detection-window boundary. Slice controls retain their
+physical anchors exactly; logarithms are only internal coordinates. Surfaces,
+points, slices, and q/D views share the option-dependent admissibility rule.
+The existing 0.98 preset cadence factor is retained.
+
+Follow the [app-facing copy rule](../AGENTS.md#app-facing-copy), also recorded
+in `CLAUDE.md`: obtain approval of exact wording before adding or changing app
+text, and write concise explanations of the current model for paper readers.
 Preserve UI IDs and use `<sub>` for visible HTML/Plotly subscripts. Follow
 Settings-toggle/Parameters-dependent-block conventions. The UI debounces full
 and slice updates, but Pyodide calculation is synchronous on the browser thread.
@@ -268,7 +295,9 @@ LaTeX rendering defaults on with mathtext fallback; PNG is default, PDF opt-in.
 Every created figure needs visual inspection at its intended publication size.
 **Parity caveat:** `build_model_from_preset()` returns a day model with library
 window defaults; it does not automatically reproduce the bridge's i-minus-one
-window or subday optical behavior.
+window or subday optical behavior. Existing paper figures explicitly use
+ZTF_PUBLIC_LEGACY, retaining their historical two-day setup. Current preset
+metadata includes the effective window and visits per window.
 
 ## Review findings for follow-up
 

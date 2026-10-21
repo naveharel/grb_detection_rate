@@ -57,4 +57,7 @@ specifically need it.
 
 `fig_qmedian_vs_Fdec.py` — `q_median` of ZTF-detected GRBs vs the overridden flux
 normalization `F_nu,dec^(G)`: cadence-limited floor, flux-limited rise, `q_nr/√2`
-ceiling. Reproduces the app's `q_med_ztf` exactly at the fiducial.
+ceiling. This and `fig_rate_vs_Fdec.py` explicitly retain `ZTF_PUBLIC_LEGACY`,
+the historical 15,000 deg² / two-day setup. They do not represent the current
+paired public preset. `ZTF_PUBLIC` and `ZTF_HC` mirror the current app metadata;
+use `standalone_bridge` to evaluate their sub-night windows and duty factors.

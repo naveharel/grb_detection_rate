@@ -23,10 +23,14 @@ run is unaffected.
 Run with::
 
     .venv/Scripts/python -m pytest tests/test_browser_e2e.py -v
+
+Set GRB_E2E_BROWSER_CHANNEL=msedge to use an installed Microsoft Edge browser
+instead of Playwright's bundled Chromium.
 """
 from __future__ import annotations
 
 import math
+import os
 import pathlib
 import subprocess
 import sys
@@ -60,7 +64,8 @@ def browser():
     try:
         with sync_playwright() as pw:
             try:
-                b = pw.chromium.launch(headless=True)
+                b = pw.chromium.launch(
+                    headless=True, channel=os.environ.get("GRB_E2E_BROWSER_CHANNEL") or None)
             except Exception as e:  # browser binary not installed
                 pytest.skip(f"Chromium not available for Playwright: {e}")
             yield b
@@ -89,22 +94,25 @@ def _status_text(page) -> str:
 def _wait_for_ready(page) -> None:
     """Wait out the Pyodide boot sequence, then the initial compute."""
     page.wait_for_function(
-        "() => { const t = document.getElementById('metric-status').innerText; "
-        "return t === '' || (!t.includes('Loading') && !t.includes('Installing') "
-        "&& !t.includes('Unpacking') && !t.includes('Importing') "
-        "&& !t.includes('Warming') && !t.includes('Computing')); }",
+        "() => { const status = document.getElementById('metric-status'); "
+        "return status.classList.contains('error') || "
+        "(_lastData !== null && !status.querySelector('.spinner') && !_computing); }",
         timeout=_BOOT_TIMEOUT_MS,
     )
 
 
 def wait_for_compute(page) -> None:
     # runUpdate() is debounced 300ms (web/app.js triggerUpdate()) — the status
-    # banner can still read '' (leftover from the previous render) for up to
-    # that long before "Computing…" actually appears, so wait out the
+    # banner can still be idle (leftover from the previous render) for up to
+    # that long before its spinner appears, so wait out the
     # debounce window first or a too-early check races ahead of the update.
     page.wait_for_timeout(400)
     page.wait_for_function(
-        "() => !document.getElementById('metric-status').innerText.includes('Computing')",
+        "() => { const status = document.getElementById('metric-status'); "
+        "return status.classList.contains('error') || "
+        "(!status.querySelector('.spinner') && !_computing && !_pendingUpdate "
+        "&& !Object.values(_sliceComputing).some(Boolean) "
+        "&& !Object.values(_sliceQueued).some(Boolean)); }",
         timeout=_COMPUTE_TIMEOUT_MS,
     )
 
@@ -171,6 +179,131 @@ def test_app_loads_without_error(page):
     assert not status_is_error(page), f"error on load: {_status_text(page)}"
     traces = read_traces(page)
     assert any(t.get("type") == "surface" for t in traces), "no surface trace drawn"
+
+
+def test_exact_cadence_anchors_and_window_switch(page):
+    select_preset(page, "ztf_public")
+    assert page.evaluate("() => _lastData.gap_lo_h") == 4
+    page.locator('[data-tab="nslice"]').click()
+    thumb = page.locator('[data-id="nslice-tfix"] .cs-thumb')
+    thumb.press("Home")
+    for _ in range(8):
+        thumb.press("ArrowRight")
+    wait_for_compute(page)
+    assert page.evaluate("() => _lastData.t_cad_fix_s") == 3600
+    assert page.locator('#nslice-tfix-value').inner_text() == '1.00 hr'
+    for _ in range(2):
+        thumb.press("ArrowRight")
+    wait_for_compute(page)
+    assert page.evaluate("() => _lastData.t_cad_fix_s") == 7200
+    toggle_switch(page, "win-i-switch", checked=True)
+    assert page.evaluate("() => _lastData.gap_lo_h") == 2
+    assert page.evaluate("() => _lastData.N_sweep_R_flat.some(v => v > 0)")
+    thumb.press("ArrowRight")  # 3 h is now in the forbidden gap.
+    wait_for_compute(page)
+    assert page.evaluate("() => _lastData.t_cad_fix_s") == 10800
+    assert page.evaluate("() => _lastData.N_sweep_R_flat.every(v => v == null)")
+    toggle_switch(page, "win-i-switch", checked=False)
+    assert page.evaluate("() => _lastData.N_sweep_R_flat.some(v => v > 0)")
+    assert page.evaluate("() => _lastData.gap_lo_h") == 4
+    assert not status_is_error(page)
+
+
+def test_ztf_observing_block_presets_switch_without_rounding(page):
+    assert page.locator("#preset-select").input_value() == "none"
+    assert float(page.locator("#tnight_input").input_value()) == 10.0
+    assert page.locator("#tnight_slider").get_attribute("step") == "0.25"
+    assert page.locator("#tnight_input").get_attribute("step") == "0.25"
+    assert page.locator("#flive_slider").get_attribute("step") == "0.001"
+    assert page.locator("#flive_input").get_attribute("step") == "0.001"
+    assert float(page.locator("#flive_input").input_value()) == 0.166
+
+    for preset, window, suffix, cadence, rate in [
+        ("ztf_public", 4.0, "ztf", 1.96, 41.2181330870),
+        ("ztf_hc", 6.0, "ztf_hc", 0.98, 42.8391115775),
+        ("ztf_public", 4.0, "ztf", 1.96, 41.2181330870),
+    ]:
+        select_preset(page, preset)
+        assert not status_is_error(page), _status_text(page)
+        assert float(page.locator("#tnight_input").input_value()) == window
+        assert float(page.locator("#tnight_slider").input_value()) == window
+        assert float(page.locator("#flive_input").input_value()) == 0.166
+        assert float(page.locator("#i_input").input_value()) == 2
+        data = page.evaluate("() => _lastData")
+        assert all(n == round(n) for n in data["X_flat"])
+        assert all(n == round(n) for n in data["N_sweep_flat"])
+        assert all(data[k] == round(data[k]) for k in ("N_opt", "N_ztf", "N_ztf_hc"))
+        assert data[f"t_cad_{suffix}_s"] == pytest.approx(cadence * 3600.0)
+        assert data[f"t_exp_{suffix}_s"] == pytest.approx(28.9236 if suffix == "ztf" else 29.1998490566, abs=1e-6)
+        assert data[f"R_{suffix}"] == pytest.approx(rate, rel=1e-5)
+        matches = page.evaluate("() => [paramsMatchPreset('ztf_public'), paramsMatchPreset('ztf_hc')]")
+        assert matches == [preset == "ztf_public", preset == "ztf_hc"]
+
+    open_accordion(page, "Constraints")
+    set_number_input(page, "tnight", 4.25)
+    assert page.locator("#preset-select").input_value() == "none"
+    assert not page.evaluate("() => paramsMatchPreset('ztf_public')")
+
+    # Rubin supplies no observing-window value; its existing budget floor still
+    # applies, and selecting public afterward must lower that floor back to 4 h.
+    select_preset(page, "rubin")
+    assert not status_is_error(page), _status_text(page)
+    assert math.isfinite(float(page.locator("#tnight_input").input_value()))
+    select_preset(page, "ztf_public")
+    assert float(page.locator("#tnight_input").input_value()) == 4.0
+    assert page.evaluate("() => paramsMatchPreset('ztf_public')")
+
+
+def test_live_fraction_uses_strict_quarter_hour_budget_floor(page):
+    select_preset(page, "ztf_public")
+    open_accordion(page, "Constraints")
+    assert page.locator("#subnight-limit-display").text_content() == ""
+    assert not page.locator("#subnight-limit-display").is_visible()
+    night_grid = page.locator('.cs-wrap[data-id="tnight"]')
+    assert float(night_grid.get_attribute("data-min-floor")) == 4.0
+
+    set_number_input(page, "flive", 0.167)
+    assert float(night_grid.get_attribute("data-min-floor")) == 4.25
+    for control in ("#tnight_input", "#tnight_slider"):
+        assert float(page.locator(control).input_value()) == 4.25
+    assert page.locator("#preset-select").input_value() == "none"
+    assert page.locator("#tnight-floor-note .derived-info").inner_html() == (
+        "f<sub>night</sub> must be bigger than f<sub>live</sub> = 0.167")
+
+    set_number_input(page, "tnight", 4.0)
+    assert float(page.locator("#tnight_input").input_value()) == 4.25
+    set_number_input(page, "flive", 0.166)
+    assert float(night_grid.get_attribute("data-min-floor")) == 4.0
+    set_number_input(page, "tnight", 4.0)
+    assert float(page.locator("#tnight_input").input_value()) == 4.0
+    assert page.evaluate("() => paramsMatchPreset('ztf_public')")
+    assert page.locator("#tnight-floor-note .derived-info").inner_html() == (
+        "f<sub>night</sub> must be bigger than f<sub>live</sub> = 0.166")
+    assert not status_is_error(page), _status_text(page)
+
+
+@pytest.mark.parametrize("lf_on", [False, True])
+def test_ztf_observing_blocks_exact_lf_and_invalid_counts(page, lf_on):
+    toggle_switch(page, "lf-switch", checked=lf_on)
+    toggle_switch(page, "full-integral-switch", checked=True)
+    for preset, suffix, invalid_i, exact_rate in [
+        ("ztf_public", "ztf", 4, 42.0311531062),
+        ("ztf_hc", "ztf_hc", 8, 44.3718513870),
+    ]:
+        select_preset(page, preset)
+        assert not status_is_error(page), _status_text(page)
+        data = page.evaluate("() => _lastData")
+        assert data[f"R_{suffix}"] > 0
+        assert page.locator("#lf-switch").is_checked() == lf_on
+        assert data[f"t_exp_{suffix}_s"] == pytest.approx(28.9236 if suffix == "ztf" else 29.1998490566, abs=1e-6)
+        if not lf_on:
+            assert data[f"R_{suffix}"] == pytest.approx(exact_rate, rel=1e-5)
+
+        set_number_input(page, "i", invalid_i)
+        assert not status_is_error(page), _status_text(page)
+        data = page.evaluate("() => _lastData")
+        for key in (f"R_{suffix}", f"t_exp_{suffix}_s", f"q_med_{suffix}", f"D_med_Gpc_{suffix}"):
+            assert data[key] is None
 
 
 # --------------------------------------------------------------------------- #

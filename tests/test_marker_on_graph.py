@@ -71,23 +71,28 @@ BASE: dict = {
     "epsilon_B_log10": -4.0,
     "theta_j_rad": 0.1,
     "gamma0_log10": 2.5,
-    "D_euc_gpc": 4.55,
-    "rho_grb_log10": 2.415,
+    "D_euc_gpc": 8.66,
+    "rho_grb_log10": math.log10(138.0),
 }
 
 # PRESETS (web/app.js).
 CONFIGS = {
     "nonoptical_default":  {},
     "optical_default":     {"optical_survey": True},
-    "ztf_public_preset":   {"optical_survey": True, "i_det": 2, "f_live": 0.08,
+    "ztf_public_preset":   {"optical_survey": True, "i_det": 2, "f_live": 0.166, "t_night_h": 4.0,
                             "A_log": -4.68, "omega_exp_deg2": 47.0, "t_overhead_s": 15.0},
-    "ztf_hc_preset":       {"optical_survey": True, "i_det": 6, "f_live": 0.17,
+    "ztf_hc_preset":       {"optical_survey": True, "i_det": 2, "f_live": 0.166, "t_night_h": 6.0,
                             "A_log": -4.68, "omega_exp_deg2": 47.0, "t_overhead_s": 15.0},
     "rubin_preset":        {"optical_survey": True, "i_det": 2, "f_live": 0.7,
                             "A_log": -7.0, "omega_exp_deg2": 9.6, "t_overhead_s": 30.0},
     "exact_mode":          {"optical_survey": True, "full_integral": True,
                             "s_fade": 0.3, "s_rise": 0.5},
     "filters":             {"qmin": 1.0, "Dmin_cm": 1.0 * GPC_TO_CM},
+    "lf_public":           {"optical_survey": True, "i_det": 2, "f_live": 0.166,
+                            "t_night_h": 4.0, "t_overhead_s": 15.0, "lf_on": True},
+    "lf_hc_exact":         {"optical_survey": True, "i_det": 2, "f_live": 0.166,
+                            "t_night_h": 6.0, "t_overhead_s": 15.0, "lf_on": True,
+                            "full_integral": True, "win_tp": True},
 }
 
 MARKERS = [
@@ -208,3 +213,56 @@ def test_display_floor_gate_hides_dim_markers():
         "masked surface)"
     )
     assert payload["t_exp_ztf_s"] is None and payload["q_med_ztf"] is None
+
+
+@pytest.mark.parametrize("preset_key,suffix,area,cadence_h,approx_rate,exact_rate", [
+    ("ztf_public_preset", "ztf", 7500.0, 1.96, 41.2181330870, 42.0311531062),
+    ("ztf_hc_preset", "ztf_hc", 2500.0, 0.98, 42.8391115775, 44.3718513870),
+])
+@pytest.mark.parametrize("exact", [False, True])
+def test_observing_block_rates_and_exposure_budget(
+        preset_key, suffix, area, cadence_h, approx_rate, exact_rate, exact):
+    params = {**BASE, **CONFIGS[preset_key], "full_integral": exact,
+              "win_iminus1": True, "win_tp": exact}
+    payload = sb.compute_all(params)
+    assert payload.get("error") is None, payload.get("error")
+    assert payload[f"N_{suffix}"] == pytest.approx(round(area / 47.0))
+    assert payload[f"t_cad_{suffix}_s"] == pytest.approx(cadence_h * 3600.0)
+    assert payload[f"t_exp_{suffix}_s"] == pytest.approx(28.9236 if suffix == "ztf" else 29.1998490566, abs=1e-6)
+    assert payload[f"R_{suffix}"] == pytest.approx(
+        exact_rate if exact else approx_rate, rel=1e-5)
+
+
+@pytest.mark.parametrize("preset_key,suffix,i_det", [
+    ("ztf_public_preset", "ztf", 4),
+    ("ztf_hc_preset", "ztf_hc", 8),
+])
+@pytest.mark.parametrize("lf_on", [False, True])
+def test_inadmissible_observing_block_hides_all_reference_values(preset_key, suffix, i_det, lf_on):
+    payload = sb.compute_all({**BASE, **CONFIGS[preset_key], "i_det": i_det, "lf_on": lf_on})
+    assert payload.get("error") is None, payload.get("error")
+    for key in (f"R_{suffix}", f"t_exp_{suffix}_s", f"q_med_{suffix}", f"D_med_Gpc_{suffix}"):
+        assert payload[key] is None, (key, payload[key])
+
+
+def test_python_preset_metadata_and_legacy_figure_setup():
+    from figures.figlib import models, presets
+
+    for key, preset, area, visits in [
+        ("ztf_public_preset", presets.ZTF_PUBLIC, 7500.0, 2),
+        ("ztf_hc_preset", presets.ZTF_HC, 2500.0, 6),
+    ]:
+        config = CONFIGS[key]
+        assert preset.i_det == config["i_det"]
+        assert preset.f_live == config["f_live"]
+        assert preset.t_night_h == config["t_night_h"]
+        assert preset.omega_srv_deg2 == area
+        assert preset.visits_per_night == visits
+
+    legacy = models.build_model_from_preset(presets.ZTF_PUBLIC_LEGACY)
+    fields, cadence, detections = models.ztf_strategy_point(legacy)
+    assert legacy.instrument.f_live == 0.08
+    assert legacy.instrument.t_overhead_s == 15.0
+    assert fields == pytest.approx(15000.0 / 47.0)
+    assert cadence == 2 * 86400.0
+    assert detections == 2

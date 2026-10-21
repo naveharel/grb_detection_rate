@@ -41,7 +41,7 @@ def make_figure():
 
     style.use_style()
 
-    model = models.build_model_from_preset(presets.ZTF)
+    model = models.build_model_from_preset(presets.ZTF_PUBLIC_LEGACY)
     N_ztf, t_cad_ztf_s, i_det = models.ztf_strategy_point(model)
 
     F_fid_Jy = float(model.derived.F_dec_Jy)

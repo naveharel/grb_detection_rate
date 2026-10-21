@@ -72,9 +72,9 @@ BASE: dict = {
 # PRESETS (web/app.js).
 PRESETS = {
     "default":    {},
-    "ztf_public": {"optical_survey": True, "i_det": 2, "f_live": 0.08,
+    "ztf_public": {"optical_survey": True, "i_det": 2, "f_live": 0.166, "t_night_h": 4.0,
                    "A_log": -4.68, "omega_exp_deg2": 47.0, "t_overhead_s": 15.0},
-    "ztf_hc":     {"optical_survey": True, "i_det": 6, "f_live": 0.17,
+    "ztf_hc":     {"optical_survey": True, "i_det": 2, "f_live": 0.166, "t_night_h": 6.0,
                    "A_log": -4.68, "omega_exp_deg2": 47.0, "t_overhead_s": 15.0},
     "rubin":      {"optical_survey": True, "i_det": 2, "f_live": 0.7,
                    "A_log": -7.0, "omega_exp_deg2": 9.6, "t_overhead_s": 30.0},

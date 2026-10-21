@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import base64
 import io
+import math
 import pathlib
 import zipfile
 
@@ -41,7 +42,7 @@ def _cs_slider(sid: str, smin: float, smax: float, step: float,
         return 0 if p < 1e-6 else (1 if p > 1 - 1e-6 else 0.5)
 
     def fmt(v: float) -> str:
-        return f'{v:g}'
+        return str(v)
 
     ticks: list = []
     mark_spans: list = []
@@ -60,7 +61,7 @@ def _cs_slider(sid: str, smin: float, smax: float, step: float,
     if discrete_values:
         discrete_attr = (
             ' data-discrete-values="'
-            + ",".join(f"{v:g}" for v in discrete_values)
+            + ",".join(str(v) for v in discrete_values)
             + '"'
         )
     return (
@@ -75,15 +76,29 @@ def _cs_slider(sid: str, smin: float, smax: float, step: float,
         f'</div>'
         f'<div class="cs-marks">{"".join(mark_spans)}</div>'
         f'<input type="range" id="{slider_id}" class="cs-hidden" tabindex="-1"'
-        f' min="{fmt(smin)}" max="{fmt(smax)}" step="{fmt(step)}"'
+        f' min="{fmt(smin)}" max="{fmt(smax)}" step="{"any" if discrete_values else fmt(step)}"'
         f' value="{fmt(default)}">'
         f'</div>'
     )
 
+_CADENCE_SECONDS = (
+    [100, 200, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200,
+     10800, 14400, 21600, 28800, 43200, 64800]
+    + [days * 86400 for days in (1, 1.5, 2, 3, 4, 5, 7, 10, 14, 21,
+                                 30, 42, 60, 90, 120, 180, 270, 365)]
+)
+_CADENCE_LOGS = [math.log10(t) for t in _CADENCE_SECONDS]
+_CADENCE_MARKS = [(math.log10(t), label) for t, label in
+                  [(100, '100 s'), (3600, '1 hr'), (86400, '1 day'),
+                   (172800, '2 day'), (604800, '1 wk'), (365 * 86400, '1 yr')]]
+_FIELD_LOGS = [math.log10(n) for n in
+               (1, 2, 3, 5, 7, 10, 15, 20, 30, 50, 70, 100, 150, 200,
+                300, 500, 700, 1000, 1500, 2000, 3000, 5000, 7000, 10000)]
+
 _SLIDERS = [
     # (KEY, sid, min, max, step, default, marks, slider_id_override?)
-    ('I',           'i',           2,      100,     1,      2,       [(2,'2'),(10,'10'),(30,'30'),(100,'100')]),
-    ('FLIVE',       'flive',       0.01,   1,       0.01,   0.2,     [(0.01,'0.01'),(0.2,'0.2'),(0.5,'0.5'),(1,'1')]),
+    ('I',           'i',           2,      30,      1,      2,       [(2,'2'),(10,'10'),(20,'20'),(30,'30')]),
+    ('FLIVE',       'flive',       0.01,   1,       0.001,  0.166,   [(0.01,'0.01'),(0.166,'0.166'),(0.5,'0.5'),(1,'1')]),
     ('ALOG',        'Alog',        -12,    -2,      0.01,   -4.68,   [(-12,'-12'),(-8,'-8'),(-4.68,'-4.68'),(-2,'-2')]),
     ('OMEGAEXP',    'omegaexp',    1,      200,     1,      47,      [(1,'1'),(47,'47'),(100,'100'),(200,'200')]),
     ('TOH',         'toh',         0,      30,      0.5,    0,       [(0,'0'),(15,'15'),(30,'30')]),
@@ -92,7 +107,7 @@ _SLIDERS = [
     ('DMIN',        'Dmin',        0,      12,      0.01,   0,       [(0,'0'),(1,'1'),(4.55,'4.55'),(8,'8'),(12,'12')]),
     ('SFADE',       'sfade',       0,      2,       0.05,   0,       [(0,'0'),(0.3,'0.3'),(0.5,'0.5'),(1,'1'),(2,'2')]),
     ('SRISE',       'srise',       0,      2,       0.05,   0,       [(0,'0'),(0.3,'0.3'),(0.5,'0.5'),(1,'1'),(2,'2')]),
-    ('TNIGHT',      'tnight',      1,      24,      0.25,   10,      [(1,'1'),(4,'4'),(8,'8'),(10,'10'),(14,'14'),(18,'18'),(24,'24')]),
+    ('TNIGHT',      'tnight',      1,      24,      0.25,   10,      [(1,'1'),(4,'4'),(6,'6'),(8,'8'),(10,'10'),(14,'14'),(18,'18'),(24,'24')]),
     ('P',           'p',           2.01,   3,       0.01,   2.2,     [(2.01,'2'),(2.2,'2.2'),(3,'3')]),
     ('NU_LOG',      'nu_log',      14.3,   15.1,    0.01,   14.7,    [(14.3,'14.3'),(14.7,'14.7'),(15.1,'15.1')]),
     ('EKISO_LOG',   'Ekiso_log',   51,     55,      0.1,    53,      [(51,'51'),(52,'52'),(53,'53'),(54,'54'),(55,'55')]),
@@ -101,105 +116,26 @@ _SLIDERS = [
     ('THETAJ',      'thetaj',      0.01,   0.5,     0.01,   0.1,     [(0.01,'0.01'),(0.1,'0.1'),(0.3,'0.3'),(0.5,'0.5')]),
     ('EPSE',        'epse',        -2,     -0.3,    0.05,   -1,      [(-2,'-2'),(-1,'-1'),(-0.3,'-0.3')]),
     ('EPSB',        'epsB',        -5,     -1,      0.05,   -4,      [(-5,'-5'),(-4,'-4'),(-2,'-2'),(-1,'-1')]),
-    ('DEUC',        'deuc',        1,      12,      0.01,   4.55,    [(1,'1'),(4.55,'4.55'),(8,'8'),(12,'12')]),
-    ('RHO_GRB_LOG', 'rho_grb_log', 10,     500,     1,      260,     [(10,'10'),(100,'100'),(260,'260'),(400,'400'),(500,'500')]),
+    ('DEUC',        'deuc',        1,      12,      0.01,   8.66,    [(1,'1'),(4,'4'),(8.66,'8.66'),(12,'12')]),
+    ('RHO_GRB_LOG', 'rho_grb_log', 10,     500,     1,      138,     [(10,'10'),(138,'138'),(250,'250'),(400,'400'),(500,'500')]),
     # All-positive-L intensity; L = L_nu(t_dec), L_ref = 1e32 erg/s/Hz.
     ('LF_ALPHA',    'lf_alpha',    -2.49,  -1.01,   0.001,  -2,      [(-2.49,'-2.49'),(-2,'-2'),(-1.5,'-1.5'),(-1.01,'-1.01')]),
     ('LF_NORM_LOG', 'lf_norm_log', -3,     3,       0.05,   0,       [(-3,'-3'),(-1,'-1'),(0,'0'),(1,'1'),(3,'3')]),
     # TEMP-FDEC-OVERRIDE — begin (delete this row on removal)
     ('FDEC_LOG',    'fdec_log',    -6,     6,       0.01,   -2.05,   [(-6,'-6'),(-3,'-3'),(-2.05,'-2.05'),(3,'3'),(6,'6')]),
     # TEMP-FDEC-OVERRIDE — end
-    # Slice-position sliders (under N-slice / t-slice plots). Hyphen IDs preserved
-    # so existing JS selectors (e.g. 'nslice-tfix-slider') keep working.
-    # Discrete sliders: only the listed log10 values are reachable — no in-between
-    # values. Step on the hidden <input type="range"> is kept fine (0.001) for
-    # browser compatibility; the custom JS layer enforces discrete positions.
-    ('NSLICE_TFIX', 'nslice-tfix', 2,      8,       0.001,  4.937,
-        [(2,'100 s'),(3.556,'1 hr'),(4.937,'1 day'),(5.238,'2 day'),(5.781,'1 wk'),(7.499,'1 yr')],
-        'nslice-tfix-slider',
-        # log10(seconds) — reachable values (densely populated, includes all
-        # original anchors: 100 s, 10 min, 30 min, 1 hr, 3 hr, 6 hr, 12 hr,
-        # 1 day, 2 day, 3 day, 1 wk, 2 wk, 1 mo, 3 mo, 1 yr).
-        [2.000,   # 100 s
-         2.301,   # 200 s
-         2.477,   # 5 min
-         2.778,   # 10 min
-         2.954,   # 15 min
-         3.079,   # 20 min
-         3.255,   # 30 min
-         3.431,   # 45 min
-         3.556,   # 1 hr
-         3.732,   # 1.5 hr
-         3.857,   # 2 hr
-         4.034,   # 3 hr
-         4.158,   # 4 hr
-         4.335,   # 6 hr
-         4.459,   # 8 hr
-         4.636,   # 12 hr
-         4.812,   # 18 hr
-         4.937,   # 1 day
-         5.113,   # 1.5 day
-         5.238,   # 2 day
-         5.414,   # 3 day
-         5.539,   # 4 day
-         5.636,   # 5 day
-         5.781,   # 1 wk
-         5.937,   # 10 day
-         6.082,   # 2 wk
-         6.259,   # 3 wk
-         6.414,   # 1 mo (30 day)
-         6.560,   # 6 wk
-         6.715,   # 2 mo
-         6.892,   # 3 mo
-         7.017,   # 4 mo
-         7.193,   # 6 mo
-         7.368,   # 9 mo
-         7.499]), # 1 yr
-    ('TSLICE_NFIX', 'tslice-nfix', 0,      4,       0.001,  2.0,
+    # Exact physical anchors; logarithms are only slider coordinates. The hidden
+    # range uses step="any" while the custom control enforces these positions.
+    ('NSLICE_TFIX', 'nslice-tfix', 2, 8, 0.001, math.log10(86400),
+        _CADENCE_MARKS, 'nslice-tfix-slider', _CADENCE_LOGS),
+    ('TSLICE_NFIX', 'tslice-nfix', 0, 4, 0.001, 2.0,
         [(0,'1'),(1,'10'),(2,'100'),(3,'1k'),(4,'10k')],
-        'tslice-nfix-slider',
-        # log10(N_exp) — reachable values (densely populated, includes all
-        # original anchors: 1, 2, 5, 10, 20, 50, 100, 200, 500, 1k, 2k, 5k, 10k).
-        [0.000,   # 1
-         0.301,   # 2
-         0.477,   # 3
-         0.699,   # 5
-         0.845,   # 7
-         1.000,   # 10
-         1.176,   # 15
-         1.301,   # 20
-         1.477,   # 30
-         1.699,   # 50
-         1.845,   # 70
-         2.000,   # 100
-         2.176,   # 150
-         2.301,   # 200
-         2.477,   # 300
-         2.699,   # 500
-         2.845,   # 700
-         3.000,   # 1k
-         3.176,   # 1.5k
-         3.301,   # 2k
-         3.477,   # 3k
-         3.699,   # 5k
-         3.845,   # 7k
-         4.000]), # 10k
-    # qdview big sliders — shared between the R(q) and R(D) panels. Same range
-    # and discrete set as TSLICE_NFIX / NSLICE_TFIX so the strategy domain is
-    # identical across slice and qdview modes.
-    ('QDVIEW_NFIX', 'qdview-nfix', 0,      4,       0.001,  2.0,
+        'tslice-nfix-slider', _FIELD_LOGS),
+    ('QDVIEW_NFIX', 'qdview-nfix', 0, 4, 0.001, 2.0,
         [(0,'1'),(1,'10'),(2,'100'),(3,'1k'),(4,'10k')],
-        'qdview-nfix-slider',
-        [0.000, 0.301, 0.477, 0.699, 0.845, 1.000, 1.176, 1.301, 1.477, 1.699,
-         1.845, 2.000, 2.176, 2.301, 2.477, 2.699, 2.845, 3.000, 3.176, 3.301,
-         3.477, 3.699, 3.845, 4.000]),
-    ('QDVIEW_TFIX', 'qdview-tfix', 2,      8,       0.001,  4.937,
-        [(2,'100 s'),(3.556,'1 hr'),(4.937,'1 day'),(5.238,'2 day'),(5.781,'1 wk'),(7.499,'1 yr')],
-        'qdview-tfix-slider',
-        [2.000, 2.301, 2.477, 2.778, 2.954, 3.079, 3.255, 3.431, 3.556, 3.732,
-         3.857, 4.034, 4.158, 4.335, 4.459, 4.636, 4.812, 4.937, 5.113, 5.238,
-         5.414, 5.539, 5.636, 5.781, 5.937, 6.082, 6.259, 6.414, 6.560, 6.715,
-         6.892, 7.017, 7.193, 7.368, 7.499]),
+        'qdview-nfix-slider', _FIELD_LOGS),
+    ('QDVIEW_TFIX', 'qdview-tfix', 2, 8, 0.001, math.log10(86400),
+        _CADENCE_MARKS, 'qdview-tfix-slider', _CADENCE_LOGS),
 ]
 
 # ---------------------------------------------------------------------------
