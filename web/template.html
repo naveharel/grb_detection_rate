@@ -241,18 +241,17 @@
   </div>
   <div class="param-row grb-derived-row">
     <span id="tdec-display" class="grb-derived-val" title="Deceleration time calculated from the physical parameters.">t<sub>dec</sub> = —</span>
+    <span id="lnu-1day-display" class="grb-derived-val" title="On-axis spectral luminosity at one day, at the selected observing frequency.">L<sub>ν</sub>(1 day) = — erg s⁻¹ Hz⁻¹</span>
     <span id="fnu-tdec-display" class="grb-derived-val" title="On-axis flux density at t_dec, evaluated at D_Euc and the selected observing frequency.">F<sub>ν</sub>(t<sub>dec</sub>,D<sub>Euc</sub>) = —</span>
   </div>
-  <!-- TEMP-FDEC-OVERRIDE — begin (delete whole block on removal) -->
-  <div class="param-block" id="fdec-override-block">
+  <div class="param-block" id="l1day-override-block">
     <div class="param-row">
-      <label class="param-label" for="fdec_log_slider" title="Base-10 logarithm of the on-axis flux density at t_dec and D_Euc, in Jy. Editing this value overrides the calculated normalization; changing a parameter that determines it resets the override.">log F<sub>ν</sub>(t<sub>dec</sub>,D<sub>Euc</sub>) [Jy]</label>
-      <input type="number" id="fdec_log_input" class="param-input" min="-6" max="6" step="0.01" value="-2.05">
+      <label class="param-label" for="l1day_log_slider" title="Base-10 logarithm of the on-axis spectral luminosity at one day. Editing this value overrides the calculated normalization; changing a parameter that determines it resets the override.">log L<sub>ν</sub>(1 day) [erg s⁻¹ Hz⁻¹]</label>
+      <input type="number" id="l1day_log_input" class="param-input" min="24" max="36" step="0.01" disabled>
     </div>
-    %%SLIDER_FDEC_LOG%%
-    <div id="fdec-override-note" style="display:none"><span class="derived-info warning">Flux override active — <a href="#" id="fdec-override-reset">reset</a></span></div>
+    %%SLIDER_L1DAY_LOG%%
+    <div id="l1day-override-note" style="display:none"><span class="derived-info warning">Luminosity override active — <a href="#" id="l1day-override-reset">reset</a></span></div>
   </div>
-  <!-- TEMP-FDEC-OVERRIDE — end -->
   <div class="param-group-label" style="margin-top:10px">Cosmological model</div>
   <div class="param-block">
     <div class="param-row">
@@ -370,7 +369,7 @@
     </label>
     <span class="switch-label" onclick="document.getElementById('lf-switch').click()">Luminosity function</span>
   </div>
-  <p class="toggle-hint">Uses dℛ/dL = (𝒜/L<sub>ref</sub>)(L/L<sub>ref</sub>)<sup>α</sup> for L &gt; 0, where L ≡ L<sub>ν</sub>(t<sub>dec</sub>). The detected rate is finite for −5/2 &lt; α &lt; −1; the total intrinsic rate and population median are undefined. 𝒜 replaces ℛ. The frequency, electron and magnetic energy fractions, and flux override are inactive because the luminosity function specifies the spectral luminosity.</p>
+  <p class="toggle-hint">Uses dℛ/dL = (𝒜/L<sub>ref</sub>)(L/L<sub>ref</sub>)<sup>α</sup> for L &gt; 0, where L ≡ L<sub>ν</sub>(t<sub>dec</sub>). The detected rate is finite for −5/2 &lt; α &lt; −1; the total intrinsic rate and population median are undefined. 𝒜 replaces ℛ. The frequency, electron and magnetic energy fractions, and luminosity override are inactive because the luminosity function specifies the spectral luminosity.</p>
 </div>
 </details>
 

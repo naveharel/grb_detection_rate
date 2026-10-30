@@ -64,6 +64,7 @@ let pyComputeAll = null;
 let pyComputeNslice = null;
 let pyComputeTslice = null;
 let pyComputeQdview = null;
+let pyNormalizationScales = null;
 let _computing = false;
 let _pendingUpdate = false;
 let _debounceTimer = null;
@@ -78,12 +79,10 @@ let _currentTheme = 'dark';
 // the cumulative view is essentially the sidebar q_min/D_min filter visualised.
 let _qdviewMode = 'diff';
 
-// TEMP-FDEC-OVERRIDE — begin
-let _fdecOverride = false;  // true while the user's F_dec value overrides physics
-// Physics sliders that feed F_dec (pls.py F_dec_Jy inputs + t_dec via Gamma0).
-// NOT thetaj / rho_grb_log — they don't enter F_dec.
-const FDEC_FEEDER_IDS = ['p','nu_log','Ekiso_log','n0_log','gamma0_log','epse','epsB','deuc'];
-// TEMP-FDEC-OVERRIDE — end
+let _l1dayOverride = false;
+// L_nu(1 day) depends on theta_j when the jet break precedes one day.
+// Distance and Gamma0 change the L-to-F_dec conversion, not this luminosity.
+const L1DAY_FEEDER_IDS = ['p','nu_log','Ekiso_log','n0_log','thetaj','epse','epsB'];
 
 // ── Status indicator (top-right of metrics strip) ─────────────────────────
 function setStatus(msg, spinning = false, isError = false) {
@@ -137,7 +136,7 @@ const SLIDER_IDS = [
   'i','flive','Alog','omegaexp','toh','omega_srv','qmin','Dmin','sfade','srise','tnight',
   'p','nu_log','Ekiso_log','n0_log','gamma0_log','thetaj','epse','epsB','deuc','rho_grb_log',
   'lf_alpha','lf_norm_log',
-  'fdec_log', // TEMP-FDEC-OVERRIDE
+  'l1day_log',
 ];
 
 // Effective minimum: respects optional `data-min-floor` on the .cs-wrap, which
@@ -181,8 +180,8 @@ function syncFromSlider(id) {
   if (id === 'Alog') updateMagDisplay();
   if (id === 'flive') _updateTnightFloor();
   if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
-  if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
-  if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
+  if (id === 'l1day_log') { _l1dayOverride = true; _updateL1dayNote(); }
+  if (L1DAY_FEEDER_IDS.includes(id)) _clearL1dayOverride();
   _checkPresetDrift();
   triggerUpdate();
 }
@@ -204,13 +203,14 @@ function syncFromInput(id) {
   const clamped = Math.min(Math.max(v, mn), mx);
   inp.value = clamped;
   sl.value = clamped;
+  if (id === 'l1day_log') inp.value = sl.value;
   updateSliderVisual(sl);
   if (id === 'deuc' || id === 'thetaj' || id === 'rho_grb_log') updateGrbCounts();
   if (id === 'Alog') updateMagDisplay();
   if (id === 'flive') _updateTnightFloor();
   if (id === 'flive' || id === 'tnight') _updateTnightFloorNote();
-  if (id === 'fdec_log') { _fdecOverride = true; _updateFdecNote(); }   // TEMP-FDEC-OVERRIDE
-  if (FDEC_FEEDER_IDS.includes(id)) _clearFdecOverride();               // TEMP-FDEC-OVERRIDE
+  if (id === 'l1day_log') { _l1dayOverride = true; _updateL1dayNote(); }
+  if (L1DAY_FEEDER_IDS.includes(id)) _clearL1dayOverride();
   _checkPresetDrift();
   triggerUpdate();
 }
@@ -341,13 +341,13 @@ document.getElementById('optical-switch').addEventListener('change', function() 
 
 // The LF intensity supplies its own normalization at the selected band.
 // Save inactive controls so returning to the single-L model restores them.
-const LF_INACTIVE_IDS = ['rho_grb_log', 'nu_log', 'epse', 'epsB', 'fdec_log'];
-const LF_INACTIVE_BLOCKS = ['rho-grb-block', 'nu-block', 'epse-block', 'epsB-block', 'fdec-override-block'];
+const LF_INACTIVE_IDS = ['rho_grb_log', 'nu_log', 'epse', 'epsB', 'l1day_log'];
+const LF_INACTIVE_BLOCKS = ['rho-grb-block', 'nu-block', 'epse-block', 'epsB-block', 'l1day-override-block'];
 let _lfInactiveState = null;
 function _syncLfBlock() {
   const on = document.getElementById('lf-switch').checked;
   if (on && !_lfInactiveState) {
-    _lfInactiveState = {values: {}, fdecOverride: _fdecOverride};
+    _lfInactiveState = {values: {}, l1dayOverride: _l1dayOverride};
     LF_INACTIVE_IDS.forEach(id => {
       _lfInactiveState.values[id] = {
         slider: document.getElementById(id + '_slider').value,
@@ -361,24 +361,26 @@ function _syncLfBlock() {
       document.getElementById(id + '_input').value = _lfInactiveState.values[id].input;
       updateSliderVisual(sl);
     });
-    _fdecOverride = _lfInactiveState.fdecOverride;
+    _l1dayOverride = _lfInactiveState.l1dayOverride;
     _lfInactiveState = null;
   }
   document.getElementById('lf-block').style.display = on ? 'block' : 'none';
   LF_INACTIVE_BLOCKS.forEach(bid => {
     const el = document.getElementById(bid);
     if (!el) return;
-    el.classList.toggle('lf-inert', on);
-    el.inert = on;
-    el.querySelectorAll('input').forEach(input => { input.disabled = on; });
+    const inactive = on || (bid === 'l1day-override-block' && !pyNormalizationScales);
+    el.classList.toggle('lf-inert', inactive);
+    el.inert = inactive;
+    el.querySelectorAll('input').forEach(input => { input.disabled = inactive; });
     el.querySelectorAll('.cs-thumb').forEach(thumb => {
-      thumb.tabIndex = on ? -1 : 0;
-      thumb.setAttribute('aria-disabled', String(on));
+      thumb.tabIndex = inactive ? -1 : 0;
+      thumb.setAttribute('aria-disabled', String(inactive));
     });
   });
   document.getElementById('grb-intrinsic-counts').hidden = on;
+  document.getElementById('lnu-1day-display').hidden = on;
   document.getElementById('fnu-tdec-display').hidden = on;
-  _updateFdecNote();
+  _updateL1dayNote();
   updateGrbCounts();
 }
 document.getElementById('lf-switch').addEventListener('change', function() {
@@ -534,7 +536,7 @@ document.getElementById('preset-select').addEventListener('change', function() {
   _presetApplying = false;
   updateGrbCounts();
   _updateTnightFloor();
-  _fdecOverride = false; _updateFdecNote();  // TEMP-FDEC-OVERRIDE — presets return to physics-derived F_dec
+  _l1dayOverride = false; _updateL1dayNote();  // Presets return to the calculated luminosity.
   triggerUpdate();
 });
 
@@ -586,7 +588,7 @@ function readParams() {
   const v = id => parseFloat(document.getElementById(id).value);
   const b = id => document.getElementById(id).checked;
   const exactOn = b('full-integral-switch');
-  return {
+  const params = {
     i_det:           Math.round(v('i_slider')),
     A_log:           v('Alog_slider'),
     f_live:          v('flive_slider'),
@@ -625,9 +627,56 @@ function readParams() {
     tslice_nfix_log: v('tslice-nfix-slider'),
     qdview_nfix_log: v('qdview-nfix-slider'),
     qdview_tfix_log: v('qdview-tfix-slider'),
-    F_dec_override_Jy: _fdecOverride && !b('lf-switch') ? Math.pow(10, v('fdec_log_slider')) : null,  // TEMP-FDEC-OVERRIDE
+    F_dec_override_Jy: null,
     nx: 120, ny: 150,
   };
+  if (_l1dayOverride && !params.lf_on && pyNormalizationScales) {
+    const [Lnu, Fdec] = _normalizationScales(params);
+    params.F_dec_override_Jy = Fdec * Math.pow(10, v('l1day_log_slider')) / Lnu;
+  }
+  return params;
+}
+
+// Read the engine's existing one-day luminosity; no duplicate light-curve
+// formula or changes to the Python bridge's F_dec input contract are needed.
+function _normalizationScales(params) {
+  const pyParams = pyodide.toPy(params);
+  let result;
+  try {
+    result = pyNormalizationScales(pyParams);
+    return result.toJs();
+  } finally {
+    result?.destroy();
+    pyParams.destroy();
+  }
+}
+
+function _initLuminosityDefault(defaultParams) {
+  const [Lnu] = _normalizationScales(defaultParams);
+  const sl = document.getElementById('l1day_log_slider');
+  const inp = document.getElementById('l1day_log_input');
+  sl.value = Math.log10(Lnu);  // Same 0.01 rounding as the live follower.
+  inp.value = sl.value;
+  const value = Number(sl.value);
+  const pct = (value - Number(sl.min)) / (Number(sl.max) - Number(sl.min));
+  const wrap = sl.closest('.cs-wrap');
+  const mark = document.createElement('span');
+  mark.className = 'cs-mark cs-mark-dflt';
+  mark.style.setProperty('--mpct', pct);
+  mark.style.setProperty('--align', '0.5');
+  mark.textContent = value.toFixed(2);
+  wrap.querySelector('.cs-marks').appendChild(mark);
+  const tick = document.createElement('div');
+  tick.className = 'cs-tick';
+  tick.dataset.pct = pct;
+  tick.style.setProperty('--tick-pct', pct);
+  wrap.querySelector('.cs-track-area').appendChild(tick);
+  updateSliderVisual(sl);
+  // LF may have been enabled while Pyodide was loading.
+  if (_lfInactiveState) {
+    _lfInactiveState.values.l1day_log = {slider: sl.value, input: inp.value};
+  }
+  _syncLfBlock();
 }
 
 // ── Slice-position helpers ────────────────────────────────────────────────
@@ -750,26 +799,25 @@ function _updateTnightFloorNote() {
   }
 }
 
-// TEMP-FDEC-OVERRIDE — begin
-function _updateFdecNote() {
-  const el = document.getElementById('fdec-override-note');
-  if (el) el.style.display = _fdecOverride && !document.getElementById('lf-switch').checked ? 'block' : 'none';
+function _updateL1dayNote() {
+  const el = document.getElementById('l1day-override-note');
+  if (el) el.style.display = _l1dayOverride && !document.getElementById('lf-switch').checked ? 'block' : 'none';
 }
-function _clearFdecOverride() {
-  if (!_fdecOverride) return;
-  _fdecOverride = false;
-  _updateFdecNote();
+function _clearL1dayOverride() {
+  // A shape change in LF mode also invalidates the saved single-L override.
+  if (_lfInactiveState) _lfInactiveState.l1dayOverride = false;
+  _l1dayOverride = false;
+  _updateL1dayNote();
 }
 {
-  const resetLink = document.getElementById('fdec-override-reset');
+  const resetLink = document.getElementById('l1day-override-reset');
   if (resetLink) resetLink.addEventListener('click', e => {
     e.preventDefault();
-    _fdecOverride = false;
-    _updateFdecNote();
+    _l1dayOverride = false;
+    _updateL1dayNote();
     triggerUpdate();   // recompute without override; snap happens on payload return
   });
 }
-// TEMP-FDEC-OVERRIDE — end
 
 // ── Derived GRB count display (instant, no Python needed) ─────────────────
 function updateGrbCounts() {
@@ -820,6 +868,10 @@ async function runUpdate() {
     data = pyResult.toJs({ dict_converter: Object.fromEntries });
     pyResult.destroy();
     pyParams.destroy();
+    if (!params.lf_on && data.F_nu_tdec_Jy > 0) {
+      const [Lnu, Fdec] = _normalizationScales(params);
+      data.L_nu_1day = Lnu * data.F_nu_tdec_Jy / Fdec;
+    }
   } catch (e) {
     setStatus('Could not calculate the detection rate.', false, true);
     console.error(e);
@@ -2264,20 +2316,25 @@ function updateDerivedDisplays(data) {
     else                 { val = Fj * 1e9; unit = 'nJy'; }
     document.getElementById('fnu-tdec-display').innerHTML =
       'F<sub>ν</sub>(t<sub>dec</sub>,D<sub>Euc</sub>) = ' + val.toPrecision(3) + ' ' + unit;
-    // TEMP-FDEC-OVERRIDE — begin: follower snap (silent — no 'input' dispatch).
+    const Lnu = data.L_nu_1day;
+    if (Lnu > 0 && isFinite(Lnu)) {
+      const [mantissa, exponent] = Lnu.toExponential(3).split('e');
+      document.getElementById('lnu-1day-display').innerHTML =
+        'L<sub>ν</sub>(1 day) = ' + mantissa + ' × 10<sup>' + Number(exponent) + '</sup> erg s⁻¹ Hz⁻¹';
+    }
+    // Follower snap (silent, without dispatching an input event).
     // The F_dec_override_applied echo guards against a stale in-flight override
     // compute returning after the user cleared the override.
-    if (!_fdecOverride && !data.F_dec_override_applied) {
-      const sl  = document.getElementById('fdec_log_slider');
-      const inp = document.getElementById('fdec_log_input');
-      if (sl && Fj > 0) {
-        sl.value = Math.log10(Fj);   // native range snaps to step grid + clamps
+    if (!_l1dayOverride && !data.F_dec_override_applied) {
+      const sl  = document.getElementById('l1day_log_slider');
+      const inp = document.getElementById('l1day_log_input');
+      if (sl && Lnu > 0) {
+        sl.value = Math.log10(Lnu);   // native range snaps to step grid + clamps
         if (inp) inp.value = sl.value;
         updateSliderVisual(sl);
       }
     }
-    _updateFdecNote();
-    // TEMP-FDEC-OVERRIDE — end
+    _updateL1dayNote();
   }
 
 
@@ -2311,6 +2368,8 @@ document.getElementById('export-btn').addEventListener('click', () => {
 
 // ── Pyodide initialization ─────────────────────────────────────────────────
 async function initPyodide() {
+  // Capture the actual UI defaults before any edits during asynchronous loading.
+  const defaultParams = readParams();
   try {
     setStatus('Loading model…', true);
     pyodide = await loadPyodide({
@@ -2329,24 +2388,20 @@ async function initPyodide() {
     setStatus('Loading model…', true);
     await pyodide.runPythonAsync('import standalone_bridge');
 
-    // Warm-up call primes the LRU cache with default parameters
+    // UI adapter: read the existing engine, retaining its pre/post-jet branches.
+    // L0_erg_s is nu*L_nu, so divide by the observing frequency here.
     setStatus('Preparing model…', true);
     await pyodide.runPythonAsync(`
 import standalone_bridge as _b
-_b.compute_all({
-    'i_det':2,'A_log':-4.68,'f_live':0.166,'t_overhead_s':0.0,
-    'omega_exp_deg2':47.0,'omega_srv_deg2':27500.0,'t_night_h':10.0,
-    'p':2.2,'nu_log10':14.7,'E_kiso_log10':53.0,'n0_log10':0.0,
-    'epsilon_e_log10':-1.0,'epsilon_B_log10':-4.0,'theta_j_rad':0.1,
-    'gamma0_log10':2.5,'D_euc_gpc':4.55,'rho_grb_log10':2.415,
-    'optical_survey':False,'color_regimes':False,
-    'full_integral':False,'qmin':0.0,'Dmin_cm':0.0,'s_fade':0.0,'s_rise':0.0,
-    'rise_random_start':True,'fade_random_start':True,'toh_approx':False,
-    'win_iminus1':True,'win_tp':False,'nx':60,'ny':80,
-})
-print('Bridge ready')
+def _ui_normalization_scales(params):
+    model = _b._build_models(dict(params, lf_on=False, optical_survey=False,
+                                 F_dec_override_Jy=None))["model_day"]
+    return (float(model.L0_erg_s() / model.phys.nu_hz),
+            float(model.derived.F_dec_Jy))
 `);
 
+    pyNormalizationScales = pyodide.globals.get('_ui_normalization_scales');
+    _initLuminosityDefault(defaultParams);
     const _sbMod = pyodide.globals.get('standalone_bridge');
     pyComputeAll    = _sbMod.compute_all;
     pyComputeNslice = _sbMod.compute_nslice;

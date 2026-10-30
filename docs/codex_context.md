@@ -237,13 +237,32 @@ first point. q/D plot totals cover the entire selected population; the UI
 indicates appreciable probability below the plotting range.
 
 The LF switch remains in Settings and alpha/log A controls in Parameters.
-Rho, frequency, epsilon_e, epsilon_B and the deceleration-flux override are
+Rho, frequency, epsilon_e, epsilon_B and the single-burst luminosity override are
 inactive (and disabled) while LF is enabled. Luminosity is defined at the
 current band, so the PLS-G frequency amplitude cancels. Intrinsic counters
-and the single-burst brightness readout are hidden; their controls restore
+and the single-burst luminosity/flux readouts are hidden; their controls restore
 on LF exit. Exact remains selectable. Pure-amplitude and sensitivity
 invariance of normalized distributions permits reuse across exposure counts
 at fixed cadence.
+
+Updated 2026-10-30: the single-burst normalization control uses log10
+L_nu(1 day) [erg/s/Hz], from 24 to 36 in steps of 0.01. Its readout appears
+above F_nu(t_dec,D_Euc). The UI reads the engine's existing `L0_erg_s()/nu_hz`
+(including the pre/post-jet branches), and converts the selected luminosity
+to the unchanged bridge input `F_dec_override_Jy`. Neither engine nor bridge
+was modified. Distance and Gamma0 changes retain an explicit luminosity;
+changes to p, frequency, energy, density, theta_j, epsilon_e or epsilon_B
+reset it. Reset returns to the calculated luminosity. Survey presets retain
+their previous reset behavior; LF on/off saves and restores the single-L
+state unless a luminosity-determining parameter changes.
+
+The bold default is now computed from the initial UI parameters at runtime,
+independently of edits during model loading. Current UI defaults (D_Euc=8.66
+Gpc, rho=138) give F_dec=0.002465832076473155 Jy and
+L_nu(1 day)=1.1504457031667912e29 erg/s/Hz (displayed log=29.06).
+The removed flux slider's hard-coded bold -2.05 belonged to D_Euc=4.55 Gpc;
+at 8.66 Gpc log F_dec=-2.6080365022513363. This was a stale UI marker, not a
+physics error. The LF's luminosity variable remains L_nu(t_dec).
 
 ## Build, browser, and figure contracts
 

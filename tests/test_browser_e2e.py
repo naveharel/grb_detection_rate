@@ -358,7 +358,7 @@ def test_lf_toggle_end_to_end(page):
     assert not page.locator("#lf-block").is_visible()
 
     saved_values = dict(rho_grb_log=123, nu_log=14.8, epse=-1.3, epsB=-3.5,
-                        fdec_log=-1.2)
+                        l1day_log=30.2)
     for name, value in saved_values.items():
         set_number_input(page, name, value)
     before = {name: page.locator(f"#{name}_input").input_value()
@@ -379,12 +379,14 @@ def test_lf_toggle_end_to_end(page):
         assert float(slider.input_value()) == default
         assert slider.is_enabled()
     for block in ("rho-grb-block", "nu-block", "epse-block", "epsB-block",
-                  "fdec-override-block"):
+                  "l1day-override-block"):
         assert "lf-inert" in (page.locator(f"#{block}").get_attribute("class") or "")
     for name in saved_values:
         assert page.locator(f"#{name}_slider").is_disabled()
         assert page.locator(f"#{name}_input").is_disabled()
     assert not page.locator("#grb-intrinsic-counts").is_visible()
+    assert not page.locator("#lnu-1day-display").is_visible()
+    assert not page.locator("#fnu-tdec-display").is_visible()
     assert page.locator("#full-integral-switch").is_enabled()
 
     set_number_input(page, "lf_alpha", -2.49)
@@ -409,6 +411,78 @@ def test_lf_toggle_end_to_end(page):
         assert page.locator(f"#{name}_slider").is_enabled()
         assert page.locator(f"#{name}_input").is_enabled()
         assert float(page.locator(f"#{name}_input").input_value()) == float(value), name
+    assert page.locator("#lnu-1day-display").is_visible()
+    assert page.locator("#fnu-tdec-display").is_visible()
+    assert page.evaluate("_lastData.L_nu_1day") == pytest.approx(10**30.2)
+
+
+def _luminosity_from_displayed_flux(page):
+    """Independent unit/jet-branch check using the returned flux and UI params."""
+    from grb_detect.params import GPC_TO_CM
+
+    params, tdec, fdec = page.evaluate(
+        "[readParams(), _lastData.t_dec_s, _lastData.F_nu_tdec_Jy]")
+    tj = tdec * (10**params["gamma0_log10"] * params["theta_j_rad"])**(8 / 3)
+    a2 = -3 * (params["p"] - 1) / 4
+    if tj >= 86400:
+        f1day = fdec * (86400 / tdec)**a2
+    else:
+        f1day = fdec * (tj / tdec)**a2 * (86400 / tj)**(-params["p"])
+    return 4 * math.pi * (params["D_euc_gpc"] * GPC_TO_CM)**2 * f1day * 1e-23
+
+
+def test_luminosity_default_mark_and_readouts(page):
+    open_accordion(page, "Parameters")
+    expected = _luminosity_from_displayed_flux(page)
+    assert expected == pytest.approx(1.1504457031667912e29, rel=1e-10)
+    assert page.evaluate("_lastData.F_nu_tdec_Jy") == pytest.approx(.002465832076473155)
+    assert page.evaluate("readParams().F_dec_override_Jy") is None
+    assert page.locator("#fdec_log_slider").count() == 0
+    assert page.locator("#l1day_log_slider").is_enabled()
+    expected_log = round(math.log10(expected), 2)
+    assert float(page.locator("#l1day_log_input").input_value()) == expected_log
+    mark = page.locator('[data-id="l1day_log"] .cs-mark-dflt')
+    assert float(mark.inner_text()) == expected_log
+    assert int(mark.evaluate("e => getComputedStyle(e).fontWeight")) >= 700
+    assert float(mark.evaluate("e => e.style.getPropertyValue('--mpct')")) == pytest.approx(
+        (expected_log - 24) / 12)
+    luminosity_box = page.locator("#lnu-1day-display").bounding_box()
+    flux_box = page.locator("#fnu-tdec-display").bounding_box()
+    assert luminosity_box["y"] + luminosity_box["height"] <= flux_box["y"]
+
+
+@pytest.mark.parametrize("theta_j", [.1, .03])
+def test_luminosity_override_conversion_and_reset(page, theta_j):
+    open_accordion(page, "Parameters")
+    set_number_input(page, "thetaj", theta_j)
+    base_f = page.evaluate("_lastData.F_nu_tdec_Jy")
+    base_l = _luminosity_from_displayed_flux(page)
+    set_number_input(page, "l1day_log", 30)
+    assert not status_is_error(page), _status_text(page)
+    assert _luminosity_from_displayed_flux(page) == pytest.approx(1e30, rel=1e-10)
+    assert page.evaluate("_lastData.L_nu_1day") == pytest.approx(1e30, rel=1e-10)
+    assert page.evaluate("_lastData.F_nu_tdec_Jy") == pytest.approx(base_f * 1e30 / base_l)
+    assert page.locator("#l1day-override-note").is_visible()
+    overridden_f = page.evaluate("_lastData.F_nu_tdec_Jy")
+
+    # Luminosity is intrinsic: distance changes F, not the selected luminosity.
+    set_number_input(page, "deuc", 4)
+    assert _luminosity_from_displayed_flux(page) == pytest.approx(1e30, rel=1e-10)
+    assert page.evaluate("_lastData.F_nu_tdec_Jy") == pytest.approx(overridden_f * (8.66 / 4)**2)
+    set_number_input(page, "gamma0_log", 3)
+    assert _luminosity_from_displayed_flux(page) == pytest.approx(1e30, rel=1e-10)
+    assert page.locator("#l1day-override-note").is_visible()
+
+    page.locator("#l1day-override-reset").click()
+    wait_for_compute(page)
+    assert page.evaluate("readParams().F_dec_override_Jy") is None
+    assert _luminosity_from_displayed_flux(page) == pytest.approx(base_l, rel=1e-10)
+    assert not page.locator("#l1day-override-note").is_visible()
+    set_number_input(page, "l1day_log", 30.007)
+    assert float(page.locator("#l1day_log_input").input_value()) == 30.01
+    set_number_input(page, "thetaj", .05)
+    assert page.evaluate("readParams().F_dec_override_Jy") is None
+    assert not page.locator("#l1day-override-note").is_visible()
 
 
 # --------------------------------------------------------------------------- #

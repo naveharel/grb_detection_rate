@@ -121,9 +121,9 @@ _SLIDERS = [
     # All-positive-L intensity; L = L_nu(t_dec), L_ref = 1e32 erg/s/Hz.
     ('LF_ALPHA',    'lf_alpha',    -2.49,  -1.01,   0.001,  -2,      [(-2.49,'-2.49'),(-2,'-2'),(-1.5,'-1.5'),(-1.01,'-1.01')]),
     ('LF_NORM_LOG', 'lf_norm_log', -3,     3,       0.05,   0,       [(-3,'-3'),(-1,'-1'),(0,'0'),(1,'1'),(3,'3')]),
-    # TEMP-FDEC-OVERRIDE — begin (delete this row on removal)
-    ('FDEC_LOG',    'fdec_log',    -6,     6,       0.01,   -2.05,   [(-6,'-6'),(-3,'-3'),(-2.05,'-2.05'),(3,'3'),(6,'6')]),
-    # TEMP-FDEC-OVERRIDE — end
+    # Disabled until Python supplies the physics-derived value and bold default.
+    # 30 is only an initial track position, not a normalization default.
+    ('L1DAY_LOG',   'l1day_log',   24,     36,      0.01,   30,      [(24,'24'),(32,'32'),(36,'36')]),
     # Exact physical anchors; logarithms are only slider coordinates. The hidden
     # range uses step="any" while the custom control enforces these positions.
     ('NSLICE_TFIX', 'nslice-tfix', 2, 8, 0.001, math.log10(86400),
